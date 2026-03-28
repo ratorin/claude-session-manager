@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { SessionTreeProvider, SessionItem } from './sessionTreeProvider';
+import { SessionTreeProvider, SessionItem, SessionDecorationProvider } from './sessionTreeProvider';
 import { BookmarkTreeProvider } from './bookmarkTreeProvider';
 import { TagTreeProvider, TagSessionItem } from './tagTreeProvider';
 import { MemoryTreeProvider, MemoryFileItem } from './memoryTreeProvider';
@@ -15,6 +15,10 @@ export function activate(context: vscode.ExtensionContext) {
 	const bookmarkProvider = new BookmarkTreeProvider(() => sessionProvider.getSessions(), sessionProvider);
 	const tagProvider = new TagTreeProvider(() => sessionProvider.getSessions());
 	const memoryProvider = new MemoryTreeProvider();
+	const sessionDecoProvider = new SessionDecorationProvider();
+
+	// デコレーションプロバイダーを登録
+	context.subscriptions.push(vscode.window.registerFileDecorationProvider(sessionDecoProvider));
 
 	// TreeViewを登録
 	vscode.window.createTreeView('claudeSessions', { treeDataProvider: sessionProvider });
@@ -30,6 +34,7 @@ export function activate(context: vscode.ExtensionContext) {
 			sessionProvider.refresh();
 			bookmarkProvider.refresh();
 			tagProvider.refresh();
+			sessionDecoProvider.refresh();
 			vscode.window.showInformationMessage('会話一覧を更新しました');
 		})
 	);

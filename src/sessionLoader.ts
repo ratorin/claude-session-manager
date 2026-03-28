@@ -132,9 +132,14 @@ export function parseSessionFile(filePath: string): ParsedSession | null {
 			try {
 				const parsed = JSON.parse(line);
 
-				// Claude Codeの /rename で設定されたタイトル
+				// Claude Codeの /rename で設定されたタイトル（custom-titleを優先）
 				if (parsed.type === 'custom-title' && parsed.customTitle) {
 					claudeTitle = parsed.customTitle;
+					continue;
+				}
+				// Claude Codeが自動生成したタイトル
+				if (parsed.type === 'ai-title' && parsed.aiTitle && !claudeTitle) {
+					claudeTitle = parsed.aiTitle;
 					continue;
 				}
 
@@ -234,9 +239,14 @@ function parseSessionQuick(filePath: string): ParsedSession | null {
 			try {
 				const parsed = JSON.parse(line);
 
-				// Claude Codeの /rename で設定されたタイトル
+				// Claude Codeの /rename で設定されたタイトル（custom-titleを優先）
 				if (parsed.type === 'custom-title' && parsed.customTitle) {
 					claudeTitle = parsed.customTitle;
+					continue;
+				}
+				// Claude Codeが自動生成したタイトル
+				if (parsed.type === 'ai-title' && parsed.aiTitle && !claudeTitle) {
+					claudeTitle = parsed.aiTitle;
 					continue;
 				}
 

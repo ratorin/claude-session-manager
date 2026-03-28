@@ -85,16 +85,17 @@ export class MemoryFileItem extends vscode.TreeItem {
 export class MemoryStatsItem extends vscode.TreeItem {
 	constructor(stats: { totalFiles: number; totalBytes: number; indexLines: number; maxIndexLines: number }) {
 		const pct = Math.round((stats.indexLines / stats.maxIndexLines) * 100);
-		const label = `📊 ${stats.totalFiles}件 / ${formatBytes(stats.totalBytes)} / インデックス: ${stats.indexLines}/${stats.maxIndexLines}行 (${pct}%)`;
+		const bar = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
+		const label = `${bar} ${stats.indexLines}/${stats.maxIndexLines}行 (${pct}%) — ${stats.totalFiles}件 ${formatBytes(stats.totalBytes)}`;
 		super(label, vscode.TreeItemCollapsibleState.None);
 
-		// 容量に応じた色
 		if (pct >= 80) {
 			this.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('editorWarning.foreground'));
 		} else {
-			this.iconPath = new vscode.ThemeIcon('info', new vscode.ThemeColor('charts.blue'));
+			this.iconPath = new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.blue'));
 		}
 
+		this.tooltip = `MEMORY.md インデックス使用率: ${stats.indexLines}/${stats.maxIndexLines}行 (${pct}%)\nメモリファイル: ${stats.totalFiles}件 (${formatBytes(stats.totalBytes)})`;
 		this.contextValue = 'stats';
 	}
 }

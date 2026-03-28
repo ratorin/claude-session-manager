@@ -4,33 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { ParsedSession } from './types';
 import { loadAllSessions } from './sessionLoader';
-import { getMemoryStats, getMemoryDirs } from './memoryManager';
 import * as dataStore from './dataStore';
-
-// メモリ行数インジケーター
-export class MemoryIndicatorItem extends vscode.TreeItem {
-	constructor() {
-		const dirs = getMemoryDirs();
-		let totalLines = 0;
-		const maxLines = 200;
-		for (const dir of dirs) {
-			const stats = getMemoryStats(dir);
-			totalLines += stats.indexLines;
-		}
-		const pct = Math.round((totalLines / maxLines) * 100);
-		const bar = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
-
-		super(`${bar} ${totalLines}/${maxLines}行 (${pct}%)`, vscode.TreeItemCollapsibleState.None);
-
-		if (pct >= 80) {
-			this.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('editorWarning.foreground'));
-		} else {
-			this.iconPath = new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.blue'));
-		}
-		this.tooltip = `MEMORY.md インデックス使用率: ${totalLines}/${maxLines}行 (${pct}%)`;
-		this.contextValue = 'indicator';
-	}
-}
 
 // 日付グループヘッダー
 export class DateGroupItem extends vscode.TreeItem {
@@ -41,7 +15,7 @@ export class DateGroupItem extends vscode.TreeItem {
 	}
 }
 
-type TreeNode = MemoryIndicatorItem | DateGroupItem | SessionItem;
+type TreeNode = DateGroupItem | SessionItem;
 
 export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 	private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined>();
@@ -160,14 +134,12 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 		}
 
 		if (!element) {
-			const items: TreeNode[] = [];
-			// メモリ行数インジケーター
-			items.push(new MemoryIndicatorItem());
-			// 日付グループ
+			// 日付グループを返す
+			const groups: DateGroupItem[] = [];
 			for (const [label, sessions] of this.groupedSessions) {
-				items.push(new DateGroupItem(label, sessions.length));
+				groups.push(new DateGroupItem(label, sessions.length));
 			}
-			return items;
+			return groups;
 		}
 
 		if (element instanceof DateGroupItem) {
@@ -236,7 +208,10 @@ export class SessionItem extends vscode.TreeItem {
 		public readonly isLive: boolean = false
 	) {
 		const displayName = session.customName || session.claudeTitle || session.firstMessage;
-		super(displayName, vscode.TreeItemCollapsibleState.None);
+		// 件数を5桁右揃え（Figure Space U+2007 で等幅パディング）
+		const figureSpace = '\u2007';
+		const countStr = String(session.messageCount).padStart(5, figureSpace);
+		super(`${countStr} ${displayName}`, vscode.TreeItemCollapsibleState.None);
 
 		// 時刻フォーマット
 		const date = session.lastTimestamp;
@@ -252,7 +227,7 @@ export class SessionItem extends vscode.TreeItem {
 
 		// ステータス表示
 		const statusPrefix = isLive ? '● ' : '';
-		this.description = `${statusPrefix}${timeStr} ${session.messageCount}件 ${modelShort}${tagStr}`;
+		this.description = `${statusPrefix}${timeStr} ${modelShort}${tagStr}`;
 
 		this.tooltip = new vscode.MarkdownString(
 			`${isLive ? '🟢 Claude Codeで使用中\n\n' : ''}` +
@@ -288,10 +263,55 @@ export class SessionItem extends vscode.TreeItem {
 			this.iconPath = new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
 		}
 
+		// 他プロジェクトの色分け用URI
+		this.resourceUri = vscode.Uri.parse(`claude-session:///${session.id}?project=${encodeURIComponent(session.project)}`);
+
 		this.command = {
 			command: 'claudeManager.previewSession',
 			title: '会話をプレビュー',
 			arguments: [this],
 		};
+	}
+}
+
+// 他プロジェクトのセッションを薄く表示するデコレーションプロバイダー
+export class SessionDecorationProvider implements vscode.FileDecorationProvider {
+	private _onDidChangeFileDecorations = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
+	readonly onDidChangeFileDecorations = this._onDidChangeFileDecorations.event;
+
+	private currentProject: string = '';
+
+	constructor() {
+		this.updateCurrentProject();
+	}
+
+	updateCurrentProject(): void {
+		const folders = vscode.workspace.workspaceFolders;
+		if (folders && folders.length > 0) {
+			this.currentProject = folders[0].uri.fsPath;
+		}
+	}
+
+	refresh(): void {
+		this.updateCurrentProject();
+		this._onDidChangeFileDecorations.fire(undefined);
+	}
+
+	provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
+		if (uri.scheme !== 'claude-session') {
+			return undefined;
+		}
+
+		const params = new URLSearchParams(uri.query);
+		const project = params.get('project') || '';
+
+		// 現在のプロジェクトと一致しない場合は薄く表示
+		if (this.currentProject && !this.currentProject.toLowerCase().includes(project.toLowerCase()) && !project.toLowerCase().includes(this.currentProject.toLowerCase())) {
+			return {
+				color: new vscode.ThemeColor('disabledForeground'),
+			};
+		}
+
+		return undefined;
 	}
 }
