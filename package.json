@@ -229,6 +229,10 @@
 		"compile": "tsc -p ./",
 		"watch": "tsc -watch -p ./"
 	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/ratorin/claude-session-manager.git"
+	},
 	"devDependencies": {
 		"@types/node": "^20.0.0",
 		"@types/vscode": "^1.85.0",

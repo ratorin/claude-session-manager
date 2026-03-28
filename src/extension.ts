@@ -12,7 +12,7 @@ import { loadMemoryFiles, deleteMemoryFile, mergeMemoryFiles, extractFromMemory,
 export function activate(context: vscode.ExtensionContext) {
 	// TreeViewプロバイダーを作成
 	const sessionProvider = new SessionTreeProvider();
-	const bookmarkProvider = new BookmarkTreeProvider(() => sessionProvider.getSessions());
+	const bookmarkProvider = new BookmarkTreeProvider(() => sessionProvider.getSessions(), sessionProvider);
 	const tagProvider = new TagTreeProvider(() => sessionProvider.getSessions());
 	const memoryProvider = new MemoryTreeProvider();
 
