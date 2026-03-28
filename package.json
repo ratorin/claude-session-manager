@@ -1,0 +1,237 @@
+{
+	"name": "claude-session-manager",
+	"displayName": "Claude Session Manager",
+	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
+	"version": "0.1.0",
+	"publisher": "local",
+	"engines": {
+		"vscode": "^1.85.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onView:claudeSessions",
+		"onView:claudeMemory"
+	],
+	"main": "./out/extension.js",
+	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "claude-manager",
+					"title": "Claude Manager",
+					"icon": "$(comment-discussion)"
+				}
+			]
+		},
+		"views": {
+			"claude-manager": [
+				{
+					"id": "claudeSessions",
+					"name": "会話一覧"
+				},
+				{
+					"id": "claudeBookmarks",
+					"name": "ブックマーク"
+				},
+				{
+					"id": "claudeTags",
+					"name": "タグ"
+				},
+				{
+					"id": "claudeMemory",
+					"name": "メモリ管理"
+				}
+			]
+		},
+		"commands": [
+			{
+				"command": "claudeManager.refreshSessions",
+				"title": "会話一覧を更新",
+				"icon": "$(refresh)",
+				"category": "Claude Manager"
+			},
+			{
+				"command": "claudeManager.previewSession",
+				"title": "会話をプレビュー",
+				"icon": "$(eye)",
+				"category": "Claude Manager"
+			},
+			{
+				"command": "claudeManager.bookmarkSession",
+				"title": "ブックマークに追加",
+				"icon": "$(star-empty)",
+				"category": "Claude Manager"
+			},
+			{
+				"command": "claudeManager.unbookmarkSession",
+				"title": "ブックマークから削除",
+				"icon": "$(star-full)",
+				"category": "Claude Manager"
+			},
+			{
+				"command": "claudeManager.tagSession",
+				"title": "タグを追加",
+				"icon": "$(tag)",
+				"category": "Claude Manager"
+			},
+			{
+				"command": "claudeManager.removeTag",
+				"title": "タグを削除",
+				"icon": "$(close)",
+				"category": "Claude Manager"
+			},
+			{
+				"command": "claudeManager.renameSession",
+				"title": "会話をリネーム",
+				"icon": "$(edit)",
+				"category": "Claude Manager"
+			},
+			{
+				"command": "claudeManager.searchSessions",
+				"title": "会話を検索",
+				"icon": "$(search)",
+				"category": "Claude Manager"
+			},
+			{
+				"command": "claudeManager.refreshMemory",
+				"title": "メモリを更新",
+				"icon": "$(refresh)",
+				"category": "Claude Manager"
+			},
+			{
+				"command": "claudeManager.previewMemory",
+				"title": "メモリをプレビュー",
+				"icon": "$(eye)",
+				"category": "Claude Manager"
+			},
+			{
+				"command": "claudeManager.mergeMemories",
+				"title": "メモリを統合",
+				"icon": "$(merge)",
+				"category": "Claude Manager"
+			},
+			{
+				"command": "claudeManager.extractMemory",
+				"title": "メモリから抽出",
+				"icon": "$(split-horizontal)",
+				"category": "Claude Manager"
+			},
+			{
+				"command": "claudeManager.deleteMemory",
+				"title": "メモリを削除",
+				"icon": "$(trash)",
+				"category": "Claude Manager"
+			},
+			{
+				"command": "claudeManager.editMemory",
+				"title": "メモリを編集",
+				"icon": "$(edit)",
+				"category": "Claude Manager"
+			},
+			{
+				"command": "claudeManager.openInClaude",
+				"title": "Claude Codeで開く",
+				"icon": "$(terminal)",
+				"category": "Claude Manager"
+			}
+		],
+		"menus": {
+			"view/title": [
+				{
+					"command": "claudeManager.refreshSessions",
+					"when": "view == claudeSessions",
+					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.searchSessions",
+					"when": "view == claudeSessions",
+					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.refreshMemory",
+					"when": "view == claudeMemory",
+					"group": "navigation"
+				}
+			],
+			"view/item/context": [
+				{
+					"command": "claudeManager.previewSession",
+					"when": "view == claudeSessions && viewItem == session",
+					"group": "inline"
+				},
+				{
+					"command": "claudeManager.bookmarkSession",
+					"when": "view == claudeSessions && viewItem == session",
+					"group": "inline"
+				},
+				{
+					"command": "claudeManager.openInClaude",
+					"when": "viewItem == session || viewItem == bookmarkedSession",
+					"group": "0_open"
+				},
+				{
+					"command": "claudeManager.renameSession",
+					"when": "viewItem == session || viewItem == bookmarkedSession",
+					"group": "1_edit"
+				},
+				{
+					"command": "claudeManager.tagSession",
+					"when": "viewItem == session || viewItem == bookmarkedSession",
+					"group": "1_edit"
+				},
+				{
+					"command": "claudeManager.unbookmarkSession",
+					"when": "view == claudeBookmarks && viewItem == bookmarkedSession",
+					"group": "inline"
+				},
+				{
+					"command": "claudeManager.previewSession",
+					"when": "view == claudeBookmarks && viewItem == bookmarkedSession",
+					"group": "inline"
+				},
+				{
+					"command": "claudeManager.removeTag",
+					"when": "view == claudeTags && viewItem == taggedSession",
+					"group": "inline"
+				},
+				{
+					"command": "claudeManager.previewMemory",
+					"when": "view == claudeMemory && viewItem == memoryFile",
+					"group": "inline"
+				},
+				{
+					"command": "claudeManager.editMemory",
+					"when": "view == claudeMemory && viewItem == memoryFile",
+					"group": "1_edit"
+				},
+				{
+					"command": "claudeManager.mergeMemories",
+					"when": "view == claudeMemory && viewItem == memoryFile",
+					"group": "2_actions"
+				},
+				{
+					"command": "claudeManager.extractMemory",
+					"when": "view == claudeMemory && viewItem == memoryFile",
+					"group": "2_actions"
+				},
+				{
+					"command": "claudeManager.deleteMemory",
+					"when": "view == claudeMemory && viewItem == memoryFile",
+					"group": "3_danger"
+				}
+			]
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./",
+		"watch": "tsc -watch -p ./"
+	},
+	"devDependencies": {
+		"@types/node": "^20.0.0",
+		"@types/vscode": "^1.85.0",
+		"typescript": "^5.3.0"
+	}
+}

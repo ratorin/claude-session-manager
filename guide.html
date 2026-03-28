@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Session Manager 使い方ガイド</title>
+<style>
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	body {
+		font-family: 'Segoe UI', 'Meiryo', sans-serif;
+		background: #1a1a2e;
+		color: #e0e0e0;
+		line-height: 1.8;
+		padding: 0;
+	}
+
+	/* ヘッダー */
+	.hero {
+		background: linear-gradient(135deg, #16213e, #0f3460, #533483);
+		padding: 60px 40px;
+		text-align: center;
+	}
+	.hero h1 {
+		font-size: 2.4em;
+		color: #fff;
+		margin-bottom: 12px;
+	}
+	.hero p {
+		font-size: 1.1em;
+		color: #b0b0d0;
+		max-width: 600px;
+		margin: 0 auto;
+	}
+
+	.container {
+		max-width: 1000px;
+		margin: 0 auto;
+		padding: 40px 24px;
+	}
+
+	/* セクション */
+	.section {
+		margin-bottom: 60px;
+	}
+	.section-title {
+		font-size: 1.6em;
+		color: #e94560;
+		margin-bottom: 24px;
+		padding-bottom: 8px;
+		border-bottom: 2px solid #e9456033;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+	.section-title .num {
+		background: #e94560;
+		color: #fff;
+		width: 36px;
+		height: 36px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.9em;
+		font-weight: bold;
+		flex-shrink: 0;
+	}
+
+	/* 図解ボックス */
+	.diagram {
+		background: #16213e;
+		border: 1px solid #333;
+		border-radius: 12px;
+		padding: 24px;
+		margin: 20px 0;
+		overflow-x: auto;
+	}
+
+	/* VS Code風シミュレーション */
+	.vscode-sim {
+		background: #1e1e1e;
+		border-radius: 8px;
+		overflow: hidden;
+		border: 1px solid #444;
+		margin: 16px 0;
+	}
+	.vscode-titlebar {
+		background: #323233;
+		padding: 6px 12px;
+		font-size: 12px;
+		color: #999;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.vscode-titlebar .dots {
+		display: flex;
+		gap: 6px;
+	}
+	.vscode-titlebar .dot {
+		width: 12px;
+		height: 12px;
+		border-radius: 50%;
+	}
+	.dot-red { background: #ff5f57; }
+	.dot-yellow { background: #febc2e; }
+	.dot-green { background: #28c840; }
+	.vscode-body {
+		display: flex;
+		min-height: 300px;
+	}
+
+	/* アクティビティバー */
+	.act-bar {
+		width: 48px;
+		background: #333;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding-top: 8px;
+		gap: 2px;
+		flex-shrink: 0;
+	}
+	.act-icon {
+		width: 42px;
+		height: 42px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 20px;
+		opacity: 0.4;
+		border-left: 2px solid transparent;
+		cursor: default;
+	}
+	.act-icon.active {
+		opacity: 1;
+		border-left-color: #fff;
+	}
+
+	/* サイドバー */
+	.sidebar-sim {
+		width: 260px;
+		background: #252526;
+		border-right: 1px solid #3c3c3c;
+		flex-shrink: 0;
+		overflow: hidden;
+	}
+	.sidebar-header {
+		padding: 8px 12px;
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		color: #bbb;
+		letter-spacing: 0.5px;
+	}
+	.section-hdr {
+		padding: 5px 10px;
+		font-size: 11px;
+		font-weight: 600;
+		background: #2d2d2d;
+		color: #ccc;
+		cursor: default;
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+	.tree-item {
+		padding: 3px 10px 3px 18px;
+		font-size: 12px;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		cursor: default;
+		white-space: nowrap;
+	}
+	.tree-item:hover { background: #2a2d2e; }
+	.tree-item.selected { background: #094771; }
+	.tree-item .icon { font-size: 14px; flex-shrink: 0; }
+	.tree-item .label { overflow: hidden; text-overflow: ellipsis; }
+	.tree-item .desc { color: #888; font-size: 11px; margin-left: auto; }
+	.tree-sub {
+		padding: 3px 10px 3px 30px;
+		font-size: 12px;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	/* エディタ領域 */
+	.editor-sim {
+		flex: 1;
+		background: #1e1e1e;
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+	.tab-sim {
+		display: flex;
+		background: #252526;
+		border-bottom: 1px solid #3c3c3c;
+	}
+	.tab-item {
+		padding: 7px 14px;
+		font-size: 12px;
+		border-right: 1px solid #3c3c3c;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.tab-item.active {
+		background: #1e1e1e;
+		border-bottom: 1px solid #1e1e1e;
+		margin-bottom: -1px;
+	}
+	.editor-content {
+		flex: 1;
+		padding: 16px;
+		overflow: auto;
+	}
+	.chat-msg {
+		margin: 6px 0;
+		padding: 10px 14px;
+		border-radius: 8px;
+		font-size: 12px;
+		line-height: 1.5;
+	}
+	.chat-user {
+		background: #2d2d2d;
+		margin-left: 50px;
+	}
+	.chat-assistant {
+		background: #1a2733;
+		margin-right: 50px;
+	}
+	.chat-role {
+		font-weight: 600;
+		font-size: 11px;
+		color: #569cd6;
+		margin-bottom: 3px;
+	}
+
+	/* 注釈 */
+	.annotation {
+		position: relative;
+		margin: 16px 0;
+	}
+	.callout {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 16px;
+		border-radius: 20px;
+		font-size: 0.9em;
+		font-weight: 500;
+	}
+	.callout-red { background: #e9456022; border: 1px solid #e94560; color: #e94560; }
+	.callout-blue { background: #569cd622; border: 1px solid #569cd6; color: #569cd6; }
+	.callout-green { background: #28c84022; border: 1px solid #28c840; color: #28c840; }
+	.callout-yellow { background: #febc2e22; border: 1px solid #febc2e; color: #febc2e; }
+	.callout-purple { background: #c084fc22; border: 1px solid #c084fc; color: #c084fc; }
+
+	/* ステップ説明 */
+	.step-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 20px;
+		margin: 16px 0;
+	}
+	@media (max-width: 700px) {
+		.step-grid { grid-template-columns: 1fr; }
+	}
+	.step-card {
+		background: #16213e;
+		border: 1px solid #333;
+		border-radius: 10px;
+		padding: 20px;
+	}
+	.step-card h4 {
+		color: #569cd6;
+		margin-bottom: 8px;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.step-card p {
+		font-size: 0.9em;
+		color: #aaa;
+	}
+
+	/* アイコン凡例 */
+	.icon-legend {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+		gap: 12px;
+		margin: 16px 0;
+	}
+	.icon-item {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 12px 16px;
+		background: #16213e;
+		border-radius: 8px;
+		border: 1px solid #333;
+	}
+	.icon-item .big-icon {
+		font-size: 24px;
+		width: 36px;
+		text-align: center;
+		flex-shrink: 0;
+	}
+	.icon-item .icon-desc {
+		font-size: 0.85em;
+	}
+	.icon-item .icon-desc strong {
+		display: block;
+		color: #fff;
+		margin-bottom: 2px;
+	}
+
+	/* 矢印付きフロー */
+	.flow {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 12px;
+		flex-wrap: wrap;
+		margin: 20px 0;
+	}
+	.flow-box {
+		background: #0f3460;
+		border: 1px solid #569cd6;
+		border-radius: 8px;
+		padding: 12px 20px;
+		text-align: center;
+		min-width: 120px;
+	}
+	.flow-box .flow-label {
+		font-size: 0.75em;
+		color: #888;
+		margin-bottom: 4px;
+	}
+	.flow-box .flow-text {
+		font-size: 0.95em;
+		color: #fff;
+	}
+	.flow-arrow {
+		font-size: 1.4em;
+		color: #569cd6;
+	}
+
+	/* 右クリックメニュー風 */
+	.ctx-menu-demo {
+		background: #3c3c3c;
+		border: 1px solid #555;
+		border-radius: 6px;
+		padding: 4px 0;
+		display: inline-block;
+		min-width: 220px;
+	}
+	.ctx-item {
+		padding: 6px 20px;
+		font-size: 13px;
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		color: #ddd;
+	}
+	.ctx-item:hover { background: #094771; }
+	.ctx-sep {
+		height: 1px;
+		background: #555;
+		margin: 3px 0;
+	}
+	.ctx-item .shortcut {
+		margin-left: auto;
+		font-size: 11px;
+		color: #888;
+	}
+
+	/* ポイント */
+	.tip {
+		background: #0f346033;
+		border-left: 3px solid #569cd6;
+		padding: 14px 18px;
+		border-radius: 0 8px 8px 0;
+		margin: 16px 0;
+		font-size: 0.9em;
+	}
+	.tip strong { color: #569cd6; }
+
+	.warn {
+		background: #e9456015;
+		border-left: 3px solid #e94560;
+		padding: 14px 18px;
+		border-radius: 0 8px 8px 0;
+		margin: 16px 0;
+		font-size: 0.9em;
+	}
+	.warn strong { color: #e94560; }
+
+	/* ユースケース */
+	.usecase {
+		background: #1a1a3e;
+		border: 1px solid #444;
+		border-radius: 10px;
+		padding: 24px;
+		margin: 20px 0;
+	}
+	.usecase h4 {
+		color: #c084fc;
+		font-size: 1.1em;
+		margin-bottom: 12px;
+	}
+	.usecase-scenario {
+		display: flex;
+		align-items: flex-start;
+		gap: 16px;
+		margin: 12px 0;
+	}
+	.usecase-scenario .emoji {
+		font-size: 2em;
+		flex-shrink: 0;
+	}
+	.usecase-scenario .text {
+		flex: 1;
+	}
+	.usecase-scenario .text p {
+		color: #aaa;
+		font-size: 0.9em;
+		margin-top: 4px;
+	}
+</style>
+</head>
+<body>
+
+<div class="hero">
+	<h1>Claude Session Manager</h1>
+	<p>Claude Codeの会話履歴とメモリを管理するVS Code拡張機能の使い方ガイド</p>
+</div>
+
+<div class="container">
+
+<!-- ============================================ -->
+<!-- セクション 0: 起動方法 -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">0</span>起動方法</div>
+
+	<div class="flow">
+		<div class="flow-box">
+			<div class="flow-label">VS Code左端</div>
+			<div class="flow-text">💬 アイコンをクリック</div>
+		</div>
+		<div class="flow-arrow">→</div>
+		<div class="flow-box">
+			<div class="flow-label">サイドバーが開く</div>
+			<div class="flow-text">4つのセクション</div>
+		</div>
+	</div>
+
+	<div class="vscode-sim">
+		<div class="vscode-titlebar">
+			<div class="dots"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
+			Visual Studio Code
+		</div>
+		<div class="vscode-body">
+			<div class="act-bar">
+				<div class="act-icon">📁</div>
+				<div class="act-icon">🔍</div>
+				<div class="act-icon active" style="position: relative;">💬
+					<span style="position: absolute; right: 2px; top: 0; font-size: 8px; background: #e94560; color: #fff; border-radius: 50%; width: 14px; height: 14px; display: flex; align-items: center; justify-content: center;">←</span>
+				</div>
+				<div class="act-icon">🧩</div>
+			</div>
+			<div class="sidebar-sim">
+				<div class="sidebar-header">Claude Manager</div>
+				<div class="section-hdr">▼ 会話一覧 🔍🔄</div>
+				<div class="section-hdr">▶ ブックマーク</div>
+				<div class="section-hdr">▶ タグ</div>
+				<div class="section-hdr">▶ メモリ管理</div>
+			</div>
+			<div class="editor-sim">
+				<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #555; font-size: 14px;">
+					← 左の💬をクリックして開始
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+
+<!-- ============================================ -->
+<!-- セクション 1: 会話一覧 -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">1</span>会話一覧</div>
+
+	<p>過去のClaude Codeとの会話が<strong>日付別</strong>に自動で表示されます。</p>
+
+	<div class="vscode-sim">
+		<div class="vscode-titlebar">
+			<div class="dots"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
+			会話一覧の例
+		</div>
+		<div class="vscode-body">
+			<div class="sidebar-sim" style="width: 320px;">
+				<div class="sidebar-header">Claude Manager</div>
+				<div class="section-hdr">▼ 会話一覧</div>
+
+				<div class="tree-item" style="padding-left: 10px; color: #ccc; font-weight: 600;">
+					<span class="icon">📅</span>
+					<span class="label">今日</span>
+					<span class="desc">3件</span>
+				</div>
+				<div class="tree-item selected">
+					<span class="icon" style="color: #4ade80;">●</span>
+					<span class="label">F-revo 受注番号修正</span>
+					<span class="desc" style="color: #4ade80;">● 12:42</span>
+				</div>
+				<div class="tree-item">
+					<span class="icon" style="color: #c084fc;">✨</span>
+					<span class="label">SSHトンネル設定</span>
+					<span class="desc">10:15 24件</span>
+				</div>
+				<div class="tree-item">
+					<span class="icon" style="color: #60a5fa;">⚡</span>
+					<span class="label">見積フォーム修正</span>
+					<span class="desc">09:30 89件</span>
+				</div>
+
+				<div class="tree-item" style="padding-left: 10px; color: #ccc; font-weight: 600;">
+					<span class="icon">📅</span>
+					<span class="label">昨日</span>
+					<span class="desc">2件</span>
+				</div>
+				<div class="tree-item">
+					<span class="icon" style="color: #fbbf24;">★</span>
+					<span class="label">掛け率表示修正</span>
+					<span class="desc">21:15 156件</span>
+				</div>
+				<div class="tree-item">
+					<span class="icon" style="color: #c084fc;">✨</span>
+					<span class="label">セキュリティ修正一括</span>
+					<span class="desc">14:05 201件</span>
+				</div>
+
+				<div class="tree-item" style="padding-left: 10px; color: #ccc; font-weight: 600;">
+					<span class="icon">📅</span>
+					<span class="label">今週</span>
+					<span class="desc">5件</span>
+				</div>
+				<div class="tree-item">
+					<span class="icon" style="color: #60a5fa;">⚡</span>
+					<span class="label">休日カレンダー実装</span>
+					<span class="desc">16:48 78件</span>
+				</div>
+			</div>
+			<div class="editor-sim">
+				<div class="tab-sim">
+					<div class="tab-item active">💬 F-revo 受注番号修正</div>
+				</div>
+				<div class="editor-content">
+					<div style="padding: 10px; background: #2d2d2d; border-left: 3px solid #569cd6; border-radius: 4px; margin-bottom: 16px;">
+						<div style="font-size: 14px; font-weight: 500;">F-revo 受注番号修正</div>
+						<div style="font-size: 11px; color: #888; margin-top: 4px;">プロジェクト: c:\xampp | 24件 | opus</div>
+					</div>
+					<div class="chat-msg chat-user">
+						<div class="chat-role">あなた</div>
+						受注番号のスタート番号を設定したのですが、間違えたので修正してほしい
+					</div>
+					<div class="chat-msg chat-assistant">
+						<div class="chat-role">Claude</div>
+						受注番号（SalesOrder）の採番設定は以下の通りです...
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div style="margin-top: 20px;">
+		<h4 style="color: #569cd6; margin-bottom: 12px;">アイコンの意味</h4>
+		<div class="icon-legend">
+			<div class="icon-item">
+				<span class="big-icon" style="color: #c084fc;">✨</span>
+				<div class="icon-desc"><strong>Opus</strong>最高性能モデル</div>
+			</div>
+			<div class="icon-item">
+				<span class="big-icon" style="color: #60a5fa;">⚡</span>
+				<div class="icon-desc"><strong>Sonnet</strong>バランス型モデル</div>
+			</div>
+			<div class="icon-item">
+				<span class="big-icon" style="color: #4ade80;">🔥</span>
+				<div class="icon-desc"><strong>Haiku</strong>高速・軽量モデル</div>
+			</div>
+			<div class="icon-item">
+				<span class="big-icon" style="color: #fbbf24;">★</span>
+				<div class="icon-desc"><strong>ブックマーク</strong>お気に入り登録済み</div>
+			</div>
+			<div class="icon-item">
+				<span class="big-icon" style="color: #4ade80;">●</span>
+				<div class="icon-desc"><strong>利用中</strong>Claude Codeで開いている</div>
+			</div>
+			<div class="icon-item">
+				<span class="big-icon" style="color: #fff;">▶</span>
+				<div class="icon-desc"><strong>プレビュー中</strong>Session Managerで表示中</div>
+			</div>
+			<div class="icon-item">
+				<span class="big-icon" style="color: #4ade80;">▶</span>
+				<div class="icon-desc"><strong>プレビュー+利用中</strong>両方の状態</div>
+			</div>
+		</div>
+	</div>
+</div>
+
+<!-- ============================================ -->
+<!-- セクション 2: 右クリックメニュー -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">2</span>右クリック操作</div>
+
+	<p>会話を右クリックすると、以下の操作メニューが出ます。</p>
+
+	<div class="diagram" style="display: flex; gap: 40px; align-items: flex-start; flex-wrap: wrap;">
+		<div>
+			<div style="margin-bottom: 12px; color: #888; font-size: 13px;">会話アイテムを右クリック ↓</div>
+			<div class="ctx-menu-demo">
+				<div class="ctx-item">🔗 <strong>Claude Codeで開く</strong></div>
+				<div class="ctx-sep"></div>
+				<div class="ctx-item">✏️ 会話をリネーム</div>
+				<div class="ctx-item">🏷 タグを追加</div>
+				<div class="ctx-sep"></div>
+				<div class="ctx-item">⭐ ブックマークに追加</div>
+			</div>
+		</div>
+		<div style="flex: 1; min-width: 250px;">
+			<div class="step-card" style="margin-bottom: 12px;">
+				<h4>🔗 Claude Codeで開く</h4>
+				<p>VS CodeのClaude Codeパネルでその会話を再開。既に開いていればそのタブにフォーカス。</p>
+			</div>
+			<div class="step-card" style="margin-bottom: 12px;">
+				<h4>✏️ リネーム</h4>
+				<p>会話に分かりやすい名前を付ける。例: 「SSHトンネル設定」「見積バグ修正」</p>
+			</div>
+			<div class="step-card" style="margin-bottom: 12px;">
+				<h4>🏷 タグ</h4>
+				<p>自由なカテゴリで分類。例: 「ALOrderForge」「インフラ」「セキュリティ」</p>
+			</div>
+			<div class="step-card">
+				<h4>⭐ ブックマーク</h4>
+				<p>大事な会話をお気に入り登録。ブックマークセクションに表示される。</p>
+			</div>
+		</div>
+	</div>
+</div>
+
+<!-- ============================================ -->
+<!-- セクション 3: ブックマーク＆タグ -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">3</span>ブックマーク＆タグで整理</div>
+
+	<div class="step-grid">
+		<div>
+			<h4 style="color: #fbbf24; margin-bottom: 12px;">★ ブックマーク</h4>
+			<div class="vscode-sim">
+				<div class="vscode-titlebar">
+					<div class="dots"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
+					ブックマーク
+				</div>
+				<div style="background: #252526; padding: 4px 0;">
+					<div class="section-hdr">▼ ブックマーク</div>
+					<div class="tree-item">
+						<span class="icon" style="color: #fbbf24;">★</span>
+						<span class="label">掛け率表示修正</span>
+					</div>
+					<div class="tree-item">
+						<span class="icon" style="color: #fbbf24;">★</span>
+						<span class="label">初期セットアップ手順</span>
+					</div>
+					<div class="tree-item">
+						<span class="icon" style="color: #fbbf24;">★</span>
+						<span class="label">SSHトンネル設定</span>
+					</div>
+				</div>
+			</div>
+			<div class="tip" style="margin-top: 12px;">
+				<strong>使い方：</strong>「また見返したい会話」をブックマーク。後で探す手間が省ける。
+			</div>
+		</div>
+
+		<div>
+			<h4 style="color: #60a5fa; margin-bottom: 12px;">🏷 タグ</h4>
+			<div class="vscode-sim">
+				<div class="vscode-titlebar">
+					<div class="dots"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
+					タグ
+				</div>
+				<div style="background: #252526; padding: 4px 0;">
+					<div class="section-hdr">▼ タグ</div>
+					<div class="tree-item" style="padding-left: 14px;">
+						<span class="icon">🏷</span>
+						<span class="label" style="color: #60a5fa;">ALOrderForge</span>
+						<span class="desc">12件</span>
+					</div>
+					<div class="tree-sub">└ 掛け率表示修正</div>
+					<div class="tree-sub">└ ダッシュボード修正</div>
+					<div class="tree-item" style="padding-left: 14px;">
+						<span class="icon">🏷</span>
+						<span class="label" style="color: #4ade80;">インフラ</span>
+						<span class="desc">3件</span>
+					</div>
+					<div class="tree-sub">└ SSHトンネル設定</div>
+					<div class="tree-sub">└ MySQL受注番号修正</div>
+				</div>
+			</div>
+			<div class="tip" style="margin-top: 12px;">
+				<strong>使い方：</strong>プロジェクトやカテゴリごとに自由なタグ名で分類。
+			</div>
+		</div>
+	</div>
+</div>
+
+<!-- ============================================ -->
+<!-- セクション 4: 検索 -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">4</span>会話を検索</div>
+
+	<div class="flow">
+		<div class="flow-box">
+			<div class="flow-label">会話一覧の上部</div>
+			<div class="flow-text">🔍 アイコンをクリック</div>
+		</div>
+		<div class="flow-arrow">→</div>
+		<div class="flow-box">
+			<div class="flow-label">入力ボックス</div>
+			<div class="flow-text">キーワードを入力</div>
+		</div>
+		<div class="flow-arrow">→</div>
+		<div class="flow-box">
+			<div class="flow-label">一覧が絞り込み</div>
+			<div class="flow-text">該当する会話だけ表示</div>
+		</div>
+	</div>
+
+	<div class="tip">
+		<strong>検索対象：</strong>会話タイトル（最初の発言 or リネーム名）、プロジェクトパス、gitブランチ名
+	</div>
+
+	<div class="diagram">
+		<div style="color: #888; font-size: 13px; margin-bottom: 8px;">例：「SSH」で検索</div>
+		<div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+			<div style="background: #3c3c3c; padding: 8px 16px; border-radius: 4px; border: 1px solid #569cd6; color: #ccc; font-size: 13px; min-width: 200px;">
+				🔍 SSH
+			</div>
+			<div style="font-size: 1.2em; color: #569cd6;">→</div>
+			<div>
+				<div class="tree-item" style="padding: 4px 8px;">
+					<span class="icon" style="color: #c084fc;">✨</span>
+					<span style="font-size: 13px;">SSHトンネル設定</span>
+				</div>
+				<div class="tree-item" style="padding: 4px 8px;">
+					<span class="icon" style="color: #60a5fa;">⚡</span>
+					<span style="font-size: 13px;">SSH鍵の作成方法</span>
+				</div>
+				<div style="font-size: 11px; color: #666; padding: 4px 8px;">他の会話は非表示</div>
+			</div>
+		</div>
+	</div>
+</div>
+
+<!-- ============================================ -->
+<!-- セクション 5: プレビュー -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">5</span>会話プレビュー</div>
+
+	<p>一覧の会話をクリックすると、<strong>エディタ領域にチャット形式</strong>で内容が表示されます。</p>
+	<p style="color: #888; margin-top: 4px;">別の会話をクリックしても新しいタブは開かず、同じタブの中身が切り替わります。</p>
+
+	<div class="vscode-sim" style="margin-top: 16px;">
+		<div class="vscode-titlebar">
+			<div class="dots"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
+			プレビュー
+		</div>
+		<div class="vscode-body" style="min-height: 250px;">
+			<div class="sidebar-sim" style="width: 200px;">
+				<div class="section-hdr">▼ 会話一覧</div>
+				<div class="tree-item">
+					<span class="icon" style="color: #fff;">▶</span>
+					<span class="label" style="font-size: 11px;">SSHトンネル設定</span>
+				</div>
+				<div class="tree-item" style="opacity: 0.6;">
+					<span class="icon" style="color: #c084fc;">✨</span>
+					<span class="label" style="font-size: 11px;">見積フォーム修正</span>
+				</div>
+			</div>
+			<div class="editor-sim">
+				<div class="tab-sim">
+					<div class="tab-item active">💬 SSHトンネル設定</div>
+				</div>
+				<div class="editor-content">
+					<div style="background: #3c3c3c; padding: 6px 12px; border-radius: 4px; margin-bottom: 12px;">
+						<input type="text" placeholder="会話内を検索..." style="background: transparent; border: none; color: #ccc; width: 100%; outline: none; font-size: 12px;">
+					</div>
+					<div class="chat-msg chat-user">
+						<div class="chat-role">あなた</div>
+						SSHトンネル接続の設定方法を教えて
+					</div>
+					<div class="chat-msg chat-assistant">
+						<div class="chat-role">Claude</div>
+						Windows Serverから常時SSHトンネルを張る方法です...<br>
+						<code style="color: #ce93d8;">ssh -N -L 13306:localhost:3306 ...</code>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="tip">
+		<strong>会話内検索：</strong>プレビュー上部の検索バーで、会話の中身をキーワードで絞り込めます。
+	</div>
+</div>
+
+<!-- ============================================ -->
+<!-- セクション 6: メモリ管理 -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">6</span>メモリ管理</div>
+
+	<p>Claude Codeが記憶している情報（メモリ）を一覧・編集・管理できます。</p>
+
+	<div class="vscode-sim" style="margin-top: 16px;">
+		<div class="vscode-titlebar">
+			<div class="dots"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
+			メモリ管理
+		</div>
+		<div style="background: #252526; padding: 4px 0;">
+			<div class="section-hdr">▼ メモリ管理 🔄</div>
+
+			<div class="tree-item" style="padding-left: 14px;">
+				<span class="icon">📁</span>
+				<span class="label">c:\xampp</span>
+				<span class="desc">8件</span>
+			</div>
+
+			<div style="padding: 4px 10px 4px 28px; font-size: 11px; color: #888; display: flex; align-items: center; gap: 6px;">
+				ℹ️ 8件 / 12.3KB / インデックス: 42/200行 (21%)
+				<div style="flex: 1; height: 4px; background: #3c3c3c; border-radius: 2px; max-width: 80px;">
+					<div style="width: 21%; height: 100%; background: #569cd6; border-radius: 2px;"></div>
+				</div>
+			</div>
+
+			<div class="tree-item" style="padding-left: 28px;">
+				<span style="padding: 1px 6px; border-radius: 8px; font-size: 10px; background: #4fc3f722; color: #4fc3f7; border: 1px solid #4fc3f744;">user</span>
+				<span class="label">ユーザー基本情報</span>
+			</div>
+			<div class="tree-item" style="padding-left: 28px;">
+				<span style="padding: 1px 6px; border-radius: 8px; font-size: 10px; background: #ffb74d22; color: #ffb74d; border: 1px solid #ffb74d44;">feedback</span>
+				<span class="label">並行エージェント活用</span>
+			</div>
+			<div class="tree-item" style="padding-left: 28px;">
+				<span style="padding: 1px 6px; border-radius: 8px; font-size: 10px; background: #ce93d822; color: #ce93d8; border: 1px solid #ce93d844;">reference</span>
+				<span class="label">Xserver接続情報</span>
+			</div>
+			<div class="tree-item" style="padding-left: 28px;">
+				<span style="padding: 1px 6px; border-radius: 8px; font-size: 10px; background: #81c78422; color: #81c784; border: 1px solid #81c78444;">project</span>
+				<span class="label">ALOrderForgeロール設計</span>
+			</div>
+		</div>
+	</div>
+
+	<h4 style="color: #569cd6; margin: 24px 0 12px;">メモリタイプ</h4>
+	<div class="icon-legend">
+		<div class="icon-item">
+			<span class="big-icon" style="color: #4fc3f7;">👤</span>
+			<div class="icon-desc"><strong>user</strong>あなたの情報・好み</div>
+		</div>
+		<div class="icon-item">
+			<span class="big-icon" style="color: #ffb74d;">💬</span>
+			<div class="icon-desc"><strong>feedback</strong>作業の進め方ルール</div>
+		</div>
+		<div class="icon-item">
+			<span class="big-icon" style="color: #81c784;">📋</span>
+			<div class="icon-desc"><strong>project</strong>プロジェクト情報</div>
+		</div>
+		<div class="icon-item">
+			<span class="big-icon" style="color: #ce93d8;">🔗</span>
+			<div class="icon-desc"><strong>reference</strong>外部リンク・接続先</div>
+		</div>
+	</div>
+
+	<h4 style="color: #569cd6; margin: 24px 0 12px;">右クリック操作</h4>
+	<div class="diagram" style="display: flex; gap: 40px; align-items: flex-start; flex-wrap: wrap;">
+		<div class="ctx-menu-demo">
+			<div class="ctx-item">👁 プレビュー</div>
+			<div class="ctx-item">✏️ 編集</div>
+			<div class="ctx-sep"></div>
+			<div class="ctx-item">🔀 メモリを統合</div>
+			<div class="ctx-item">✂️ メモリから抽出</div>
+			<div class="ctx-sep"></div>
+			<div class="ctx-item" style="color: #e94560;">🗑 メモリを削除</div>
+		</div>
+		<div style="flex: 1; min-width: 250px;">
+			<div class="step-card" style="margin-bottom: 8px;">
+				<h4>🔀 統合（マージ）</h4>
+				<p>似た内容の2つのメモリを1つにまとめる。メモリの整理に。</p>
+			</div>
+			<div class="step-card">
+				<h4>✂️ 抽出</h4>
+				<p>1つのメモリから一部を切り出して新しいメモリファイルを作成。</p>
+			</div>
+		</div>
+	</div>
+
+	<div class="warn">
+		<strong>容量に注意：</strong>MEMORY.mdのインデックスは最大200行。80%を超えると警告が出ます。不要なメモリは削除して整理しましょう。
+	</div>
+</div>
+
+<!-- ============================================ -->
+<!-- セクション 7: 実際の活用シーン -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">7</span>こんな時に使う</div>
+
+	<div class="usecase">
+		<h4>シーン1: 「前に聞いたSSHの設定、どこだっけ？」</h4>
+		<div class="usecase-scenario">
+			<div class="emoji">🔍</div>
+			<div class="text">
+				<strong>検索で「SSH」と入力 → 一覧から見つけてクリック → プレビューで内容確認</strong>
+				<p>リネームしておけば「SSHトンネル設定」で即座に見つかる。ブックマークしておけば検索すら不要。</p>
+			</div>
+		</div>
+	</div>
+
+	<div class="usecase">
+		<h4>シーン2: 「ALOrderForge関連の会話をまとめて見たい」</h4>
+		<div class="usecase-scenario">
+			<div class="emoji">🏷</div>
+			<div class="text">
+				<strong>タグセクション → 「ALOrderForge」をクリック → 関連会話が一覧表示</strong>
+				<p>事前に会話にタグを付けておくと、プロジェクト別にまとめて見られる。</p>
+			</div>
+		</div>
+	</div>
+
+	<div class="usecase">
+		<h4>シーン3: 「この会話の続きをClaudeに聞きたい」</h4>
+		<div class="usecase-scenario">
+			<div class="emoji">🔗</div>
+			<div class="text">
+				<strong>会話を右クリック → 「Claude Codeで開く」→ VS CodeのClaudeパネルで再開</strong>
+				<p>前回の文脈を引き継いだまま続きから会話できる。</p>
+			</div>
+		</div>
+	</div>
+
+	<div class="usecase">
+		<h4>シーン4: 「メモリが増えすぎて整理したい」</h4>
+		<div class="usecase-scenario">
+			<div class="emoji">🔀</div>
+			<div class="text">
+				<strong>メモリ管理 → 似た内容を右クリック →「統合」→ 1つにまとめる</strong>
+				<p>容量バーで使用率をチェック。不要なメモリは削除でスッキリ。</p>
+			</div>
+		</div>
+	</div>
+</div>
+
+</div><!-- /container -->
+
+</body>
+</html>

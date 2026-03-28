@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Session Manager - パッケージイメージ</title>
+<style>
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	body {
+		background: #0d0d1a;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: 40px;
+		gap: 60px;
+		font-family: 'Segoe UI', 'Meiryo', sans-serif;
+		color: #e0e0e0;
+	}
+
+	h2 {
+		color: #888;
+		font-size: 14px;
+		text-transform: uppercase;
+		letter-spacing: 2px;
+		margin-bottom: 12px;
+	}
+
+	/* ========== マーケットプレイス風カード ========== */
+	.marketplace-card {
+		width: 820px;
+		background: #1e1e1e;
+		border-radius: 12px;
+		overflow: hidden;
+		border: 1px solid #333;
+		box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+	}
+
+	/* バナー */
+	.banner {
+		background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460, #533483);
+		padding: 40px;
+		display: flex;
+		align-items: center;
+		gap: 28px;
+	}
+	.banner-icon {
+		width: 100px;
+		height: 100px;
+		background: linear-gradient(135deg, #16213e, #0f3460);
+		border-radius: 20px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: 2px solid #569cd644;
+		flex-shrink: 0;
+		position: relative;
+		overflow: hidden;
+	}
+	.banner-icon::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(135deg, #c084fc22, #569cd622);
+	}
+	.banner-icon .icon-inner {
+		position: relative;
+		font-size: 48px;
+		z-index: 1;
+	}
+	.banner-info h1 {
+		font-size: 28px;
+		color: #fff;
+		margin-bottom: 6px;
+		font-weight: 600;
+	}
+	.banner-info .subtitle {
+		font-size: 15px;
+		color: #b0b0d0;
+		line-height: 1.5;
+	}
+	.banner-info .badges {
+		display: flex;
+		gap: 8px;
+		margin-top: 12px;
+	}
+	.badge {
+		padding: 3px 10px;
+		border-radius: 12px;
+		font-size: 11px;
+		font-weight: 600;
+	}
+	.badge-ver { background: #569cd633; color: #569cd6; border: 1px solid #569cd644; }
+	.badge-dl { background: #4ade8033; color: #4ade80; border: 1px solid #4ade8044; }
+	.badge-rate { background: #fbbf2433; color: #fbbf24; border: 1px solid #fbbf2444; }
+
+	/* カード本体 */
+	.card-body {
+		padding: 32px 40px;
+	}
+	.card-body h3 {
+		font-size: 16px;
+		color: #ccc;
+		margin-bottom: 16px;
+	}
+
+	/* 機能グリッド */
+	.feature-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 16px;
+	}
+	.feature-item {
+		background: #252526;
+		border: 1px solid #3c3c3c;
+		border-radius: 10px;
+		padding: 20px 16px;
+		text-align: center;
+		transition: border-color 0.2s;
+	}
+	.feature-item:hover { border-color: #569cd6; }
+	.feature-icon {
+		font-size: 32px;
+		margin-bottom: 10px;
+	}
+	.feature-name {
+		font-size: 13px;
+		font-weight: 600;
+		color: #e0e0e0;
+		margin-bottom: 4px;
+	}
+	.feature-desc {
+		font-size: 11px;
+		color: #888;
+		line-height: 1.4;
+	}
+
+	/* スクリーンショット風 */
+	.screenshot-section {
+		margin-top: 28px;
+	}
+	.screenshot {
+		background: #1e1e1e;
+		border-radius: 8px;
+		overflow: hidden;
+		border: 1px solid #444;
+	}
+	.ss-titlebar {
+		background: #323233;
+		padding: 6px 12px;
+		font-size: 11px;
+		color: #999;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.ss-dots { display: flex; gap: 5px; }
+	.ss-dot { width: 10px; height: 10px; border-radius: 50%; }
+	.ss-body {
+		display: flex;
+		min-height: 220px;
+	}
+	.ss-actbar {
+		width: 40px;
+		background: #333;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding-top: 8px;
+		gap: 2px;
+	}
+	.ss-acticon {
+		width: 32px;
+		height: 32px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 16px;
+		opacity: 0.4;
+	}
+	.ss-acticon.active { opacity: 1; border-left: 2px solid #fff; }
+	.ss-sidebar {
+		width: 220px;
+		background: #252526;
+		border-right: 1px solid #3c3c3c;
+		font-size: 11px;
+	}
+	.ss-shdr {
+		padding: 4px 8px;
+		font-weight: 600;
+		background: #2d2d2d;
+		color: #bbb;
+		font-size: 10px;
+	}
+	.ss-item {
+		padding: 3px 8px 3px 14px;
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		font-size: 11px;
+	}
+	.ss-item.sel { background: #094771; }
+	.ss-item .ic { font-size: 12px; flex-shrink: 0; }
+	.ss-item .tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.ss-item .dt { color: #666; font-size: 10px; margin-left: auto; flex-shrink: 0; }
+	.ss-editor {
+		flex: 1;
+		background: #1e1e1e;
+	}
+	.ss-tab {
+		background: #252526;
+		border-bottom: 1px solid #3c3c3c;
+		padding: 6px 12px;
+		font-size: 11px;
+		display: flex;
+		gap: 4px;
+		align-items: center;
+	}
+	.ss-tab.active { background: #1e1e1e; }
+	.ss-chat {
+		padding: 10px;
+	}
+	.ss-msg {
+		padding: 8px 10px;
+		border-radius: 6px;
+		font-size: 10px;
+		margin: 4px 0;
+		line-height: 1.4;
+	}
+	.ss-msg-u { background: #2d2d2d; margin-left: 40px; }
+	.ss-msg-a { background: #1a2733; margin-right: 40px; }
+	.ss-msg-role { font-weight: 600; color: #569cd6; font-size: 9px; margin-bottom: 2px; }
+
+	/* アイコン凡例バー */
+	.icon-bar {
+		display: flex;
+		justify-content: center;
+		gap: 24px;
+		padding: 20px 0 0;
+		flex-wrap: wrap;
+	}
+	.icon-bar-item {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 12px;
+		color: #aaa;
+	}
+	.icon-bar-item .ib-icon {
+		font-size: 16px;
+	}
+
+	/* ========== アイコン単体表示 ========== */
+	.icon-showcase {
+		display: flex;
+		gap: 40px;
+		align-items: center;
+	}
+	.icon-size {
+		text-align: center;
+	}
+	.icon-size .size-label {
+		font-size: 11px;
+		color: #666;
+		margin-top: 8px;
+	}
+	.icon-box {
+		background: linear-gradient(135deg, #1a1a2e, #0f3460);
+		border-radius: 20px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: 2px solid #569cd633;
+		position: relative;
+	}
+	.icon-box-lg { width: 128px; height: 128px; border-radius: 24px; }
+	.icon-box-md { width: 64px; height: 64px; border-radius: 14px; }
+	.icon-box-sm { width: 32px; height: 32px; border-radius: 8px; font-size: 16px; }
+
+	/* アイコン内のデザイン */
+	.icon-design {
+		position: relative;
+	}
+	.icon-bubble {
+		position: absolute;
+	}
+</style>
+</head>
+<body>
+
+<!-- ========================================== -->
+<!-- アイコンプレビュー -->
+<!-- ========================================== -->
+<div>
+	<h2>拡張機能アイコン</h2>
+	<div class="icon-showcase">
+		<div class="icon-size">
+			<div class="icon-box icon-box-lg">
+				<svg viewBox="0 0 256 256" width="100" height="100">
+					<defs>
+						<linearGradient id="a1" x1="0%" y1="0%" x2="100%" y2="100%">
+							<stop offset="0%" style="stop-color:#c084fc"/>
+							<stop offset="100%" style="stop-color:#569cd6"/>
+						</linearGradient>
+					</defs>
+					<rect x="30" y="40" width="130" height="75" rx="14" fill="url(#a1)" opacity="0.9"/>
+					<polygon points="60,115 80,115 68,135" fill="#8b6cc4" opacity="0.9"/>
+					<rect x="46" y="56" width="85" height="5" rx="2.5" fill="#fff" opacity="0.7"/>
+					<rect x="46" y="68" width="65" height="5" rx="2.5" fill="#fff" opacity="0.5"/>
+					<rect x="46" y="80" width="95" height="5" rx="2.5" fill="#fff" opacity="0.4"/>
+					<rect x="46" y="92" width="45" height="5" rx="2.5" fill="#fff" opacity="0.3"/>
+					<g transform="translate(178,48)">
+						<polygon points="14,0 18,9.5 28,11 21,18 22.5,28 14,23 5.5,28 7,18 0,11 10,9.5" fill="#fbbf24"/>
+					</g>
+					<circle cx="190" cy="100" r="11" fill="#4ade80"/>
+					<circle cx="190" cy="100" r="4.5" fill="#16213e"/>
+					<g transform="translate(36,150)">
+						<circle cx="24" cy="24" r="17" fill="none" stroke="#569cd6" stroke-width="3.5" opacity="0.8"/>
+						<line x1="37" y1="37" x2="48" y2="48" stroke="#569cd6" stroke-width="3.5" stroke-linecap="round" opacity="0.8"/>
+					</g>
+					<g transform="translate(108,150)">
+						<path d="M6,10 L24,10 L36,22 L24,34 L6,34 Z" fill="none" stroke="#4ade80" stroke-width="3" opacity="0.8"/>
+						<circle cx="15" cy="22" r="3.5" fill="#4ade80" opacity="0.8"/>
+					</g>
+					<g transform="translate(168,148)">
+						<path d="M3,14 L3,38 Q3,42 7,42 L42,42 Q46,42 46,38 L46,19 Q46,15 42,15 L24,15 L21,10 L7,10 Q3,10 3,14 Z" fill="none" stroke="#c084fc" stroke-width="3" opacity="0.8"/>
+					</g>
+					<text x="128" y="224" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="20" font-weight="700" fill="#fff" opacity="0.5" letter-spacing="5">CSM</text>
+				</svg>
+			</div>
+			<div class="size-label">128x128</div>
+		</div>
+		<div class="icon-size">
+			<div class="icon-box icon-box-md">
+				<svg viewBox="0 0 256 256" width="48" height="48">
+					<defs>
+						<linearGradient id="a2" x1="0%" y1="0%" x2="100%" y2="100%">
+							<stop offset="0%" style="stop-color:#c084fc"/>
+							<stop offset="100%" style="stop-color:#569cd6"/>
+						</linearGradient>
+					</defs>
+					<rect x="30" y="40" width="130" height="75" rx="14" fill="url(#a2)" opacity="0.9"/>
+					<polygon points="60,115 80,115 68,135" fill="#8b6cc4" opacity="0.9"/>
+					<rect x="46" y="56" width="85" height="5" rx="2.5" fill="#fff" opacity="0.7"/>
+					<rect x="46" y="68" width="65" height="5" rx="2.5" fill="#fff" opacity="0.5"/>
+					<rect x="46" y="80" width="95" height="5" rx="2.5" fill="#fff" opacity="0.4"/>
+					<g transform="translate(178,48)">
+						<polygon points="14,0 18,9.5 28,11 21,18 22.5,28 14,23 5.5,28 7,18 0,11 10,9.5" fill="#fbbf24"/>
+					</g>
+					<circle cx="190" cy="100" r="11" fill="#4ade80"/>
+					<circle cx="190" cy="100" r="4.5" fill="#16213e"/>
+					<g transform="translate(36,155)">
+						<circle cx="24" cy="24" r="17" fill="none" stroke="#569cd6" stroke-width="4" opacity="0.8"/>
+						<line x1="37" y1="37" x2="48" y2="48" stroke="#569cd6" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+					</g>
+					<g transform="translate(115,155)">
+						<path d="M6,10 L24,10 L36,22 L24,34 L6,34 Z" fill="none" stroke="#4ade80" stroke-width="3.5" opacity="0.8"/>
+						<circle cx="15" cy="22" r="3.5" fill="#4ade80" opacity="0.8"/>
+					</g>
+					<g transform="translate(172,152)">
+						<path d="M3,14 L3,38 Q3,42 7,42 L42,42 Q46,42 46,38 L46,19 Q46,15 42,15 L24,15 L21,10 L7,10 Q3,10 3,14 Z" fill="none" stroke="#c084fc" stroke-width="3.5" opacity="0.8"/>
+					</g>
+				</svg>
+			</div>
+			<div class="size-label">64x64</div>
+		</div>
+		<div class="icon-size">
+			<div class="icon-box icon-box-sm">💬</div>
+			<div class="size-label">32x32</div>
+		</div>
+	</div>
+</div>
+
+<!-- ========================================== -->
+<!-- マーケットプレイス風カード -->
+<!-- ========================================== -->
+<div>
+	<h2>マーケットプレイス掲載イメージ</h2>
+	<div class="marketplace-card">
+		<div class="banner">
+			<div class="banner-icon">
+				<div class="icon-inner">
+					<svg viewBox="0 0 256 256" width="60" height="60">
+						<defs>
+							<linearGradient id="a3" x1="0%" y1="0%" x2="100%" y2="100%">
+								<stop offset="0%" style="stop-color:#c084fc"/>
+								<stop offset="100%" style="stop-color:#569cd6"/>
+							</linearGradient>
+						</defs>
+						<rect x="30" y="45" width="125" height="70" rx="14" fill="url(#a3)" opacity="0.9"/>
+						<polygon points="60,115 78,115 66,132" fill="#8b6cc4" opacity="0.9"/>
+						<rect x="46" y="60" width="80" height="5" rx="2.5" fill="#fff" opacity="0.6"/>
+						<rect x="46" y="72" width="60" height="5" rx="2.5" fill="#fff" opacity="0.4"/>
+						<rect x="46" y="84" width="90" height="5" rx="2.5" fill="#fff" opacity="0.3"/>
+						<g transform="translate(175,52)">
+							<polygon points="12,0 15.5,8 24,9.5 18,15.5 19.5,24 12,20 4.5,24 6,15.5 0,9.5 8.5,8" fill="#fbbf24"/>
+						</g>
+						<circle cx="186" cy="98" r="9" fill="#4ade80"/>
+						<circle cx="186" cy="98" r="3.5" fill="#16213e"/>
+					</svg>
+				</div>
+			</div>
+			<div class="banner-info">
+				<h1>Claude Session Manager</h1>
+				<div class="subtitle">Claude Codeの会話履歴・メモリを管理するVS Code拡張機能</div>
+				<div class="badges">
+					<span class="badge badge-ver">v0.1.0</span>
+					<span class="badge badge-dl">VS Code 1.85+</span>
+					<span class="badge badge-rate">★★★★★</span>
+				</div>
+			</div>
+		</div>
+
+		<div class="card-body">
+			<h3>主な機能</h3>
+			<div class="feature-grid">
+				<div class="feature-item">
+					<div class="feature-icon">💬</div>
+					<div class="feature-name">会話一覧</div>
+					<div class="feature-desc">日付別に自動分類<br>モデル別アイコン</div>
+				</div>
+				<div class="feature-item">
+					<div class="feature-icon">⭐</div>
+					<div class="feature-name">ブックマーク</div>
+					<div class="feature-desc">大事な会話を<br>お気に入り登録</div>
+				</div>
+				<div class="feature-item">
+					<div class="feature-icon">🏷</div>
+					<div class="feature-name">タグ管理</div>
+					<div class="feature-desc">自由なカテゴリで<br>会話を分類</div>
+				</div>
+				<div class="feature-item">
+					<div class="feature-icon">🧠</div>
+					<div class="feature-name">メモリ管理</div>
+					<div class="feature-desc">統合・抽出・削除<br>容量監視</div>
+				</div>
+				<div class="feature-item">
+					<div class="feature-icon">🔍</div>
+					<div class="feature-name">検索</div>
+					<div class="feature-desc">タイトル・ブランチ<br>で絞り込み</div>
+				</div>
+				<div class="feature-item">
+					<div class="feature-icon">👁</div>
+					<div class="feature-name">プレビュー</div>
+					<div class="feature-desc">チャット形式で<br>内容確認</div>
+				</div>
+				<div class="feature-item">
+					<div class="feature-icon">🔗</div>
+					<div class="feature-name">Claude連携</div>
+					<div class="feature-desc">ワンクリックで<br>会話を再開</div>
+				</div>
+				<div class="feature-item">
+					<div class="feature-icon">🟢</div>
+					<div class="feature-name">ライブ検出</div>
+					<div class="feature-desc">使用中セッションを<br>リアルタイム表示</div>
+				</div>
+			</div>
+
+			<div class="screenshot-section">
+				<h3>スクリーンショット</h3>
+				<div class="screenshot">
+					<div class="ss-titlebar">
+						<div class="ss-dots">
+							<div class="ss-dot" style="background: #ff5f57;"></div>
+							<div class="ss-dot" style="background: #febc2e;"></div>
+							<div class="ss-dot" style="background: #28c840;"></div>
+						</div>
+						Visual Studio Code — Claude Session Manager
+					</div>
+					<div class="ss-body">
+						<div class="ss-actbar">
+							<div class="ss-acticon">📁</div>
+							<div class="ss-acticon">🔍</div>
+							<div class="ss-acticon active">💬</div>
+							<div class="ss-acticon">🧩</div>
+						</div>
+						<div class="ss-sidebar">
+							<div style="padding: 6px 8px; font-size: 10px; color: #999; font-weight: 600; letter-spacing: 0.5px;">CLAUDE MANAGER</div>
+							<div class="ss-shdr">▼ 会話一覧</div>
+							<div class="ss-item" style="padding-left: 8px; font-weight: 600; color: #bbb;">
+								<span class="ic">📅</span><span class="tx">今日</span><span class="dt">3件</span>
+							</div>
+							<div class="ss-item sel">
+								<span class="ic" style="color: #4ade80;">●</span>
+								<span class="tx">受注番号修正</span>
+								<span class="dt" style="color: #4ade80;">● 12:42</span>
+							</div>
+							<div class="ss-item">
+								<span class="ic" style="color: #c084fc;">✨</span>
+								<span class="tx">SSHトンネル設定</span>
+								<span class="dt">10:15</span>
+							</div>
+							<div class="ss-item">
+								<span class="ic" style="color: #60a5fa;">⚡</span>
+								<span class="tx">見積フォーム修正</span>
+								<span class="dt">09:30</span>
+							</div>
+							<div class="ss-item" style="padding-left: 8px; font-weight: 600; color: #bbb;">
+								<span class="ic">📅</span><span class="tx">昨日</span><span class="dt">2件</span>
+							</div>
+							<div class="ss-item">
+								<span class="ic" style="color: #fbbf24;">★</span>
+								<span class="tx">掛け率表示修正</span>
+								<span class="dt">21:15</span>
+							</div>
+							<div class="ss-shdr">▶ ブックマーク</div>
+							<div class="ss-shdr">▶ タグ</div>
+							<div class="ss-shdr">▶ メモリ管理</div>
+						</div>
+						<div class="ss-editor">
+							<div class="ss-tab active">💬 受注番号修正</div>
+							<div class="ss-chat">
+								<div style="padding: 8px; background: #2d2d2d; border-left: 2px solid #569cd6; border-radius: 4px; margin-bottom: 10px; font-size: 12px;">
+									<div style="font-weight: 500;">受注番号修正</div>
+									<div style="font-size: 10px; color: #888; margin-top: 3px;">c:\xampp | 24件 | opus</div>
+								</div>
+								<div class="ss-msg ss-msg-u">
+									<div class="ss-msg-role">あなた</div>
+									受注番号のスタート番号を修正してほしい
+								</div>
+								<div class="ss-msg ss-msg-a">
+									<div class="ss-msg-role">Claude</div>
+									受注番号の採番設定を確認します...
+								</div>
+								<div class="ss-msg ss-msg-u">
+									<div class="ss-msg-role">あなた</div>
+									1桁0を削ってください
+								</div>
+								<div class="ss-msg ss-msg-a">
+									<div class="ss-msg-role">Claude</div>
+									修正完了です。start_id: 100000, cur_id: 100000
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="icon-bar">
+				<div class="icon-bar-item"><span class="ib-icon" style="color: #c084fc;">✨</span> Opus</div>
+				<div class="icon-bar-item"><span class="ib-icon" style="color: #60a5fa;">⚡</span> Sonnet</div>
+				<div class="icon-bar-item"><span class="ib-icon" style="color: #4ade80;">🔥</span> Haiku</div>
+				<div class="icon-bar-item"><span class="ib-icon" style="color: #fbbf24;">★</span> ブックマーク</div>
+				<div class="icon-bar-item"><span class="ib-icon" style="color: #4ade80;">●</span> 利用中</div>
+				<div class="icon-bar-item"><span class="ib-icon" style="color: #fff;">▶</span> プレビュー中</div>
+			</div>
+		</div>
+	</div>
+</div>
+
+</body>
+</html>

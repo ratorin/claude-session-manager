@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+	<defs>
+		<linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+			<stop offset="0%" style="stop-color:#1a1a2e"/>
+			<stop offset="50%" style="stop-color:#16213e"/>
+			<stop offset="100%" style="stop-color:#0f3460"/>
+		</linearGradient>
+		<linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+			<stop offset="0%" style="stop-color:#c084fc"/>
+			<stop offset="100%" style="stop-color:#569cd6"/>
+		</linearGradient>
+		<linearGradient id="green" x1="0%" y1="0%" x2="0%" y2="100%">
+			<stop offset="0%" style="stop-color:#4ade80"/>
+			<stop offset="100%" style="stop-color:#22c55e"/>
+		</linearGradient>
+	</defs>
+
+	<!-- 背景 -->
+	<rect width="256" height="256" rx="40" fill="url(#bg)"/>
+
+	<!-- 吹き出し（大） -->
+	<rect x="40" y="50" width="140" height="80" rx="16" fill="url(#accent)" opacity="0.9"/>
+	<polygon points="70,130 90,130 75,150" fill="#8b6cc4" opacity="0.9"/>
+
+	<!-- 吹き出し内の線 -->
+	<rect x="56" y="68" width="90" height="6" rx="3" fill="#fff" opacity="0.7"/>
+	<rect x="56" y="82" width="70" height="6" rx="3" fill="#fff" opacity="0.5"/>
+	<rect x="56" y="96" width="100" height="6" rx="3" fill="#fff" opacity="0.4"/>
+	<rect x="56" y="110" width="50" height="6" rx="3" fill="#fff" opacity="0.3"/>
+
+	<!-- ブックマーク星 -->
+	<g transform="translate(192, 58)">
+		<polygon points="16,0 20.5,11 32,12.5 23.5,20.5 25.8,32 16,26.5 6.2,32 8.5,20.5 0,12.5 11.5,11" fill="#fbbf24"/>
+	</g>
+
+	<!-- 利用中マーク（緑丸） -->
+	<circle cx="198" cy="108" r="12" fill="url(#green)"/>
+	<circle cx="198" cy="108" r="5" fill="#16213e"/>
+
+	<!-- 検索アイコン -->
+	<g transform="translate(44, 160)">
+		<circle cx="28" cy="28" r="20" fill="none" stroke="#569cd6" stroke-width="4" opacity="0.8"/>
+		<line x1="43" y1="43" x2="56" y2="56" stroke="#569cd6" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+	</g>
+
+	<!-- タグアイコン -->
+	<g transform="translate(120, 158)">
+		<path d="M8,12 L28,12 L42,26 L28,40 L8,40 Z" fill="none" stroke="#4ade80" stroke-width="3.5" opacity="0.8"/>
+		<circle cx="18" cy="26" r="4" fill="#4ade80" opacity="0.8"/>
+	</g>
+
+	<!-- フォルダアイコン（メモリ） -->
+	<g transform="translate(175, 158)">
+		<path d="M4,16 L4,44 Q4,48 8,48 L48,48 Q52,48 52,44 L52,22 Q52,18 48,18 L28,18 L24,12 L8,12 Q4,12 4,16 Z" fill="none" stroke="#c084fc" stroke-width="3.5" opacity="0.8"/>
+	</g>
+
+	<!-- CSM テキスト -->
+	<text x="128" y="230" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="22" font-weight="700" fill="#fff" opacity="0.6" letter-spacing="6">CSM</text>
+</svg>
