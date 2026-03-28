@@ -55,7 +55,10 @@ export class MemoryGroupItem extends vscode.TreeItem {
 
 export class MemoryFileItem extends vscode.TreeItem {
 	constructor(public readonly memoryFile: MemoryFile) {
-		super(memoryFile.name, vscode.TreeItemCollapsibleState.None);
+		// ファイルの行数を計算（3桁右揃え）
+		const lineCount = memoryFile.content.split('\n').length;
+		const lineStr = String(lineCount).padStart(3, '\u2007');
+		super(`${lineStr} ${memoryFile.name}`, vscode.TreeItemCollapsibleState.None);
 
 		this.description = `[${memoryFile.type}] ${memoryFile.description.substring(0, 50)}`;
 		this.tooltip = `${memoryFile.name}\n` +
