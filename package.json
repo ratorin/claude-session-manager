@@ -20,7 +20,7 @@
 			"activitybar": [
 				{
 					"id": "claude-manager",
-					"title": "Claude Manager",
+					"title": "Claude Session Manager",
 					"icon": "$(comment-discussion)"
 				}
 			]
@@ -50,91 +50,91 @@
 				"command": "claudeManager.refreshSessions",
 				"title": "会話一覧を更新",
 				"icon": "$(refresh)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.previewSession",
 				"title": "会話をプレビュー",
 				"icon": "$(eye)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.bookmarkSession",
 				"title": "ブックマークに追加",
 				"icon": "$(star-empty)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.unbookmarkSession",
 				"title": "ブックマークから削除",
 				"icon": "$(star-full)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.tagSession",
 				"title": "タグを追加",
 				"icon": "$(tag)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.removeTag",
 				"title": "タグを削除",
 				"icon": "$(close)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.renameSession",
 				"title": "会話をリネーム",
 				"icon": "$(edit)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.searchSessions",
 				"title": "会話を検索",
 				"icon": "$(search)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.refreshMemory",
 				"title": "メモリを更新",
 				"icon": "$(refresh)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.previewMemory",
 				"title": "メモリをプレビュー",
 				"icon": "$(eye)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.mergeMemories",
 				"title": "メモリを統合",
 				"icon": "$(merge)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.extractMemory",
 				"title": "メモリから抽出",
 				"icon": "$(split-horizontal)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.deleteMemory",
 				"title": "メモリを削除",
 				"icon": "$(trash)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.editMemory",
 				"title": "メモリを編集",
 				"icon": "$(edit)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.openInClaude",
 				"title": "Claude Codeで開く",
 				"icon": "$(terminal)",
-				"category": "Claude Manager"
+				"category": "Claude Session Manager"
 			}
 		],
 		"menus": {
