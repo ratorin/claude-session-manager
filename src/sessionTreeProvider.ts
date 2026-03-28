@@ -225,9 +225,13 @@ export class SessionItem extends vscode.TreeItem {
 			? session.model.replace('claude-', '').replace(/-\d.*$/, '')
 			: '';
 
+		// 元のメッセージ（タイトルが変わっている場合のみ表示）
+		const hasCustomTitle = !!(session.customName || session.claudeTitle);
+		const originalMsg = hasCustomTitle ? session.firstMessage.substring(0, 30) : '';
+
 		// ステータス表示
 		const statusPrefix = isLive ? '● ' : '';
-		this.description = `${statusPrefix}${timeStr} ${modelShort}${tagStr}`;
+		this.description = `${statusPrefix}${originalMsg ? originalMsg + ' ' : ''}${timeStr} ${modelShort}${tagStr}`;
 
 		this.tooltip = new vscode.MarkdownString(
 			`${isLive ? '🟢 Claude Codeで使用中\n\n' : ''}` +
