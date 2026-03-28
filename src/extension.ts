@@ -309,6 +309,18 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
+	// 使い方ガイドを開く
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.openGuide', () => {
+			const guidePath = path.join(context.extensionPath, 'guide.html');
+			if (fs.existsSync(guidePath)) {
+				vscode.env.openExternal(vscode.Uri.file(guidePath));
+			} else {
+				vscode.window.showErrorMessage('guide.html が見つかりません');
+			}
+		})
+	);
+
 	// 初回読み込み＆ライブセッション監視開始
 	sessionProvider.refresh();
 	sessionProvider.startWatching();

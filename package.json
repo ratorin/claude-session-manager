@@ -3,7 +3,7 @@
 	"displayName": "Claude Session Manager",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
 	"version": "0.1.0",
-	"publisher": "local",
+	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
 	},
@@ -136,6 +136,12 @@
 				"title": "Claude Codeで開く",
 				"icon": "$(terminal)",
 				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.openGuide",
+				"title": "使い方ガイドを開く",
+				"icon": "$(book)",
+				"category": "Claude Session Manager"
 			}
 		],
 		"menus": {
@@ -147,6 +153,11 @@
 				},
 				{
 					"command": "claudeManager.searchSessions",
+					"when": "view == claudeSessions",
+					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.openGuide",
 					"when": "view == claudeSessions",
 					"group": "navigation"
 				},
