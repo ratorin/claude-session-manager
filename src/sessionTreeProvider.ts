@@ -4,7 +4,33 @@ import * as path from 'path';
 import * as os from 'os';
 import { ParsedSession } from './types';
 import { loadAllSessions } from './sessionLoader';
+import { getMemoryStats, getMemoryDirs } from './memoryManager';
 import * as dataStore from './dataStore';
+
+// メモリ行数インジケーター
+export class MemoryIndicatorItem extends vscode.TreeItem {
+	constructor() {
+		const dirs = getMemoryDirs();
+		let totalLines = 0;
+		const maxLines = 200;
+		for (const dir of dirs) {
+			const stats = getMemoryStats(dir);
+			totalLines += stats.indexLines;
+		}
+		const pct = Math.round((totalLines / maxLines) * 100);
+		const bar = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
+
+		super(`${bar} ${totalLines}/${maxLines}行 (${pct}%)`, vscode.TreeItemCollapsibleState.None);
+
+		if (pct >= 80) {
+			this.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('editorWarning.foreground'));
+		} else {
+			this.iconPath = new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.blue'));
+		}
+		this.tooltip = `MEMORY.md インデックス使用率: ${totalLines}/${maxLines}行 (${pct}%)`;
+		this.contextValue = 'indicator';
+	}
+}
 
 // 日付グループヘッダー
 export class DateGroupItem extends vscode.TreeItem {
@@ -15,7 +41,7 @@ export class DateGroupItem extends vscode.TreeItem {
 	}
 }
 
-type TreeNode = DateGroupItem | SessionItem;
+type TreeNode = MemoryIndicatorItem | DateGroupItem | SessionItem;
 
 export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 	private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined>();
@@ -134,12 +160,14 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 		}
 
 		if (!element) {
-			// 日付グループを返す
-			const groups: DateGroupItem[] = [];
+			const items: TreeNode[] = [];
+			// メモリ行数インジケーター
+			items.push(new MemoryIndicatorItem());
+			// 日付グループ
 			for (const [label, sessions] of this.groupedSessions) {
-				groups.push(new DateGroupItem(label, sessions.length));
+				items.push(new DateGroupItem(label, sessions.length));
 			}
-			return groups;
+			return items;
 		}
 
 		if (element instanceof DateGroupItem) {
