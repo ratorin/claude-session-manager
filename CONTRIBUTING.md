@@ -54,10 +54,11 @@ VS Codeで `F5` → Extension Development Hostで動作確認。
 ## 技術仕様
 
 ### セッションタイトルの優先順位
-1. Session Managerでリネームした名前
-2. Claude Codeの自動生成タイトル（`ai-title`）
-3. Claude Codeの `/rename` で設定した名前（`custom-title`）
-4. ユーザーの最初の発言（システムタグ除去済み）
+1. Session Managerでリネームした名前（dataStore）
+2. Claude Codeのタイトル（`custom-title` > `ai-title`）
+3. ユーザーの最初の発言（システムタグ除去済み）
+
+※ リネーム・AIタイトル使用時は元のメッセージ（先頭30文字）をdescriptionに表示
 
 ### Claude Codeとの連携
 - **リネーム同期**: Session Managerでリネームすると、JSONLファイルに `custom-title` を書き込み、Claude Code側にも反映
@@ -85,7 +86,6 @@ claude-session-manager/
 ├── package.json                # 拡張機能マニフェスト
 ├── tsconfig.json
 ├── guide.html                  # 図解ガイド（ブラウザで開く）
-├── mockup.html                 # UIモックアップ
 └── images/
     ├── icon.png                # 拡張機能アイコン
     ├── icon.svg                # アイコン原本（SVG）

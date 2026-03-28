@@ -35,7 +35,7 @@ export class BookmarkTreeProvider implements vscode.TreeDataProvider<SessionItem
 				const tags = dataStore.getTagsForSession(session.id);
 				const isPreviewing = session.id === this.sessionProvider.getActiveSessionId();
 				const isLive = this.sessionProvider.isLiveSession(session.id);
-				return new SessionItem(session, true, tags, isPreviewing, isLive);
+				return new SessionItem(session, true, tags, isPreviewing, isLive, true);
 			});
 	}
 }

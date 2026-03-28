@@ -205,13 +205,19 @@ export class SessionItem extends vscode.TreeItem {
 		public readonly isBookmarked: boolean,
 		public readonly tags: string[],
 		public readonly isPreviewing: boolean = false,
-		public readonly isLive: boolean = false
+		public readonly isLive: boolean = false,
+		public readonly inBookmarkView: boolean = false
 	) {
 		const displayName = session.customName || session.claudeTitle || session.firstMessage;
+		// モデル頭文字（全角で等幅）
+		const modelChar = session.model?.includes('opus') ? 'Ｏ'
+			: session.model?.includes('sonnet') ? 'Ｓ'
+			: session.model?.includes('haiku') ? 'Ｈ'
+			: '\u3000';
 		// 件数を5桁右揃え（Figure Space U+2007 で等幅パディング）
 		const figureSpace = '\u2007';
 		const countStr = String(session.messageCount).padStart(5, figureSpace);
-		super(`${countStr} ${displayName}`, vscode.TreeItemCollapsibleState.None);
+		super(`${modelChar}${countStr} ${displayName}`, vscode.TreeItemCollapsibleState.None);
 
 		// 時刻フォーマット
 		const date = session.lastTimestamp;
@@ -248,26 +254,22 @@ export class SessionItem extends vscode.TreeItem {
 
 		this.contextValue = isBookmarked ? 'bookmarkedSession' : 'session';
 
-		// アイコン:
-		// プレビュー+利用中 → 緑の三角
-		// 利用中のみ → 緑の丸
-		// ブックマーク+プレビュー中 → 緑の星
-		// プレビュー中のみ → 白い再生
-		// ブックマーク → 黄色の星
+		// アイコン（形で状態を区別、選択時に白くなっても判別可能）:
+		// プレビュー+利用中 → target（緑）
+		// 利用中のみ → circle-filled（緑）
+		// プレビュー中 → eye（白）
+		// ブックマーク → star-full（黄）
 		// 通常 → モデル別アイコン
 		if (isPreviewing && isLive) {
-			this.iconPath = new vscode.ThemeIcon('play', new vscode.ThemeColor('terminal.ansiGreen'));
+			this.iconPath = new vscode.ThemeIcon('target', new vscode.ThemeColor('terminal.ansiGreen'));
 		} else if (isLive) {
 			this.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('terminal.ansiGreen'));
-		} else if (isBookmarked && isPreviewing) {
-			this.iconPath = new vscode.ThemeIcon('star-full', new vscode.ThemeColor('terminal.ansiGreen'));
 		} else if (isPreviewing) {
-			this.iconPath = new vscode.ThemeIcon('play', new vscode.ThemeColor('foreground'));
-		} else if (isBookmarked) {
+			this.iconPath = new vscode.ThemeIcon('eye', new vscode.ThemeColor('foreground'));
+		} else if (isBookmarked && !inBookmarkView) {
 			this.iconPath = new vscode.ThemeIcon('star-full', new vscode.ThemeColor('charts.yellow'));
 		} else {
-			const { icon, color } = getModelIcon(session.model);
-			this.iconPath = new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
+			this.iconPath = new vscode.ThemeIcon('primitive-dot', new vscode.ThemeColor('foreground'));
 		}
 
 		// 他プロジェクトの色分け用URI
