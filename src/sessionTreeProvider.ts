@@ -251,6 +251,7 @@ export class SessionItem extends vscode.TreeItem {
 		// アイコン:
 		// プレビュー+利用中 → 緑の三角
 		// 利用中のみ → 緑の丸
+		// ブックマーク+プレビュー中 → 緑の星
 		// プレビュー中のみ → 白い再生
 		// ブックマーク → 黄色の星
 		// 通常 → モデル別アイコン
@@ -258,6 +259,8 @@ export class SessionItem extends vscode.TreeItem {
 			this.iconPath = new vscode.ThemeIcon('play', new vscode.ThemeColor('terminal.ansiGreen'));
 		} else if (isLive) {
 			this.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('terminal.ansiGreen'));
+		} else if (isBookmarked && isPreviewing) {
+			this.iconPath = new vscode.ThemeIcon('star-full', new vscode.ThemeColor('terminal.ansiGreen'));
 		} else if (isPreviewing) {
 			this.iconPath = new vscode.ThemeIcon('play', new vscode.ThemeColor('foreground'));
 		} else if (isBookmarked) {
