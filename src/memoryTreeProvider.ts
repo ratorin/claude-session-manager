@@ -1,20 +1,24 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { MemoryFile } from './types';
 import { loadMemoryFiles, getMemoryStats } from './memoryManager';
 
-export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryGroupItem | MemoryFileItem | MemoryStatsItem> {
-	private _onDidChangeTreeData = new vscode.EventEmitter<MemoryGroupItem | MemoryFileItem | MemoryStatsItem | undefined>();
+type MemoryTreeNode = MemoryGroupItem | MemoryFileItem | MemoryStatsItem | MemoryIndexItem;
+
+export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNode> {
+	private _onDidChangeTreeData = new vscode.EventEmitter<MemoryTreeNode | undefined>();
 	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
 	refresh(): void {
 		this._onDidChangeTreeData.fire(undefined);
 	}
 
-	getTreeItem(element: MemoryGroupItem | MemoryFileItem | MemoryStatsItem): vscode.TreeItem {
+	getTreeItem(element: MemoryTreeNode): vscode.TreeItem {
 		return element;
 	}
 
-	getChildren(element?: MemoryGroupItem | MemoryFileItem | MemoryStatsItem): (MemoryGroupItem | MemoryFileItem | MemoryStatsItem)[] {
+	getChildren(element?: MemoryGroupItem | MemoryFileItem | MemoryStatsItem | MemoryIndexItem): (MemoryGroupItem | MemoryFileItem | MemoryStatsItem | MemoryIndexItem)[] {
 		if (!element) {
 			// プロジェクト別グループ
 			const groups = loadMemoryFiles();
@@ -22,11 +26,17 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryGroupIt
 		}
 
 		if (element instanceof MemoryGroupItem) {
-			const items: (MemoryStatsItem | MemoryFileItem)[] = [];
+			const items: (MemoryStatsItem | MemoryIndexItem | MemoryFileItem)[] = [];
 
 			// 容量情報
 			const stats = getMemoryStats(element.memoryDir);
-			items.push(new MemoryStatsItem(stats));
+			items.push(new MemoryStatsItem(stats, element.memoryDir));
+
+			// MEMORY.md インデックスファイル
+			const indexPath = path.join(element.memoryDir, 'MEMORY.md');
+			if (fs.existsSync(indexPath)) {
+				items.push(new MemoryIndexItem(indexPath));
+			}
 
 			// タイプ別アイコンでファイル一覧
 			for (const file of element.files) {
@@ -86,7 +96,7 @@ export class MemoryFileItem extends vscode.TreeItem {
 }
 
 export class MemoryStatsItem extends vscode.TreeItem {
-	constructor(stats: { totalFiles: number; totalBytes: number; indexLines: number; maxIndexLines: number }) {
+	constructor(stats: { totalFiles: number; totalBytes: number; indexLines: number; maxIndexLines: number }, memoryDir?: string) {
 		const pct = Math.round((stats.indexLines / stats.maxIndexLines) * 100);
 		const bar = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
 		const label = `${bar} ${stats.indexLines}/${stats.maxIndexLines}行 (${pct}%) — ${stats.totalFiles}件 ${formatBytes(stats.totalBytes)}`;
@@ -98,8 +108,46 @@ export class MemoryStatsItem extends vscode.TreeItem {
 			this.iconPath = new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.blue'));
 		}
 
-		this.tooltip = `MEMORY.md インデックス使用率: ${stats.indexLines}/${stats.maxIndexLines}行 (${pct}%)\nメモリファイル: ${stats.totalFiles}件 (${formatBytes(stats.totalBytes)})`;
+		this.tooltip = `MEMORY.md インデックス使用率: ${stats.indexLines}/${stats.maxIndexLines}行 (${pct}%)\nメモリファイル: ${stats.totalFiles}件 (${formatBytes(stats.totalBytes)})\nクリックでMEMORY.mdを開く`;
 		this.contextValue = 'stats';
+
+		// クリックでMEMORY.mdを開く
+		if (memoryDir) {
+			const indexPath = path.join(memoryDir, 'MEMORY.md');
+			if (fs.existsSync(indexPath)) {
+				this.command = {
+					command: 'vscode.open',
+					title: 'MEMORY.mdを開く',
+					arguments: [vscode.Uri.file(indexPath)],
+				};
+			}
+		}
+	}
+}
+
+// MEMORY.md インデックスファイル表示用
+export class MemoryIndexItem extends vscode.TreeItem {
+	public readonly indexPath: string;
+
+	constructor(indexPath: string) {
+		const content = fs.readFileSync(indexPath, 'utf-8');
+		const lineCount = content.split('\n').length;
+		super(`📋 MEMORY.md`, vscode.TreeItemCollapsibleState.None);
+
+		this.indexPath = indexPath;
+		this.description = `インデックス (${lineCount}行)`;
+		this.tooltip = `MEMORY.md — メモリインデックスファイル\n` +
+			`${lineCount}行\n` +
+			`クリックでエディタで開く\n\n` +
+			content.substring(0, 500);
+		this.iconPath = new vscode.ThemeIcon('list-tree', new vscode.ThemeColor('charts.yellow'));
+		this.contextValue = 'memoryIndex';
+
+		this.command = {
+			command: 'vscode.open',
+			title: 'MEMORY.mdを開く',
+			arguments: [vscode.Uri.file(indexPath)],
+		};
 	}
 }
 
