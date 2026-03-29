@@ -106,9 +106,11 @@ function extractText(content: string | ContentBlock[]): string {
 	return '';
 }
 
-// プロジェクト名をディレクトリ名からデコード
+// プロジェクト名をディレクトリ名からデコード（フォールバック用）
 function decodeProjectName(dirName: string): string {
-	// "c--xampp" → "c:\xampp" のようなデコード
+	// "c--Users-taro-OneDrive-------" のような形式
+	// 日本語等の非ASCII文字は '-' にエンコードされるため完全な復元は不可能
+	// → cwdFromJsonl があればそちらを優先する
 	return dirName
 		.replace(/^([a-zA-Z])--/, '$1:\\')
 		.replace(/--/g, '\\')
@@ -127,6 +129,7 @@ export function parseSessionFile(filePath: string): ParsedSession | null {
 		let gitBranch: string | undefined;
 		let sessionId = '';
 		let claudeTitle: string | undefined;
+		let cwd: string | undefined;
 
 		for (const line of lines) {
 			try {
@@ -141,6 +144,11 @@ export function parseSessionFile(filePath: string): ParsedSession | null {
 				if (parsed.type === 'ai-title' && parsed.aiTitle && !claudeTitle) {
 					claudeTitle = parsed.aiTitle;
 					continue;
+				}
+
+				// cwdを取得（最初に見つかったものを使用）
+				if (!cwd && parsed.cwd) {
+					cwd = parsed.cwd;
 				}
 
 				if (parsed.type === 'user' && parsed.message) {
@@ -180,9 +188,9 @@ export function parseSessionFile(filePath: string): ParsedSession | null {
 			return null;
 		}
 
-		// ファイルパスからプロジェクト名を抽出
+		// プロジェクトパス: JSONLのcwdを優先、なければディレクトリ名からデコード
 		const projectDir = path.basename(path.dirname(filePath));
-		const project = decodeProjectName(projectDir);
+		const project = cwd || decodeProjectName(projectDir);
 		const id = sessionId || path.basename(filePath, '.jsonl');
 
 		return {
@@ -234,10 +242,16 @@ function parseSessionQuick(filePath: string): ParsedSession | null {
 		let sessionId = '';
 		let messageCount = 0;
 		let claudeTitle: string | undefined;
+		let cwd: string | undefined;
 
 		for (const line of lines) {
 			try {
 				const parsed = JSON.parse(line);
+
+				// cwdを取得（最初に見つかったものを使用）
+				if (!cwd && parsed.cwd) {
+					cwd = parsed.cwd;
+				}
 
 				// Claude Codeの /rename で設定されたタイトル（custom-titleを優先）
 				if (parsed.type === 'custom-title' && parsed.customTitle) {
@@ -286,7 +300,7 @@ function parseSessionQuick(filePath: string): ParsedSession | null {
 		}
 
 		const projectDir = path.basename(path.dirname(filePath));
-		const project = decodeProjectName(projectDir);
+		const project = cwd || decodeProjectName(projectDir);
 		const id = sessionId || path.basename(filePath, '.jsonl');
 
 		return {
