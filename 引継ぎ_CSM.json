@@ -1,0 +1,81 @@
+{
+	"project": "Claude Session Manager (CSM)",
+	"repository": "https://github.com/ratorin/claude-session-manager",
+	"directory": "c:\\xampp\\Project\\claude-session-manager",
+	"version": "0.1.4",
+	"publisher": "ratorin",
+
+	"公開先": {
+		"Microsoft Marketplace": "https://marketplace.visualstudio.com/items?itemName=ratorin.claude-session-manager",
+		"Open VSX": "https://open-vsx.org/extension/ratorin/claude-session-manager"
+	},
+
+	"更新手順": [
+		"1. コード修正",
+		"2. package.json の version を上げる",
+		"3. npx @vscode/vsce publish で Microsoft Marketplace に公開",
+		"4. npx ovsx publish <vsixファイル> -p <トークン> で Open VSX に公開",
+		"5. git commit & push"
+	],
+
+	"ファイル構成": {
+		"src/extension.ts": "エントリポイント・コマンド登録",
+		"src/types.ts": "型定義",
+		"src/sessionLoader.ts": "JSONL読み込み・パース",
+		"src/dataStore.ts": "ブックマーク・タグ・カスタム名・メモの永続化",
+		"src/memoryManager.ts": "メモリファイル操作",
+		"src/sessionTreeProvider.ts": "会話一覧TreeView（日付グループ・ライブ検出）",
+		"src/bookmarkTreeProvider.ts": "ブックマークTreeView",
+		"src/tagTreeProvider.ts": "タグTreeView",
+		"src/memoryTreeProvider.ts": "メモリ管理TreeView",
+		"src/webviewPanel.ts": "会話・メモリプレビュー",
+		"guide.html": "使い方ガイド（Claude風配色）",
+		"CHANGELOG.md": "更新履歴",
+		"CONTRIBUTING.md": "開発者向け技術情報"
+	},
+
+	"主な機能": {
+		"会話一覧": "日付別分類、モデル頭文字（Ｏ/Ｓ/Ｈ）、件数5桁右揃え、他プロジェクト色分け",
+		"タイトル優先順位": "1.リネーム(dataStore) → 2.custom-title/ai-title → 3.最初のメッセージ",
+		"アイコン体系": {
+			"通常": "primitive-dot",
+			"ブックマーク": "star-full（黄）",
+			"利用中": "circle-filled（緑）",
+			"プレビュー中": "eye",
+			"プレビュー+利用中": "target（緑）",
+			"補足": "ブックマークセクション内はstar表示しない（inBookmarkViewフラグ）"
+		},
+		"リネーム時": "元メッセージ先頭30文字をdescriptionに表示",
+		"メモリ管理": "プログレスバー付きインジケーター、MEMORY.mdクリック編集、個別ファイル行数表示、MemoryIndexItemで専用表示"
+	},
+
+	"データパス": {
+		"会話履歴": "~/.claude/projects/{プロジェクト}/{セッションID}.jsonl",
+		"アクティブセッション": "~/.claude/sessions/{PID}.json",
+		"メモリ": "~/.claude/projects/{プロジェクト}/memory/*.md",
+		"拡張機能データ": "~/.claude/session-manager.json"
+	},
+
+	"今セッションでの変更点": [
+		"メモリインジケーターを会話一覧→メモリ管理セクションに移動",
+		"件数を5桁Figure Space右揃えでラベル先頭に表示",
+		"ai-titleからClaude Code自動生成タイトルを取得",
+		"他プロジェクトのセッションをdisabledForegroundで薄く表示（SessionDecorationProvider）",
+		"リネーム・AIタイトル時にdescriptionへ元メッセージ表示",
+		"アイコン体系刷新（eye/target/primitive-dot、全角モデル頭文字）",
+		"ブックマークセクション内は★ではなく小さい点（inBookmarkViewフラグ）",
+		"guide.htmlをClaude風配色に変更、固有名詞を一般例に置換",
+		"PNGアイコン生成（Claudeオレンジ背景）",
+		"使い方ガイドコマンド追加（タイトルバー+コマンドパレット）",
+		"README/CONTRIBUTING分離、CHANGELOG追加",
+		"publisher: local → ratorin、Marketplace＆Open VSX公開",
+		"メモリファイル行数表示、MEMORY.mdクリック編集対応",
+		"mockup.html削除"
+	],
+
+	"注意事項": [
+		"PATやトークンはチャットに貼らないこと",
+		"VS Codeフォーク（Antigravity等）はOpen VSXを参照する",
+		"PAT有効期限は約1年（Azure DevOps）"
+	]
+}

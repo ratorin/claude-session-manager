@@ -117,6 +117,68 @@ function decodeProjectName(dirName: string): string {
 		.replace(/-/g, ' ');
 }
 
+// エンコードされたプロジェクトディレクトリ名→実パスのマッピングを構築
+// セッションJSONLのcwdフィールドから逆引きする
+export function buildProjectPathMap(): Map<string, string> {
+	const claudeDir = getClaudeDir();
+	const projectsDir = path.join(claudeDir, 'projects');
+	const map = new Map<string, string>();
+
+	if (!fs.existsSync(projectsDir)) {
+		return map;
+	}
+
+	const projects = fs.readdirSync(projectsDir);
+	for (const project of projects) {
+		const projectPath = path.join(projectsDir, project);
+		if (!fs.statSync(projectPath).isDirectory()) {
+			continue;
+		}
+
+		// JSONLファイルから1つだけcwdを取得
+		const entries = fs.readdirSync(projectPath);
+		for (const entry of entries) {
+			if (!entry.endsWith('.jsonl')) {
+				continue;
+			}
+			const cwd = extractCwdFromJsonl(path.join(projectPath, entry));
+			if (cwd) {
+				map.set(project, cwd);
+				break;
+			}
+		}
+	}
+
+	return map;
+}
+
+// JSONLファイルの先頭数行からcwdを抽出（軽量）
+function extractCwdFromJsonl(filePath: string): string | undefined {
+	try {
+		const fd = fs.openSync(filePath, 'r');
+		const buf = Buffer.alloc(4096);
+		const bytesRead = fs.readSync(fd, buf, 0, 4096, 0);
+		fs.closeSync(fd);
+
+		const chunk = buf.toString('utf-8', 0, bytesRead);
+		const lines = chunk.split('\n');
+		for (const line of lines) {
+			if (!line.trim()) { continue; }
+			try {
+				const parsed = JSON.parse(line);
+				if (parsed.cwd) {
+					return parsed.cwd;
+				}
+			} catch {
+				// 不完全な行はスキップ
+			}
+		}
+	} catch {
+		// ファイル読み取り失敗
+	}
+	return undefined;
+}
+
 // JSONLファイルからセッションをパース
 export function parseSessionFile(filePath: string): ParsedSession | null {
 	try {

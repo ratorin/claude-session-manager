@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { MemoryFile } from './types';
+import { buildProjectPathMap } from './sessionLoader';
 
 // メモリディレクトリの一覧を取得
 export function getMemoryDirs(): string[] {
@@ -48,11 +49,13 @@ function parseFrontmatter(content: string): { meta: Record<string, string>; body
 // 全メモリファイルを読み込み
 export function loadMemoryFiles(): { dir: string; project: string; files: MemoryFile[] }[] {
 	const dirs = getMemoryDirs();
+	const pathMap = buildProjectPathMap();
 	const result: { dir: string; project: string; files: MemoryFile[] }[] = [];
 
 	for (const dir of dirs) {
 		const projectDir = path.basename(path.dirname(dir));
-		const project = projectDir
+		// セッションJSONLのcwdから実パスを取得、なければフォールバックデコード
+		const project = pathMap.get(projectDir) || projectDir
 			.replace(/^([a-zA-Z])--/, '$1:\\')
 			.replace(/--/g, '\\')
 			.replace(/-/g, ' ');
