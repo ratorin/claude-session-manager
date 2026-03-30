@@ -18,7 +18,7 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNod
 		return element;
 	}
 
-	getChildren(element?: MemoryGroupItem | MemoryFileItem | MemoryStatsItem | MemoryIndexItem): (MemoryGroupItem | MemoryFileItem | MemoryStatsItem | MemoryIndexItem)[] {
+	getChildren(element?: MemoryTreeNode): MemoryTreeNode[] {
 		if (!element) {
 			// プロジェクト別グループ
 			const groups = loadMemoryFiles();
@@ -26,16 +26,15 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNod
 		}
 
 		if (element instanceof MemoryGroupItem) {
-			const items: (MemoryStatsItem | MemoryIndexItem | MemoryFileItem)[] = [];
+			const items: MemoryTreeNode[] = [];
 
-			// 容量情報
+			// 容量情報（インジケーター）
 			const stats = getMemoryStats(element.memoryDir);
-			items.push(new MemoryStatsItem(stats, element.memoryDir));
+			items.push(new MemoryStatsItem(stats));
 
 			// MEMORY.md インデックスファイル
-			const indexPath = path.join(element.memoryDir, 'MEMORY.md');
-			if (fs.existsSync(indexPath)) {
-				items.push(new MemoryIndexItem(indexPath));
+			if (fs.existsSync(stats.indexPath)) {
+				items.push(new MemoryIndexItem(stats.indexPath));
 			}
 
 			// タイプ別アイコンでファイル一覧
@@ -96,7 +95,7 @@ export class MemoryFileItem extends vscode.TreeItem {
 }
 
 export class MemoryStatsItem extends vscode.TreeItem {
-	constructor(stats: { totalFiles: number; totalBytes: number; indexLines: number; maxIndexLines: number }, memoryDir?: string) {
+	constructor(stats: { totalFiles: number; totalBytes: number; indexLines: number; maxIndexLines: number; indexPath: string }) {
 		const pct = Math.round((stats.indexLines / stats.maxIndexLines) * 100);
 		const bar = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
 		const label = `${bar} ${stats.indexLines}/${stats.maxIndexLines}行 (${pct}%) — ${stats.totalFiles}件 ${formatBytes(stats.totalBytes)}`;
@@ -108,20 +107,8 @@ export class MemoryStatsItem extends vscode.TreeItem {
 			this.iconPath = new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.blue'));
 		}
 
-		this.tooltip = `MEMORY.md インデックス使用率: ${stats.indexLines}/${stats.maxIndexLines}行 (${pct}%)\nメモリファイル: ${stats.totalFiles}件 (${formatBytes(stats.totalBytes)})\nクリックでMEMORY.mdを開く`;
+		this.tooltip = `MEMORY.md インデックス使用率: ${stats.indexLines}/${stats.maxIndexLines}行 (${pct}%)\nメモリファイル: ${stats.totalFiles}件 (${formatBytes(stats.totalBytes)})`;
 		this.contextValue = 'stats';
-
-		// クリックでMEMORY.mdを開く
-		if (memoryDir) {
-			const indexPath = path.join(memoryDir, 'MEMORY.md');
-			if (fs.existsSync(indexPath)) {
-				this.command = {
-					command: 'vscode.open',
-					title: 'MEMORY.mdを開く',
-					arguments: [vscode.Uri.file(indexPath)],
-				};
-			}
-		}
 	}
 }
 

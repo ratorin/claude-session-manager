@@ -90,7 +90,7 @@ export function loadMemoryFiles(): { dir: string; project: string; files: Memory
 }
 
 // メモリインデックス（MEMORY.md）の容量情報を取得
-export function getMemoryStats(memoryDir: string): { totalFiles: number; totalBytes: number; indexLines: number; maxIndexLines: number } {
+export function getMemoryStats(memoryDir: string): { totalFiles: number; totalBytes: number; indexLines: number; maxIndexLines: number; indexPath: string } {
 	const indexPath = path.join(memoryDir, 'MEMORY.md');
 	let indexLines = 0;
 
@@ -117,6 +117,7 @@ export function getMemoryStats(memoryDir: string): { totalFiles: number; totalBy
 		totalBytes,
 		indexLines,
 		maxIndexLines: 200, // MEMORY.mdの最大行数
+		indexPath,
 	};
 }
 
