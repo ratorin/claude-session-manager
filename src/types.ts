@@ -47,6 +47,12 @@ export interface ParsedSession {
 	claudeTitle?: string;  // Claude Codeの /rename で設定された名前
 	customName?: string;   // Session Managerで設定した名前
 	messages: SimpleMessage[];
+	// サブエージェント関連
+	isSidechain?: boolean;       // subagents/ 配下の子エージェントか
+	agentId?: string;            // agent固有ID（agent-a{HASH}）
+	agentType?: string;          // Explore, general-purpose, Plan, claude-code-guide
+	agentDescription?: string;   // meta.jsonのdescription
+	parentSessionId?: string;    // 親セッションのファイル名ベースID
 }
 
 export interface SimpleMessage {
@@ -67,10 +73,28 @@ export interface MemoryFile {
 	sizeBytes: number;
 }
 
+// エージェント設定
+export interface AgentConfig {
+	name: string;                // 部署名（例: CSM開発部）
+	sessionId: string;           // 紐づけセッションID
+	role: string;                // 役割（例: デバッグ・品質確認）
+	description?: string;        // 詳細説明
+	model: 'opus' | 'sonnet' | 'haiku';
+	effort?: 'low' | 'medium' | 'high';
+	ruleFile?: string;           // ルールファイルパス
+	parentAgent?: string;        // 親エージェント名（班の場合）
+	allowedTools?: string[];     // 許可ツール一覧
+	workDir?: string;            // 作業ディレクトリ
+	status?: 'active' | 'idle' | 'archived';
+	costLimitUsd?: number;       // コスト上限（$）
+	maxIterations?: number;      // 最大反復回数
+}
+
 // 拡張機能の永続データ
 export interface ManagerData {
 	bookmarks: string[]; // セッションIDの配列
 	tags: Record<string, string[]>; // タグ名 → セッションIDの配列
 	customNames: Record<string, string>; // セッションID → カスタム名
 	notes: Record<string, string>; // セッションID → メモ
+	agents?: AgentConfig[]; // エージェント設定
 }

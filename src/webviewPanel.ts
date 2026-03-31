@@ -3,6 +3,73 @@ import { ParsedSession, SimpleMessage, MemoryFile } from './types';
 import { loadSessionFull } from './sessionLoader';
 import * as dataStore from './dataStore';
 
+// 簡易Markdownレンダラー（外部依存なし、リンク対応）
+function renderMarkdown(text: string): string {
+	let html = escapeHtml(text);
+
+	// リンクをプレースホルダーに退避（二重マッチ防止）
+	const linkStore: string[] = [];
+	function storeLink(linkHtml: string): string {
+		const idx = linkStore.length;
+		linkStore.push(linkHtml);
+		return `\x01L${idx}\x01`;
+	}
+
+	// コードブロック（```lang ... ```）
+	html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang, code) =>
+		`<pre class="md-code-block"><code class="lang-${lang}">${code.trim()}</code></pre>`);
+	// インラインコード
+	html = html.replace(/`([^`\n]+)`/g, '<code class="md-inline-code">$1</code>');
+
+	// Markdownリンク: [text](URL)
+	html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (_m, t, url) =>
+		storeLink(`<a class="md-link" data-type="url" data-href="${url}">${t}</a>`));
+	// Markdownリンク: [text](path) — URL以外はファイルパスとして扱う
+	html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, t, href) =>
+		storeLink(`<a class="md-link" data-type="file" data-href="${href}">${t}</a>`));
+	// 裸のURL
+	html = html.replace(/(https?:\/\/[^\s<)]+)/g, (url) =>
+		storeLink(`<a class="md-link" data-type="url" data-href="${url}">${url}</a>`));
+	// Windows絶対ファイルパス（拡張子付き、オプション:行番号）
+	html = html.replace(/([A-Za-z]:[/\\](?:[^\s<>*?|]+[/\\])*[^\s<>*?|]+\.\w+(?::\d+)?)/g, (p) =>
+		storeLink(`<a class="md-link" data-type="file" data-href="${p}">${p}</a>`));
+
+	// 見出し
+	html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+	html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+	html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+	html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+	// 太字・斜体
+	html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+	html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+	// リスト（- で始まる行）
+	html = html.replace(/^(\s*)- (.+)$/gm, '$1<li>$2</li>');
+	// 番号リスト
+	html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+	// テーブル対応（ | で区切られた行）
+	html = html.replace(/((?:^(?:\|.+\|)\n)+)/gm, (table) => {
+		const rows = table.trim().split('\n');
+		if (rows.length < 2) { return table; }
+		let result = '<table class="md-table">';
+		rows.forEach((row, i) => {
+			if (row.match(/^\|[\s-:|]+\|$/)) { return; } // 区切り行スキップ
+			const cells = row.split('|').filter(Boolean).map((c) => c.trim());
+			const tag = i === 0 ? 'th' : 'td';
+			result += '<tr>' + cells.map((c) => `<${tag}>${c}</${tag}>`).join('') + '</tr>';
+		});
+		result += '</table>';
+		return result;
+	});
+	// 残りの改行をbrに
+	html = html.replace(/\n/g, '<br>');
+	// <br>の連続をパラグラフ区切りに
+	html = html.replace(/(<br>){2,}/g, '</p><p>');
+
+	// プレースホルダーをリンクHTMLに復元
+	html = html.replace(/\x01L(\d+)\x01/g, (_m, idx) => linkStore[parseInt(idx)]);
+	return html;
+}
+
 // パネルを使い回すための参照
 let previewPanel: vscode.WebviewPanel | undefined;
 
@@ -70,16 +137,47 @@ export function showSessionPreview(session: ParsedSession, context: vscode.Exten
 			const updatedTags = dataStore.getTagsForSession(session.id);
 			const updatedNote = dataStore.getNote(session.id);
 			previewPanel!.webview.html = getSessionHtml(fullSession!, updatedNote, updatedTags);
+		} else if (message.type === 'openLink') {
+			if (message.linkType === 'url') {
+				// URLをブラウザで開く
+				vscode.env.openExternal(vscode.Uri.parse(message.href));
+			} else if (message.linkType === 'file') {
+				// ファイルパスと行番号を分離（例: c:\path\file.ts:42）
+				const lineMatch = message.href.match(/^(.+?):(\d+)$/);
+				const filePath = lineMatch ? lineMatch[1] : message.href;
+				const lineNum = lineMatch ? parseInt(lineMatch[2]) - 1 : 0;
+				try {
+					const doc = await vscode.workspace.openTextDocument(filePath);
+					const editor = await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+					if (lineNum > 0) {
+						const pos = new vscode.Position(lineNum, 0);
+						editor.selection = new vscode.Selection(pos, pos);
+						editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+					}
+				} catch {
+					vscode.window.showErrorMessage(`ファイルを開けませんでした: ${filePath}`);
+				}
+			}
 		}
 	});
 }
 
 function getSessionHtml(session: ParsedSession, note: string, tags: string[]): string {
+	// エージェント情報をヘッダに表示
+	const agent = dataStore.getAgentBySessionId(session.id);
+	const agentHeaderHtml = agent
+		? `<div class="agent-badge">
+			<span class="agent-model badge-${agent.model}">${agent.model.toUpperCase()}</span>
+			<span class="agent-name">${escapeHtml(agent.name)}</span>
+			<span class="agent-role">${escapeHtml(agent.role)}</span>
+		</div>`
+		: '';
+
 	const messagesHtml = session.messages.map((msg) => {
 		const roleClass = msg.role === 'user' ? 'user' : 'assistant';
 		const roleLabel = msg.role === 'user' ? 'あなた' : 'Claude';
 		const time = msg.timestamp.toLocaleString('ja-JP');
-		const content = escapeHtml(msg.content).replace(/\n/g, '<br>');
+		const content = renderMarkdown(msg.content);
 		const modelTag = msg.model ? `<span class="model">${msg.model}</span>` : '';
 
 		// ツール操作メッセージは小さくコンパクトに
@@ -289,11 +387,90 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[]): s
 	}
 	.tool-msg .message-header { margin-bottom: 2px; }
 	.tool-msg .message-content { font-family: monospace; }
+
+	/* エージェントバッジ */
+	.agent-badge {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 16px;
+		background: rgba(226, 126, 74, 0.08);
+		border-bottom: 1px solid var(--vscode-panel-border);
+	}
+	.agent-badge .agent-model {
+		font-size: 0.7em;
+		padding: 1px 6px;
+		border-radius: 3px;
+		font-weight: 700;
+		letter-spacing: 0.5px;
+	}
+	.badge-opus { background: rgba(179,136,255,0.15); color: #b388ff; border: 1px solid rgba(179,136,255,0.3); }
+	.badge-sonnet { background: rgba(100,181,246,0.15); color: #64b5f6; border: 1px solid rgba(100,181,246,0.3); }
+	.badge-haiku { background: rgba(129,199,132,0.15); color: #81c784; border: 1px solid rgba(129,199,132,0.3); }
+	.agent-badge .agent-name { font-weight: 600; font-size: 0.85em; color: #e27e4a; }
+	.agent-badge .agent-role { font-size: 0.75em; opacity: 0.6; }
+
+	/* Markdownレンダリング */
+	.message-content h1, .message-content h2, .message-content h3, .message-content h4 {
+		margin: 8px 0 4px;
+		line-height: 1.3;
+	}
+	.message-content h1 { font-size: 1.2em; }
+	.message-content h2 { font-size: 1.1em; }
+	.message-content h3 { font-size: 1.0em; }
+	.message-content strong { font-weight: 700; }
+	.message-content li { margin-left: 20px; list-style: disc; }
+	.md-code-block {
+		background: var(--vscode-textCodeBlock-background);
+		padding: 8px 12px;
+		border-radius: 4px;
+		font-family: 'Cascadia Code', 'Consolas', monospace;
+		font-size: 0.85em;
+		overflow-x: auto;
+		margin: 6px 0;
+		white-space: pre;
+	}
+	.md-inline-code {
+		background: var(--vscode-textCodeBlock-background);
+		padding: 1px 4px;
+		border-radius: 3px;
+		font-family: 'Cascadia Code', 'Consolas', monospace;
+		font-size: 0.9em;
+	}
+	.md-table {
+		border-collapse: collapse;
+		margin: 6px 0;
+		font-size: 0.85em;
+	}
+	.md-table th, .md-table td {
+		border: 1px solid var(--vscode-panel-border);
+		padding: 4px 8px;
+	}
+	.md-table th {
+		background: var(--vscode-textBlockQuote-background);
+		font-weight: 600;
+	}
+	/* クリック可能リンク */
+	.md-link {
+		color: var(--vscode-textLink-foreground);
+		text-decoration: none;
+		cursor: pointer;
+		border-bottom: 1px dotted currentColor;
+	}
+	.md-link:hover {
+		color: var(--vscode-textLink-activeForeground);
+		border-bottom-style: solid;
+	}
+	.md-link[data-type="file"] {
+		font-family: 'Cascadia Code', 'Consolas', monospace;
+		font-size: 0.9em;
+	}
 </style>
 </head>
 <body>
 	<!-- 上部: ヘッダ+メモ -->
 	<div class="header-panel">
+		${agentHeaderHtml}
 		<div class="session-info">
 			<div class="info-main">
 				<h2>${escapeHtml(displayName)}</h2>
@@ -356,6 +533,18 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[]): s
 				msg.style.display = (!keyword || text.includes(lower)) ? '' : 'none';
 			});
 		}
+
+		// リンクのクリックハンドラー（ファイルパス→エディタ、URL→ブラウザ）
+		document.addEventListener('click', (e) => {
+			const link = e.target.closest('.md-link');
+			if (!link) return;
+			e.preventDefault();
+			vscode.postMessage({
+				type: 'openLink',
+				linkType: link.dataset.type,
+				href: link.dataset.href
+			});
+		});
 
 		// 最後のメッセージにスクロール
 		window.addEventListener('load', () => {

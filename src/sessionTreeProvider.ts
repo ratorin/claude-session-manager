@@ -27,6 +27,8 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 	private previewSessionId: string | undefined;
 	private liveSessionIds: Set<string> = new Set();
 	private watcher: fs.FSWatcher | undefined;
+	// 親セッションID → 子エージェントセッション[] のマップ
+	private subagentMap: Map<string, ParsedSession[]> = new Map();
 
 	// プレビュー中のセッションを設定
 	setActiveSession(sessionId: string): void {
@@ -81,13 +83,29 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 	}
 
 	refresh(): void {
-		this.sessions = loadAllSessions();
+		const allSessions = loadAllSessions();
 		const customNames = dataStore.getAllCustomNames();
-		for (const session of this.sessions) {
+
+		// サブエージェントマップを構築
+		this.subagentMap.clear();
+		const parentSessions: ParsedSession[] = [];
+
+		for (const session of allSessions) {
 			if (customNames[session.id]) {
 				session.customName = customNames[session.id];
 			}
+			if (session.isSidechain && session.parentSessionId) {
+				// 子エージェント: 親IDでグループ化
+				const children = this.subagentMap.get(session.parentSessionId) || [];
+				children.push(session);
+				this.subagentMap.set(session.parentSessionId, children);
+			} else {
+				// 親セッション
+				parentSessions.push(session);
+			}
 		}
+
+		this.sessions = parentSessions;
 		this.filteredSessions = null;
 		this.buildGroups(this.sessions);
 		this._onDidChangeTreeData.fire(undefined);
@@ -113,8 +131,36 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 		return this.sessions;
 	}
 
+	// 全セッション（子エージェント含む）を取得
+	getAllSessionsIncludingSubagents(): ParsedSession[] {
+		const all = [...this.sessions];
+		for (const children of this.subagentMap.values()) {
+			all.push(...children);
+		}
+		return all;
+	}
+
+	// 親セッションのサブエージェントを取得
+	getSubagents(parentId: string): ParsedSession[] {
+		return this.subagentMap.get(parentId) || [];
+	}
+
+	// 親セッションにサブエージェントがあるか
+	hasSubagents(parentId: string): boolean {
+		const children = this.subagentMap.get(parentId);
+		return !!children && children.length > 0;
+	}
+
 	getSessionById(id: string): ParsedSession | undefined {
-		return this.sessions.find((s) => s.id === id);
+		// 親セッションから探す
+		const parent = this.sessions.find((s) => s.id === id);
+		if (parent) { return parent; }
+		// 子エージェントからも探す
+		for (const children of this.subagentMap.values()) {
+			const child = children.find((s) => s.id === id);
+			if (child) { return child; }
+		}
+		return undefined;
 	}
 
 	getTreeItem(element: TreeNode): vscode.TreeItem {
@@ -123,14 +169,7 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
 	getChildren(element?: TreeNode): TreeNode[] {
 		if (this.sessions.length === 0) {
-			this.sessions = loadAllSessions();
-			const customNames = dataStore.getAllCustomNames();
-			for (const session of this.sessions) {
-				if (customNames[session.id]) {
-					session.customName = customNames[session.id];
-				}
-			}
-			this.buildGroups(this.sessions);
+			this.refresh();
 		}
 
 		if (!element) {
@@ -149,7 +188,18 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 				const tags = dataStore.getTagsForSession(session.id);
 				const isPreviewing = session.id === this.previewSessionId;
 				const isLive = this.liveSessionIds.has(session.id);
-				return new SessionItem(session, isBookmarked, tags, isPreviewing, isLive);
+				const hasChildren = this.hasSubagents(session.id);
+				return new SessionItem(session, isBookmarked, tags, isPreviewing, isLive, false, hasChildren);
+			});
+		}
+
+		// SessionItemの子 = サブエージェント
+		if (element instanceof SessionItem && !element.session.isSidechain) {
+			const parentId = element.session.id;
+			const children = this.getSubagents(parentId);
+			return children.map((child) => {
+				const isPreviewing = child.id === this.previewSessionId;
+				return new SessionItem(child, false, [], isPreviewing, false, false, false);
 			});
 		}
 
@@ -199,6 +249,28 @@ function getModelIcon(model?: string): { icon: string; color: string } {
 	return { icon: 'comment-discussion', color: 'foreground' };
 }
 
+// サブエージェントタイプ別のアイコン
+function getAgentTypeIcon(agentType?: string): { icon: string; color: string } {
+	switch (agentType) {
+		case 'Explore': return { icon: 'search', color: 'charts.blue' };
+		case 'Plan': return { icon: 'notebook', color: 'charts.purple' };
+		case 'general-purpose': return { icon: 'tools', color: 'charts.orange' };
+		case 'claude-code-guide': return { icon: 'book', color: 'charts.green' };
+		default: return { icon: 'arrow-small-right', color: 'foreground' };
+	}
+}
+
+// サブエージェントタイプの短縮ラベル
+function agentTypeLabel(agentType?: string): string {
+	switch (agentType) {
+		case 'Explore': return '🔍探索';
+		case 'Plan': return '📋計画';
+		case 'general-purpose': return '🔧汎用';
+		case 'claude-code-guide': return '📖ガイド';
+		default: return '⚡子';
+	}
+}
+
 export class SessionItem extends vscode.TreeItem {
 	constructor(
 		public readonly session: ParsedSession,
@@ -206,61 +278,99 @@ export class SessionItem extends vscode.TreeItem {
 		public readonly tags: string[],
 		public readonly isPreviewing: boolean = false,
 		public readonly isLive: boolean = false,
-		public readonly inBookmarkView: boolean = false
+		public readonly inBookmarkView: boolean = false,
+		public readonly hasChildren: boolean = false
 	) {
-		const displayName = session.customName || session.claudeTitle || session.firstMessage;
-		// モデル頭文字（全角で等幅）
-		const modelChar = session.model?.includes('opus') ? 'Ｏ'
+		const isSub = !!session.isSidechain;
+
+		// 表示名の構築
+		let displayName: string;
+		if (isSub) {
+			// サブエージェント: タイプラベル + description or firstMessage
+			const typeTag = agentTypeLabel(session.agentType);
+			const desc = session.agentDescription || session.firstMessage;
+			displayName = `${typeTag} ${desc}`;
+		} else {
+			displayName = session.customName || session.claudeTitle || session.firstMessage;
+		}
+
+		// モデル頭文字（全角で等幅）— 親セッションのみ
+		const modelChar = isSub ? '' : (
+			session.model?.includes('opus') ? 'Ｏ'
 			: session.model?.includes('sonnet') ? 'Ｓ'
 			: session.model?.includes('haiku') ? 'Ｈ'
-			: '\u3000';
+			: '\u3000'
+		);
 		// 件数を5桁右揃え（Figure Space U+2007 で等幅パディング）
 		const figureSpace = '\u2007';
-		const countStr = String(session.messageCount).padStart(5, figureSpace);
-		super(`${modelChar}${countStr} ${displayName}`, vscode.TreeItemCollapsibleState.None);
+		const countStr = isSub ? '' : String(session.messageCount).padStart(5, figureSpace) + ' ';
+
+		// サブエージェントがある親は展開可能
+		const collapsible = hasChildren
+			? vscode.TreeItemCollapsibleState.Collapsed
+			: vscode.TreeItemCollapsibleState.None;
+		super(`${modelChar}${countStr}${displayName}`, collapsible);
 
 		// 時刻フォーマット
 		const date = session.lastTimestamp;
 		const timeStr = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 
-		// タグ表示
-		const tagStr = tags.length > 0 ? ` [${tags.join(', ')}]` : '';
+		if (isSub) {
+			// サブエージェント用のdescription
+			this.description = `${session.messageCount}件 ${timeStr}`;
+		} else {
+			// タグ表示
+			const tagStr = tags.length > 0 ? ` [${tags.join(', ')}]` : '';
 
-		// モデル短縮名
-		const modelShort = session.model
-			? session.model.replace('claude-', '').replace(/-\d.*$/, '')
-			: '';
+			// モデル短縮名
+			const modelShort = session.model
+				? session.model.replace('claude-', '').replace(/-\d.*$/, '')
+				: '';
 
-		// 元のメッセージ（タイトルが変わっている場合のみ表示）
-		const hasCustomTitle = !!(session.customName || session.claudeTitle);
-		const originalMsg = hasCustomTitle ? session.firstMessage.substring(0, 30) : '';
+			// 元のメッセージ（タイトルが変わっている場合のみ表示）
+			const hasCustomTitle = !!(session.customName || session.claudeTitle);
+			const originalMsg = hasCustomTitle ? session.firstMessage.substring(0, 30) : '';
 
-		// ステータス表示
-		const statusPrefix = isLive ? '● ' : '';
-		this.description = `${statusPrefix}${originalMsg ? originalMsg + ' ' : ''}${timeStr} ${modelShort}${tagStr}`;
+			// ステータス表示
+			const statusPrefix = isLive ? '● ' : '';
+			this.description = `${statusPrefix}${originalMsg ? originalMsg + ' ' : ''}${timeStr} ${modelShort}${tagStr}`;
+		}
 
-		this.tooltip = new vscode.MarkdownString(
-			`${isLive ? '🟢 Claude Codeで使用中\n\n' : ''}` +
-			`${isPreviewing ? '▶ プレビュー中\n\n' : ''}` +
-			`${isBookmarked ? '★ ' : ''}**${displayName}**\n\n` +
-			`| | |\n|---|---|\n` +
-			`| プロジェクト | ${session.project} |\n` +
-			`| 日時 | ${date.toLocaleString('ja-JP')} |\n` +
-			`| メッセージ | ${session.messageCount}件 |\n` +
-			`| モデル | ${session.model || '不明'} |\n` +
-			(session.gitBranch ? `| ブランチ | ${session.gitBranch} |\n` : '') +
-			(tags.length > 0 ? `| タグ | ${tags.join(', ')} |\n` : '')
-		);
+		// ツールチップ
+		if (isSub) {
+			this.tooltip = new vscode.MarkdownString(
+				`**🤖 子エージェント** (${session.agentType || '不明'})\n\n` +
+				(session.agentDescription ? `${session.agentDescription}\n\n` : '') +
+				`| | |\n|---|---|\n` +
+				`| タイプ | ${session.agentType || '不明'} |\n` +
+				`| 日時 | ${date.toLocaleString('ja-JP')} |\n` +
+				`| メッセージ | ${session.messageCount}件 |\n` +
+				`| モデル | ${session.model || '不明'} |\n` +
+				(session.agentId ? `| エージェントID | \`${session.agentId.substring(0, 12)}...\` |\n` : '')
+			);
+		} else {
+			this.tooltip = new vscode.MarkdownString(
+				`${isLive ? '🟢 Claude Codeで使用中\n\n' : ''}` +
+				`${isPreviewing ? '▶ プレビュー中\n\n' : ''}` +
+				`${isBookmarked ? '★ ' : ''}**${displayName}**\n\n` +
+				`| | |\n|---|---|\n` +
+				`| プロジェクト | ${session.project} |\n` +
+				`| 日時 | ${date.toLocaleString('ja-JP')} |\n` +
+				`| メッセージ | ${session.messageCount}件 |\n` +
+				`| モデル | ${session.model || '不明'} |\n` +
+				(session.gitBranch ? `| ブランチ | ${session.gitBranch} |\n` : '') +
+				(tags.length > 0 ? `| タグ | ${tags.join(', ')} |\n` : '')
+			);
+		}
 
-		this.contextValue = isBookmarked ? 'bookmarkedSession' : 'session';
+		this.contextValue = isSub ? 'subagentSession' : (isBookmarked ? 'bookmarkedSession' : 'session');
 
-		// アイコン（形で状態を区別、選択時に白くなっても判別可能）:
-		// プレビュー+利用中 → target（緑）
-		// 利用中のみ → circle-filled（緑）
-		// プレビュー中 → eye（白）
-		// ブックマーク → star-full（黄）
-		// 通常 → モデル別アイコン
-		if (isPreviewing && isLive) {
+		// アイコン
+		if (isSub) {
+			// サブエージェント: タイプ別アイコン
+			const agentIcon = getAgentTypeIcon(session.agentType);
+			this.iconPath = new vscode.ThemeIcon(agentIcon.icon, new vscode.ThemeColor(agentIcon.color));
+		} else if (isPreviewing && isLive) {
 			this.iconPath = new vscode.ThemeIcon('target', new vscode.ThemeColor('terminal.ansiGreen'));
 		} else if (isLive) {
 			this.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('terminal.ansiGreen'));

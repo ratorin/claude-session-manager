@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { ManagerData } from './types';
+import { ManagerData, AgentConfig } from './types';
 
 // 拡張機能の永続データを管理
 const DATA_FILE = path.join(os.homedir(), '.claude', 'session-manager.json');
@@ -116,4 +116,40 @@ export function setNote(sessionId: string, note: string): void {
 export function getNote(sessionId: string): string {
 	const data = loadData();
 	return data.notes?.[sessionId] || '';
+}
+
+// エージェント操作
+export function getAgents(): AgentConfig[] {
+	return loadData().agents || [];
+}
+
+export function setAgents(agents: AgentConfig[]): void {
+	const data = loadData();
+	data.agents = agents;
+	saveData(data);
+}
+
+export function addAgent(agent: AgentConfig): void {
+	const data = loadData();
+	if (!data.agents) { data.agents = []; }
+	// 同名エージェントがあれば更新
+	const idx = data.agents.findIndex((a) => a.name === agent.name);
+	if (idx >= 0) {
+		data.agents[idx] = agent;
+	} else {
+		data.agents.push(agent);
+	}
+	saveData(data);
+}
+
+export function removeAgent(name: string): void {
+	const data = loadData();
+	if (data.agents) {
+		data.agents = data.agents.filter((a) => a.name !== name);
+		saveData(data);
+	}
+}
+
+export function getAgentBySessionId(sessionId: string): AgentConfig | undefined {
+	return getAgents().find((a) => a.sessionId === sessionId);
 }

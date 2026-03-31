@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager - セッション履歴管理",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.1.4",
+	"version": "0.1.7",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -132,9 +132,39 @@
 				"category": "Claude Session Manager"
 			},
 			{
+				"command": "claudeManager.copySessionId",
+				"title": "セッションIDをコピー",
+				"icon": "$(copy)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.setAgentRole",
+				"title": "エージェント役割を設定",
+				"icon": "$(robot)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.registerAgent",
+				"title": "エージェントとして登録",
+				"icon": "$(person-add)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.editRuleFile",
+				"title": "ルールファイルを編集",
+				"icon": "$(file-code)",
+				"category": "Claude Session Manager"
+			},
+			{
 				"command": "claudeManager.openInClaude",
 				"title": "Claude Codeで開く",
 				"icon": "$(terminal)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.openOrgChart",
+				"title": "エージェント組織図",
+				"icon": "$(organization)",
 				"category": "Claude Session Manager"
 			},
 			{
@@ -153,6 +183,11 @@
 				},
 				{
 					"command": "claudeManager.searchSessions",
+					"when": "view == claudeSessions",
+					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.openOrgChart",
 					"when": "view == claudeSessions",
 					"group": "navigation"
 				},
@@ -184,6 +219,11 @@
 					"group": "0_open"
 				},
 				{
+					"command": "claudeManager.copySessionId",
+					"when": "viewItem == session || viewItem == bookmarkedSession",
+					"group": "0_open"
+				},
+				{
 					"command": "claudeManager.renameSession",
 					"when": "viewItem == session || viewItem == bookmarkedSession",
 					"group": "1_edit"
@@ -192,6 +232,21 @@
 					"command": "claudeManager.tagSession",
 					"when": "viewItem == session || viewItem == bookmarkedSession",
 					"group": "1_edit"
+				},
+				{
+					"command": "claudeManager.setAgentRole",
+					"when": "viewItem == session || viewItem == bookmarkedSession",
+					"group": "1_edit"
+				},
+				{
+					"command": "claudeManager.registerAgent",
+					"when": "viewItem == session || viewItem == bookmarkedSession",
+					"group": "2_agent"
+				},
+				{
+					"command": "claudeManager.editRuleFile",
+					"when": "viewItem == session || viewItem == bookmarkedSession",
+					"group": "2_agent"
 				},
 				{
 					"command": "claudeManager.unbookmarkSession",

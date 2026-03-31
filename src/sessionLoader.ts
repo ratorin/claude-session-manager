@@ -8,8 +8,21 @@ export function getClaudeDir(): string {
 	return path.join(os.homedir(), '.claude');
 }
 
-// プロジェクトディレクトリ内の全JSONLファイルを取得
+// セッションファイル情報（親/子の区別付き）
+export interface SessionFileInfo {
+	filePath: string;
+	isSubagent: boolean;
+	parentSessionId?: string;  // 親セッションのUUID（ディレクトリ名から）
+	agentHash?: string;        // agent-a{HASH} のHASH部分
+}
+
+// プロジェクトディレクトリ内の全JSONLファイルを取得（subagents含む）
 export function getSessionFiles(): string[] {
+	return getSessionFileInfos().map((info) => info.filePath);
+}
+
+// プロジェクトディレクトリ内の全セッションファイル情報を取得
+export function getSessionFileInfos(): SessionFileInfo[] {
 	const claudeDir = getClaudeDir();
 	const projectsDir = path.join(claudeDir, 'projects');
 
@@ -17,7 +30,7 @@ export function getSessionFiles(): string[] {
 		return [];
 	}
 
-	const files: string[] = [];
+	const files: SessionFileInfo[] = [];
 	const projects = fs.readdirSync(projectsDir);
 
 	for (const project of projects) {
@@ -28,13 +41,53 @@ export function getSessionFiles(): string[] {
 
 		const entries = fs.readdirSync(projectPath);
 		for (const entry of entries) {
+			// 直下のJSONL = 親セッション
 			if (entry.endsWith('.jsonl')) {
-				files.push(path.join(projectPath, entry));
+				files.push({ filePath: path.join(projectPath, entry), isSubagent: false });
+			}
+
+			// セッションディレクトリ内の subagents/ を探索
+			const sessionDir = path.join(projectPath, entry);
+			const subagentsDir = path.join(sessionDir, 'subagents');
+			if (fs.existsSync(subagentsDir) && fs.statSync(subagentsDir).isDirectory()) {
+				const parentId = entry; // ディレクトリ名 = 親セッションUUID
+				try {
+					const subFiles = fs.readdirSync(subagentsDir);
+					for (const sf of subFiles) {
+						// compact-ファイルは除外、meta.jsonも除外
+						if (sf.endsWith('.jsonl') && !sf.includes('compact-')) {
+							const hashMatch = sf.match(/^agent-a(.+)\.jsonl$/);
+							files.push({
+								filePath: path.join(subagentsDir, sf),
+								isSubagent: true,
+								parentSessionId: parentId,
+								agentHash: hashMatch ? hashMatch[1] : undefined,
+							});
+						}
+					}
+				} catch {
+					// 読み取りエラーはスキップ
+				}
 			}
 		}
 	}
 
 	return files;
+}
+
+// subagentのmeta.jsonを読み込み
+export function readSubagentMeta(jsonlPath: string): { agentType?: string; description?: string } {
+	// agent-a{HASH}.jsonl → agent-a{HASH}.meta.json
+	const metaPath = jsonlPath.replace(/\.jsonl$/, '.meta.json');
+	try {
+		if (fs.existsSync(metaPath)) {
+			const content = fs.readFileSync(metaPath, 'utf-8');
+			return JSON.parse(content);
+		}
+	} catch {
+		// パースエラー
+	}
+	return {};
 }
 
 // システムタグを除去してユーザーの実際の発言を抽出
@@ -275,12 +328,26 @@ export function parseSessionFile(filePath: string): ParsedSession | null {
 
 // 全セッションを読み込み（軽量版：最初と最後のメッセージのみ）
 export function loadAllSessions(): ParsedSession[] {
-	const files = getSessionFiles();
+	const fileInfos = getSessionFileInfos();
 	const sessions: ParsedSession[] = [];
 
-	for (const file of files) {
-		const session = parseSessionQuick(file);
+	for (const info of fileInfos) {
+		const session = parseSessionQuick(info.filePath);
 		if (session) {
+			// サブエージェント情報を付与
+			if (info.isSubagent) {
+				session.isSidechain = true;
+				session.parentSessionId = info.parentSessionId;
+				// meta.jsonからagentType/descriptionを読み込み
+				const meta = readSubagentMeta(info.filePath);
+				session.agentType = meta.agentType;
+				session.agentDescription = meta.description;
+				// agentIdをファイル名から取得
+				const hashMatch = path.basename(info.filePath).match(/^agent-a(.+)\.jsonl$/);
+				if (hashMatch) {
+					session.agentId = hashMatch[1];
+				}
+			}
 			sessions.push(session);
 		}
 	}
@@ -305,6 +372,8 @@ function parseSessionQuick(filePath: string): ParsedSession | null {
 		let messageCount = 0;
 		let claudeTitle: string | undefined;
 		let cwd: string | undefined;
+		let isSidechain: boolean | undefined;
+		let agentId: string | undefined;
 
 		for (const line of lines) {
 			try {
@@ -313,6 +382,14 @@ function parseSessionQuick(filePath: string): ParsedSession | null {
 				// cwdを取得（最初に見つかったものを使用）
 				if (!cwd && parsed.cwd) {
 					cwd = parsed.cwd;
+				}
+
+				// サブエージェントフラグ
+				if (parsed.isSidechain) {
+					isSidechain = true;
+				}
+				if (parsed.agentId && !agentId) {
+					agentId = parsed.agentId;
 				}
 
 				// Claude Codeの /rename で設定されたタイトル（custom-titleを優先）
@@ -377,6 +454,8 @@ function parseSessionQuick(filePath: string): ParsedSession | null {
 			gitBranch,
 			claudeTitle,
 			messages: [], // 軽量版では空
+			isSidechain,
+			agentId,
 		};
 	} catch {
 		return null;
