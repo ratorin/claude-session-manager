@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager - セッション履歴管理",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.1.7",
+	"version": "0.1.8",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
