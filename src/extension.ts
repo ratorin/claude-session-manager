@@ -87,13 +87,49 @@ export function activate(context: vscode.ExtensionContext) {
 		return pids;
 	}
 
+	// /c/tmp/agent_*.txt から動作中のエージェント名を取得（直近N秒以内に更新されたファイル）
+	function getActiveAgentNames(): string[] {
+		const agentTmpDir = 'c:\\tmp';
+		const names: string[] = [];
+		const intervalSec = getConfig<number>('agentMonitorInterval', 5);
+		const thresholdMs = Math.max(intervalSec * 2, 5) * 1000; // 監視間隔の2倍 or 最低5秒
+		const now = Date.now();
+		try {
+			const files = fs.readdirSync(agentTmpDir);
+			for (const file of files) {
+				if (!file.startsWith('agent_') || !file.endsWith('.txt')) { continue; }
+				try {
+					const stat = fs.statSync(path.join(agentTmpDir, file));
+					if (now - stat.mtimeMs < thresholdMs) {
+						// agent_{エージェント名}_{タスク}.txt → エージェント名を抽出
+						const withoutPrefix = file.substring('agent_'.length); // "{エージェント名}_{タスク}.txt"
+						const underscoreIdx = withoutPrefix.indexOf('_');
+						if (underscoreIdx > 0) {
+							names.push(withoutPrefix.substring(0, underscoreIdx));
+						} else {
+							// _が1つしかない場合（agent_{名前}.txt）
+							names.push(withoutPrefix.replace('.txt', ''));
+						}
+					}
+				} catch { /* skip */ }
+			}
+		} catch { /* ディレクトリが存在しない場合等 */ }
+		// 重複除去
+		return [...new Set(names)];
+	}
+
 	function updateStatusBar(): void {
 		const allPids = getClaudeProcessPids();
 		const sessionPids = getSessionPids();
 
 		// sessions/ JSONに登録されていないclaude.exe = --printモードの子エージェント
 		const agentPids = allPids.filter((pid) => !sessionPids.has(pid));
-		const activeCount = agentPids.length;
+
+		// /c/tmp/agent_*.txt からエージェント名を取得
+		const activeNames = getActiveAgentNames();
+
+		// PIDベースとファイルベースの両方を考慮
+		const activeCount = Math.max(agentPids.length, activeNames.length);
 		const totalAgents = dataStore.getAgents().length;
 
 		if (activeCount === 0) {
@@ -101,8 +137,15 @@ export function activate(context: vscode.ExtensionContext) {
 			statusBarItem.tooltip = `動作中のエージェントなし（全${totalAgents}件）`;
 		} else {
 			statusBarItem.text = `🟢 ${activeCount} 👥 ${totalAgents}`;
-			const pidList = agentPids.map((pid) => `• PID ${pid}`).join('\n');
-			statusBarItem.tooltip = `動作中: ${activeCount}プロセス / 全${totalAgents}件\n${pidList}`;
+			if (activeNames.length > 0) {
+				// ファイルベースのエージェント名を優先表示
+				const nameList = activeNames.map((name) => `▶ ${name}`).join('\n');
+				statusBarItem.tooltip = `動作中: ${activeCount}件 / 全${totalAgents}件\n${nameList}`;
+			} else {
+				// ファイルがない場合はPID表示にフォールバック
+				const pidList = agentPids.map((pid) => `• PID ${pid}`).join('\n');
+				statusBarItem.tooltip = `動作中: ${activeCount}プロセス / 全${totalAgents}件\n${pidList}`;
+			}
 		}
 		statusBarItem.show();
 	}
