@@ -1,22 +1,25 @@
 import * as vscode from 'vscode';
-import { AgentInfo, loadAgents, enrichAgentsWithSessions } from './agentManager';
+import { AgentInfo, getAgents, enrichAgentsWithSessions } from './agentManager';
 import { ParsedSession } from './types';
 
 // パネルを使い回すための参照
 let orgPanel: vscode.WebviewPanel | undefined;
 
-// セッションを開くコールバック
+// コールバック
 let onOpenSession: ((sessionId: string) => void) | undefined;
+let onOpenInClaude: ((sessionId: string) => void) | undefined;
 
 // 組織図パネルを開く
 export function showOrgChart(
 	getSessions: () => ParsedSession[],
 	isLive: (id: string) => boolean,
-	openSession?: (sessionId: string) => void
+	openSession?: (sessionId: string) => void,
+	openInClaude?: (sessionId: string) => void
 ): void {
 	onOpenSession = openSession;
+	onOpenInClaude = openInClaude;
 	// エージェント情報を読み込み
-	const agents = loadAgents();
+	const agents = getAgents();
 
 	// セッションタイトル対応表を作成
 	const sessions = getSessions();
@@ -58,6 +61,8 @@ export function showOrgChart(
 				});
 			} else if (message.type === 'openSession' && onOpenSession) {
 				onOpenSession(message.sessionId);
+			} else if (message.type === 'openInClaude' && onOpenInClaude) {
+				onOpenInClaude(message.sessionId);
 			}
 		});
 	}
@@ -69,6 +74,37 @@ function escapeHtml(text: string): string {
 		.replace(/</g, '&lt;')
 		.replace(/>/g, '&gt;')
 		.replace(/"/g, '&quot;');
+}
+
+// 取締役ノードのHTML生成（トップノード用）
+function renderDirectorNode(agent: AgentInfo, liveIds: Set<string>): string {
+	const isLive = agent.sessionId ? liveIds.has(agent.sessionId) : false;
+	const liveDot = isLive ? '<span class="live-dot" title="使用中"></span>' : '';
+
+	let sessionHtml = '';
+	if (agent.sessionId) {
+		const shortId = agent.sessionId.substring(0, 8) + '...' + agent.sessionId.slice(-4);
+		const titleHtml = agent.sessionTitle
+			? `<div class="session-title">${escapeHtml(agent.sessionTitle)}</div>`
+			: '';
+		sessionHtml = `
+			${titleHtml}
+			<div class="session-actions" style="justify-content: center;">
+				<span class="session-id" data-id="${escapeHtml(agent.sessionId)}" title="IDをコピー">📋 ${shortId}</span>
+				<span class="session-open" data-sid="${escapeHtml(agent.sessionId)}" title="会話履歴を表示"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M13.5 8a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0zM8 3.5a.5.5 0 0 0-.5.5v4a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1H8.5V4a.5.5 0 0 0-.5-.5z"/></svg></span>
+				<span class="session-claude" data-sid="${escapeHtml(agent.sessionId)}" title="Claude Codeで開く"><svg width="12" height="12" viewBox="0 0 16 16"><rect width="16" height="16" rx="3.5" fill="#D97706"/><g fill="white"><circle cx="8" cy="8" r="1.5"/><polygon points="7.4,6.6 8,1.5 8.6,6.6"/><polygon points="9.3,7.1 13.5,3.5 9.9,8"/><polygon points="9.4,7.8 14.5,8 9.4,8.6"/><polygon points="9.1,9.2 12,13 8.4,9.7"/><polygon points="6.9,9.5 3.5,14.5 6.5,9"/><polygon points="6.6,8.5 1.5,7.5 6.6,7.2"/></g></svg></span>
+			</div>`;
+	}
+
+	return `
+	<div class="node node-director">
+		<div class="node-header" style="justify-content: center;">
+			<span class="node-name">取締役</span>
+			${liveDot}
+		</div>
+		<div class="node-role">${escapeHtml(agent.role || '全体統括・指示出し・承認')}</div>
+		${sessionHtml}
+	</div>`;
 }
 
 // エージェントカードのHTML生成
@@ -91,7 +127,8 @@ function renderAgentCard(agent: AgentInfo, liveIds: Set<string>, isSub: boolean 
 			${titleHtml}
 			<div class="session-actions">
 				<span class="session-id" data-id="${escapeHtml(agent.sessionId)}" title="IDをコピー">📋 ${shortId}</span>
-				<span class="session-open" data-sid="${escapeHtml(agent.sessionId)}" title="会話を開く">▶</span>
+				<span class="session-open" data-sid="${escapeHtml(agent.sessionId)}" title="会話履歴を表示"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M13.5 8a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0zM8 3.5a.5.5 0 0 0-.5.5v4a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1H8.5V4a.5.5 0 0 0-.5-.5z"/></svg></span>
+				<span class="session-claude" data-sid="${escapeHtml(agent.sessionId)}" title="Claude Codeで開く"><svg width="12" height="12" viewBox="0 0 16 16"><rect width="16" height="16" rx="3.5" fill="#D97706"/><g fill="white"><circle cx="8" cy="8" r="1.5"/><polygon points="7.4,6.6 8,1.5 8.6,6.6"/><polygon points="9.3,7.1 13.5,3.5 9.9,8"/><polygon points="9.4,7.8 14.5,8 9.4,8.6"/><polygon points="9.1,9.2 12,13 8.4,9.7"/><polygon points="6.9,9.5 3.5,14.5 6.5,9"/><polygon points="6.6,8.5 1.5,7.5 6.6,7.2"/></g></svg></span>
 			</div>`;
 	} else {
 		sessionHtml = '<div class="session-unset">セッション未設定</div>';
@@ -118,9 +155,12 @@ function renderAgentCard(agent: AgentInfo, liveIds: Set<string>, isSub: boolean 
 
 // 組織図全体のHTML
 function getOrgChartHtml(agents: AgentInfo[], liveIds: Set<string>): string {
-	// 親部署（parent未設定）と子部署を分離
-	const topLevel = agents.filter((a) => !a.parentAgent);
-	const children = agents.filter((a) => a.parentAgent);
+	// 取締役を分離（トップノードとして表示）
+	const director = agents.find((a) => a.name === '取締役');
+
+	// 取締役直下（parentAgent未設定 or 取締役）をトップレベル、それ以外を子エージェントとして分離
+	const topLevel = agents.filter((a) => a.name !== '取締役' && (!a.parentAgent || a.parentAgent === '取締役'));
+	const children = agents.filter((a) => a.parentAgent && a.parentAgent !== '取締役');
 
 	// 部署ごとのカードHTML生成
 	const deptCards = topLevel.map((agent) => {
@@ -250,6 +290,15 @@ function getOrgChartHtml(agents: AgentInfo[], liveIds: Set<string>): string {
 		transition: all 0.2s;
 	}
 	.session-open:hover { opacity: 1; background: var(--accent); color: #fff; }
+	.session-claude {
+		font-size: 10px;
+		cursor: pointer;
+		opacity: 0.5;
+		padding: 1px 4px;
+		border-radius: 3px;
+		transition: all 0.2s;
+	}
+	.session-claude:hover { opacity: 1; background: #4ec94e; color: #fff; }
 	.session-unset {
 		font-size: 10px;
 		color: var(--text-dim);
@@ -381,12 +430,13 @@ function getOrgChartHtml(agents: AgentInfo[], liveIds: Set<string>): string {
 
 <div class="org-chart">
 	<!-- 取締役 -->
+	${director ? renderDirectorNode(director, liveIds) : `
 	<div class="node node-director">
 		<div class="node-header" style="justify-content: center;">
-			<span class="node-name">取締役（メインセッション）</span>
+			<span class="node-name">取締役（未登録）</span>
 		</div>
-		<div class="node-role">全体統括・指示出し・承認</div>
-	</div>
+		<div class="node-role">エージェント「取締役」を登録すると表示されます</div>
+	</div>`}
 
 	<div class="connector-v"></div>
 	<div class="h-line"></div>
@@ -402,7 +452,9 @@ function getOrgChartHtml(agents: AgentInfo[], liveIds: Set<string>): string {
 	<div class="legend-item"><span class="badge badge-opus">opus</span> 高度な判断・開発</div>
 	<div class="legend-item"><span class="badge badge-sonnet">sonnet</span> 定型作業・補助</div>
 	<div class="legend-item"><span class="live-dot"></span> 使用中</div>
-	<div class="legend-item">📋 クリックでIDコピー</div>
+	<div class="legend-item">📋 IDコピー</div>
+	<div class="legend-item"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle;"><path d="M13.5 8a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0zM8 3.5a.5.5 0 0 0-.5.5v4a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1H8.5V4a.5.5 0 0 0-.5-.5z"/></svg> 履歴表示</div>
+	<div class="legend-item"><svg width="12" height="12" viewBox="0 0 16 16" style="vertical-align: middle;"><rect width="16" height="16" rx="3.5" fill="#D97706"/><g fill="white"><circle cx="8" cy="8" r="1.5"/><polygon points="7.4,6.6 8,1.5 8.6,6.6"/><polygon points="9.3,7.1 13.5,3.5 9.9,8"/><polygon points="9.4,7.8 14.5,8 9.4,8.6"/><polygon points="9.1,9.2 12,13 8.4,9.7"/><polygon points="6.9,9.5 3.5,14.5 6.5,9"/><polygon points="6.6,8.5 1.5,7.5 6.6,7.2"/></g></svg> Claude Codeで開く</div>
 </div>
 
 <script>
@@ -419,13 +471,24 @@ function getOrgChartHtml(agents: AgentInfo[], liveIds: Set<string>): string {
 		});
 	});
 
-	// ▶ クリックでセッションを開く
+	// ▶ クリックで会話履歴を表示
 	document.querySelectorAll('.session-open').forEach(el => {
 		el.addEventListener('click', (e) => {
 			e.stopPropagation();
 			const sid = el.getAttribute('data-sid');
 			if (sid) {
 				vscode.postMessage({ type: 'openSession', sessionId: sid });
+			}
+		});
+	});
+
+	// ⚡ クリックでClaude Codeで開く
+	document.querySelectorAll('.session-claude').forEach(el => {
+		el.addEventListener('click', (e) => {
+			e.stopPropagation();
+			const sid = el.getAttribute('data-sid');
+			if (sid) {
+				vscode.postMessage({ type: 'openInClaude', sessionId: sid });
 			}
 		});
 	});

@@ -1,3 +1,4 @@
+import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -152,4 +153,48 @@ export function removeAgent(name: string): void {
 
 export function getAgentBySessionId(sessionId: string): AgentConfig | undefined {
 	return getAgents().find((a) => a.sessionId === sessionId);
+}
+
+// ルールフォルダ操作（優先度: session-manager.json > VS Code設定 > ハードコードデフォルト）
+export function getRuleFolder(): string {
+	const fromData = loadData().ruleFolder;
+	if (fromData) { return fromData; }
+	const fromConfig = vscode.workspace.getConfiguration('claudeManager').get<string>('defaultRuleFolder', '');
+	if (fromConfig) { return fromConfig; }
+	return '';
+}
+
+export function setRuleFolder(folder: string): void {
+	const data = loadData();
+	data.ruleFolder = folder;
+	saveData(data);
+}
+
+// セッション削除時の関連データクリーンアップ
+export function cleanupSessionData(sessionId: string): void {
+	const data = loadData();
+	// ブックマーク削除
+	data.bookmarks = data.bookmarks.filter((id) => id !== sessionId);
+	// タグから削除
+	for (const tag of Object.keys(data.tags)) {
+		data.tags[tag] = data.tags[tag].filter((id) => id !== sessionId);
+		if (data.tags[tag].length === 0) {
+			delete data.tags[tag];
+		}
+	}
+	// カスタム名削除
+	delete data.customNames[sessionId];
+	// メモ削除
+	if (data.notes) {
+		delete data.notes[sessionId];
+	}
+	// エージェント紐づけ解除
+	if (data.agents) {
+		for (const agent of data.agents) {
+			if (agent.sessionId === sessionId) {
+				agent.sessionId = '';
+			}
+		}
+	}
+	saveData(data);
 }

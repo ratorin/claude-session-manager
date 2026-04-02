@@ -78,16 +78,13 @@ export interface AgentConfig {
 	name: string;                // 部署名（例: CSM開発部）
 	sessionId: string;           // 紐づけセッションID
 	role: string;                // 役割（例: デバッグ・品質確認）
-	description?: string;        // 詳細説明
 	model: 'opus' | 'sonnet' | 'haiku';
-	effort?: 'low' | 'medium' | 'high';
+	sessionMode?: 'fixed' | 'disposable'; // セッション運用（固定 / 使い捨て）
 	ruleFile?: string;           // ルールファイルパス
 	parentAgent?: string;        // 親エージェント名（班の場合）
 	allowedTools?: string[];     // 許可ツール一覧
 	workDir?: string;            // 作業ディレクトリ
 	status?: 'active' | 'idle' | 'archived';
-	costLimitUsd?: number;       // コスト上限（$）
-	maxIterations?: number;      // 最大反復回数
 }
 
 // 拡張機能の永続データ
@@ -97,4 +94,5 @@ export interface ManagerData {
 	customNames: Record<string, string>; // セッションID → カスタム名
 	notes: Record<string, string>; // セッションID → メモ
 	agents?: AgentConfig[]; // エージェント設定
+	ruleFolder?: string; // ルールフォルダパス（例: c:/xampp/Project/.agent-rules）
 }

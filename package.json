@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager - セッション履歴管理",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.1.8",
+	"version": "0.2.1",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -13,7 +13,8 @@
 	],
 	"activationEvents": [
 		"onView:claudeSessions",
-		"onView:claudeMemory"
+		"onView:claudeMemory",
+		"onView:claudeAgents"
 	],
 	"main": "./out/extension.js",
 	"contributes": {
@@ -30,15 +31,19 @@
 			"claude-manager": [
 				{
 					"id": "claudeSessions",
-					"name": "会話一覧"
+					"name": "会話一覧（セッション）"
 				},
 				{
 					"id": "claudeBookmarks",
-					"name": "ブックマーク"
+					"name": "会話ブックマーク"
 				},
 				{
 					"id": "claudeTags",
-					"name": "タグ"
+					"name": "会話タグ"
+				},
+				{
+					"id": "claudeAgents",
+					"name": "エージェント管理"
 				},
 				{
 					"id": "claudeMemory",
@@ -46,6 +51,13 @@
 				}
 			]
 		},
+		"viewsWelcome": [
+			{
+				"view": "claudeAgents",
+				"contents": "エージェントが未登録です。\nまずは取締役を登録して、マルチエージェント運用を始めましょう。\n[取締役を登録](command:claudeManager.registerDirector)\n[使い方ガイドを開く](command:claudeManager.openGuide)",
+				"when": "true"
+			}
+		],
 		"commands": [
 			{
 				"command": "claudeManager.refreshSessions",
@@ -138,9 +150,9 @@
 				"category": "Claude Session Manager"
 			},
 			{
-				"command": "claudeManager.setAgentRole",
-				"title": "エージェント役割を設定",
-				"icon": "$(robot)",
+				"command": "claudeManager.previewAgent",
+				"title": "エージェントプレビュー",
+				"icon": "$(eye)",
 				"category": "Claude Session Manager"
 			},
 			{
@@ -150,20 +162,59 @@
 				"category": "Claude Session Manager"
 			},
 			{
+				"command": "claudeManager.editAgent",
+				"title": "エージェント設定を編集",
+				"icon": "$(edit)",
+				"category": "Claude Session Manager"
+			},
+			{
 				"command": "claudeManager.editRuleFile",
 				"title": "ルールファイルを編集",
 				"icon": "$(file-code)",
 				"category": "Claude Session Manager"
 			},
 			{
-				"command": "claudeManager.openInClaude",
-				"title": "Claude Codeで開く",
+				"command": "claudeManager.linkSession",
+				"title": "セッションを紐づけ",
+				"icon": "$(link)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.openAgentSession",
+				"title": "セッションを開く",
 				"icon": "$(terminal)",
 				"category": "Claude Session Manager"
 			},
 			{
+				"command": "claudeManager.renewAgentSession",
+				"title": "セッションを新しくする",
+				"icon": "$(refresh)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.deleteAgent",
+				"title": "エージェントを削除",
+				"icon": "$(trash)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.refreshAgents",
+				"title": "エージェント管理を更新",
+				"icon": "$(refresh)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.openInClaude",
+				"title": "Claude Codeで開く",
+				"icon": {
+					"light": "resources/sparkle-light.svg",
+					"dark": "resources/sparkle-dark.svg"
+				},
+				"category": "Claude Session Manager"
+			},
+			{
 				"command": "claudeManager.openOrgChart",
-				"title": "エージェント組織図",
+				"title": "組織図を開く",
 				"icon": "$(organization)",
 				"category": "Claude Session Manager"
 			},
@@ -171,6 +222,42 @@
 				"command": "claudeManager.openGuide",
 				"title": "使い方ガイドを開く",
 				"icon": "$(book)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.copySessionPath",
+				"title": "セッションパスをコピー",
+				"icon": "$(file-symlink-file)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.copyMemoryPath",
+				"title": "メモリパスをコピー",
+				"icon": "$(file-symlink-file)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.deleteSession",
+				"title": "セッションを削除",
+				"icon": "$(trash)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.sortSessions",
+				"title": "ソート",
+				"icon": "$(arrow-swap)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.groupSessions",
+				"title": "グループ切替",
+				"icon": "$(list-tree)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.registerDirector",
+				"title": "取締役を登録",
+				"icon": "$(person-add)",
 				"category": "Claude Session Manager"
 			}
 		],
@@ -183,6 +270,16 @@
 				},
 				{
 					"command": "claudeManager.searchSessions",
+					"when": "view == claudeSessions",
+					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.sortSessions",
+					"when": "view == claudeSessions",
+					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.groupSessions",
 					"when": "view == claudeSessions",
 					"group": "navigation"
 				},
@@ -200,62 +297,82 @@
 					"command": "claudeManager.refreshMemory",
 					"when": "view == claudeMemory",
 					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.refreshAgents",
+					"when": "view == claudeAgents",
+					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.openOrgChart",
+					"when": "view == claudeAgents",
+					"group": "navigation"
 				}
 			],
 			"view/item/context": [
 				{
 					"command": "claudeManager.previewSession",
-					"when": "view == claudeSessions && viewItem == session",
+					"when": "view == claudeSessions && viewItem =~ /^session/",
 					"group": "inline"
 				},
 				{
 					"command": "claudeManager.bookmarkSession",
-					"when": "view == claudeSessions && viewItem == session",
+					"when": "view == claudeSessions && (viewItem == session || viewItem == sessionRegistered)",
 					"group": "inline"
 				},
 				{
 					"command": "claudeManager.openInClaude",
-					"when": "viewItem == session || viewItem == bookmarkedSession",
+					"when": "viewItem =~ /^session/",
 					"group": "0_open"
 				},
 				{
 					"command": "claudeManager.copySessionId",
-					"when": "viewItem == session || viewItem == bookmarkedSession",
+					"when": "viewItem =~ /^session/",
+					"group": "0_open"
+				},
+				{
+					"command": "claudeManager.copySessionPath",
+					"when": "viewItem =~ /^session/",
 					"group": "0_open"
 				},
 				{
 					"command": "claudeManager.renameSession",
-					"when": "viewItem == session || viewItem == bookmarkedSession",
+					"when": "viewItem =~ /^session/",
 					"group": "1_edit"
 				},
 				{
 					"command": "claudeManager.tagSession",
-					"when": "viewItem == session || viewItem == bookmarkedSession",
-					"group": "1_edit"
-				},
-				{
-					"command": "claudeManager.setAgentRole",
-					"when": "viewItem == session || viewItem == bookmarkedSession",
+					"when": "viewItem =~ /^session/",
 					"group": "1_edit"
 				},
 				{
 					"command": "claudeManager.registerAgent",
-					"when": "viewItem == session || viewItem == bookmarkedSession",
+					"when": "viewItem == session || viewItem == sessionBookmarked",
+					"group": "2_agent"
+				},
+				{
+					"command": "claudeManager.editAgent",
+					"when": "viewItem == sessionRegistered || viewItem == sessionRegisteredBookmarked",
 					"group": "2_agent"
 				},
 				{
 					"command": "claudeManager.editRuleFile",
-					"when": "viewItem == session || viewItem == bookmarkedSession",
+					"when": "viewItem == sessionRegistered || viewItem == sessionRegisteredBookmarked",
 					"group": "2_agent"
 				},
 				{
+					"command": "claudeManager.deleteSession",
+					"when": "viewItem =~ /^session/",
+					"group": "3_danger"
+				},
+				{
 					"command": "claudeManager.unbookmarkSession",
-					"when": "view == claudeBookmarks && viewItem == bookmarkedSession",
+					"when": "view == claudeBookmarks && viewItem =~ /Bookmarked/",
 					"group": "inline"
 				},
 				{
 					"command": "claudeManager.previewSession",
-					"when": "view == claudeBookmarks && viewItem == bookmarkedSession",
+					"when": "view == claudeBookmarks && viewItem =~ /Bookmarked/",
 					"group": "inline"
 				},
 				{
@@ -264,9 +381,44 @@
 					"group": "inline"
 				},
 				{
+					"command": "claudeManager.openAgentSession",
+					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
+					"group": "0_open"
+				},
+				{
+					"command": "claudeManager.renewAgentSession",
+					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
+					"group": "0_open"
+				},
+				{
+					"command": "claudeManager.linkSession",
+					"when": "view == claudeAgents && viewItem =~ /^agentItem/",
+					"group": "0_link"
+				},
+				{
+					"command": "claudeManager.editAgent",
+					"when": "view == claudeAgents && viewItem =~ /^agentItem/",
+					"group": "1_edit"
+				},
+				{
+					"command": "claudeManager.editRuleFile",
+					"when": "view == claudeAgents && viewItem =~ /WithRule/",
+					"group": "1_edit"
+				},
+				{
+					"command": "claudeManager.deleteAgent",
+					"when": "view == claudeAgents && viewItem =~ /^agentItem/",
+					"group": "3_danger"
+				},
+				{
 					"command": "claudeManager.previewMemory",
 					"when": "view == claudeMemory && viewItem == memoryFile",
 					"group": "inline"
+				},
+				{
+					"command": "claudeManager.copyMemoryPath",
+					"when": "view == claudeMemory && viewItem == memoryFile",
+					"group": "0_copy"
 				},
 				{
 					"command": "claudeManager.editMemory",
@@ -289,6 +441,67 @@
 					"group": "3_danger"
 				}
 			]
+		},
+		"configuration": {
+			"title": "Claude Session Manager",
+			"properties": {
+				"claudeManager.agentMonitorInterval": {
+					"type": "number",
+					"default": 5,
+					"minimum": 1,
+					"maximum": 60,
+					"description": "エージェントの動作状況を監視する間隔（秒）。短くするとリアルタイム性が上がりますが、PCへの負荷が高まります"
+				},
+				"claudeManager.defaultSortMode": {
+					"type": "string",
+					"default": "updated-desc",
+					"enum": ["updated-desc", "updated-asc", "created-desc", "created-asc", "name", "count", "model"],
+					"enumDescriptions": [
+						"更新日（新しい順）",
+						"更新日（古い順）",
+						"作成日（新しい順）",
+						"作成日（古い順）",
+						"名前順",
+						"会話件数順",
+						"モデル順"
+					],
+					"description": "セッション一覧のデフォルトのソート順"
+				},
+				"claudeManager.defaultGroupMode": {
+					"type": "string",
+					"default": "date",
+					"enum": ["date", "tag", "agent", "flat"],
+					"enumDescriptions": [
+						"日付別",
+						"タグ別",
+						"エージェント別",
+						"グループなし"
+					],
+					"description": "セッション一覧のデフォルトのグループ化"
+				},
+				"claudeManager.defaultRuleFolder": {
+					"type": "string",
+					"default": "",
+					"description": "エージェントのルールファイルを格納するフォルダのパス。未設定の場合はsession-manager.jsonのruleFolderを使用します"
+				},
+				"claudeManager.maxSessionsShown": {
+					"type": "number",
+					"default": 500,
+					"minimum": 10,
+					"maximum": 5000,
+					"description": "セッション一覧に表示する最大件数。多すぎると動作が重くなる場合があります"
+				},
+				"claudeManager.preview.showThinkingBlocks": {
+					"type": "boolean",
+					"default": false,
+					"description": "Claudeが回答前に内部で考えた思考プロセスをセッションプレビューに表示します"
+				},
+				"claudeManager.trash.folder": {
+					"type": "string",
+					"default": "",
+					"description": "削除したセッションの移動先フォルダ。未設定の場合は ~/.claude/.trash/ を使用します"
+				}
+			}
 		}
 	},
 	"scripts": {

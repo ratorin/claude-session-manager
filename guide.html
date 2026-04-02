@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Claude Session Manager 使い方ガイド</title>
+<title>Claude Session Manager v0.2.0 使い方ガイド</title>
 <style>
 	* { margin: 0; padding: 0; box-sizing: border-box; }
 	body {
@@ -30,6 +30,15 @@
 		color: #f5e6d8;
 		max-width: 700px;
 		margin: 0 auto;
+	}
+	.hero .version {
+		display: inline-block;
+		background: rgba(255,255,255,0.2);
+		padding: 2px 12px;
+		border-radius: 12px;
+		font-size: 0.85em;
+		color: #fff;
+		margin-top: 8px;
 	}
 
 	.container {
@@ -239,26 +248,6 @@
 		margin-bottom: 3px;
 	}
 
-	/* 注釈 */
-	.annotation {
-		position: relative;
-		margin: 16px 0;
-	}
-	.callout {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		padding: 8px 16px;
-		border-radius: 20px;
-		font-size: 0.9em;
-		font-weight: 500;
-	}
-	.callout-red { background: #d9575722; border: 1px solid #d95757; color: #d95757; }
-	.callout-blue { background: #d9775722; border: 1px solid #d97757; color: #d97757; }
-	.callout-green { background: #8fbc6822; border: 1px solid #8fbc68; color: #8fbc68; }
-	.callout-yellow { background: #e8b84e22; border: 1px solid #e8b84e; color: #e8b84e; }
-	.callout-purple { background: #c09a6b22; border: 1px solid #c09a6b; color: #c09a6b; }
-
 	/* ステップ説明 */
 	.step-grid {
 		display: grid;
@@ -356,7 +345,7 @@
 		border-radius: 6px;
 		padding: 4px 0;
 		display: inline-block;
-		min-width: 220px;
+		min-width: 240px;
 	}
 	.ctx-item {
 		padding: 6px 20px;
@@ -371,11 +360,6 @@
 		height: 1px;
 		background: #555;
 		margin: 3px 0;
-	}
-	.ctx-item .shortcut {
-		margin-left: auto;
-		font-size: 11px;
-		color: #888;
 	}
 
 	/* ポイント */
@@ -430,6 +414,37 @@
 		font-size: 0.9em;
 		margin-top: 4px;
 	}
+
+	/* バッジ */
+	.badge {
+		display: inline-block;
+		font-size: 10px;
+		padding: 1px 6px;
+		border-radius: 3px;
+		font-weight: 600;
+		text-transform: uppercase;
+	}
+	.badge-opus { background: rgba(179,136,255,0.15); color: #b388ff; border: 1px solid rgba(179,136,255,0.3); }
+	.badge-sonnet { background: rgba(100,181,246,0.15); color: #64b5f6; border: 1px solid rgba(100,181,246,0.3); }
+	.badge-haiku { background: rgba(129,199,132,0.15); color: #81c784; border: 1px solid rgba(129,199,132,0.3); }
+
+	/* ステータスバー風 */
+	.statusbar-demo {
+		background: #007acc;
+		padding: 3px 12px;
+		font-size: 12px;
+		color: #fff;
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		border-radius: 4px;
+		margin: 12px 0;
+	}
+	.statusbar-demo .item {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
 </style>
 </head>
 <body>
@@ -437,7 +452,8 @@
 <div class="hero">
 	<img src="images/icon.png" alt="CSM" style="width: 80px; height: 80px; border-radius: 16px; margin-bottom: 16px;">
 	<h1>Claude Session Manager</h1>
-	<p>Claude Codeの会話履歴とメモリを管理するVS Code拡張機能の使い方ガイド</p>
+	<p>Claude Codeの会話履歴・メモリ・エージェントを管理するVS Code拡張機能</p>
+	<div class="version">v0.2.0</div>
 </div>
 
 <div class="container">
@@ -456,7 +472,7 @@
 		<div class="flow-arrow">→</div>
 		<div class="flow-box">
 			<div class="flow-label">サイドバーが開く</div>
-			<div class="flow-text">4つのセクション</div>
+			<div class="flow-text">5つのセクション</div>
 		</div>
 	</div>
 
@@ -476,9 +492,10 @@
 			</div>
 			<div class="sidebar-sim">
 				<div class="sidebar-header">Claude Manager</div>
-				<div class="section-hdr">▼ 会話一覧 🔍🔄</div>
-				<div class="section-hdr">▶ ブックマーク</div>
-				<div class="section-hdr">▶ タグ</div>
+				<div class="section-hdr">▼ 会話一覧（セッション）🔍📖🔄</div>
+				<div class="section-hdr">▶ 会話ブックマーク</div>
+				<div class="section-hdr">▶ 会話タグ</div>
+				<div class="section-hdr">▶ エージェント管理 🏢🔄</div>
 				<div class="section-hdr">▶ メモリ管理</div>
 			</div>
 			<div class="editor-sim">
@@ -488,13 +505,17 @@
 			</div>
 		</div>
 	</div>
+
+	<div class="tip">
+		<strong>ステータスバー：</strong>画面左下に「🟢 2 👥 5」のような表示が出ます。🟢は動作中のエージェント数、👥は登録エージェント総数。クリックで組織図を表示。
+	</div>
 </div>
 
 <!-- ============================================ -->
 <!-- セクション 1: 会話一覧 -->
 <!-- ============================================ -->
 <div class="section">
-	<div class="section-title"><span class="num">1</span>会話一覧</div>
+	<div class="section-title"><span class="num">1</span>会話一覧（セッション）</div>
 
 	<p>過去のClaude Codeとの会話が<strong>日付別</strong>に自動で表示されます。</p>
 
@@ -506,7 +527,7 @@
 		<div class="vscode-body">
 			<div class="sidebar-sim" style="width: 320px;">
 				<div class="sidebar-header">Claude Manager</div>
-				<div class="section-hdr">▼ 会話一覧</div>
+				<div class="section-hdr">▼ 会話一覧（セッション）</div>
 
 				<div class="tree-item" style="padding-left: 10px; color: #ccc; font-weight: 600;">
 					<span class="icon">📅</span>
@@ -515,45 +536,18 @@
 				</div>
 				<div class="tree-item selected">
 					<span class="icon" style="color: #4ade80;">●</span>
-					<span class="label">ログイン画面のバグ修正</span>
-					<span class="desc" style="color: #4ade80;">● 12:42</span>
+					<span class="label">Ｏ  940 ログイン画面のバグ修正</span>
+					<span class="desc" style="color: #4ade80;">12:42</span>
 				</div>
 				<div class="tree-item">
 					<span class="icon" style="color: #c084fc;">✨</span>
-					<span class="label">API認証の実装</span>
-					<span class="desc">10:15 24件</span>
+					<span class="label">Ｓ   24 API認証の実装</span>
+					<span class="desc">10:15</span>
 				</div>
 				<div class="tree-item">
 					<span class="icon" style="color: #60a5fa;">⚡</span>
-					<span class="label">ユーザー一覧ページ改善</span>
-					<span class="desc">09:30 89件</span>
-				</div>
-
-				<div class="tree-item" style="padding-left: 10px; color: #ccc; font-weight: 600;">
-					<span class="icon">📅</span>
-					<span class="label">昨日</span>
-					<span class="desc">2件</span>
-				</div>
-				<div class="tree-item">
-					<span class="icon" style="color: #fbbf24;">★</span>
-					<span class="label">DB設計レビュー</span>
-					<span class="desc">21:15 156件</span>
-				</div>
-				<div class="tree-item">
-					<span class="icon" style="color: #c084fc;">✨</span>
-					<span class="label">テスト環境セットアップ</span>
-					<span class="desc">14:05 201件</span>
-				</div>
-
-				<div class="tree-item" style="padding-left: 10px; color: #ccc; font-weight: 600;">
-					<span class="icon">📅</span>
-					<span class="label">今週</span>
-					<span class="desc">5件</span>
-				</div>
-				<div class="tree-item">
-					<span class="icon" style="color: #60a5fa;">⚡</span>
-					<span class="label">CI/CDパイプライン構築</span>
-					<span class="desc">16:48 78件</span>
+					<span class="label">Ｈ   89 ユーザー一覧改善</span>
+					<span class="desc">09:30</span>
 				</div>
 			</div>
 			<div class="editor-sim">
@@ -563,7 +557,7 @@
 				<div class="editor-content">
 					<div style="padding: 10px; background: #2d2d2d; border-left: 3px solid #d97757; border-radius: 4px; margin-bottom: 16px;">
 						<div style="font-size: 14px; font-weight: 500;">ログイン画面のバグ修正</div>
-						<div style="font-size: 11px; color: #888; margin-top: 4px;">プロジェクト: ~/my-app | 24件 | opus</div>
+						<div style="font-size: 11px; color: #888; margin-top: 4px;">プロジェクト: ~/my-app | 940件 | opus</div>
 					</div>
 					<div class="chat-msg chat-user">
 						<div class="chat-role">あなた</div>
@@ -579,7 +573,15 @@
 	</div>
 
 	<div style="margin-top: 20px;">
-		<h4 style="color: #d97757; margin-bottom: 12px;">アイコンの意味</h4>
+		<h4 style="color: #d97757; margin-bottom: 12px;">ラベル表記</h4>
+		<div class="diagram" style="font-family: monospace; font-size: 14px; line-height: 2;">
+			<div>● Ｏ  940 CSM拡張機能 &nbsp;&nbsp; <span style="color:#888;">元メッセージ... 19:51</span></div>
+			<div style="color: #888; font-size: 11px; margin-top: 8px;">
+				Ｏ=Opus　Ｓ=Sonnet　Ｈ=Haiku　｜　件数は5桁右揃え　｜　リネーム時は元メッセージをdescriptionに表示
+			</div>
+		</div>
+
+		<h4 style="color: #d97757; margin: 16px 0 12px;">アイコンの意味</h4>
 		<div class="icon-legend">
 			<div class="icon-item">
 				<span class="big-icon" style="color: #aaa;">・</span>
@@ -597,57 +599,48 @@
 				<span class="big-icon" style="color: #fff;">👁</span>
 				<div class="icon-desc"><strong>プレビュー中</strong>Session Managerで表示中</div>
 			</div>
-			<div class="icon-item">
-				<span class="big-icon" style="color: #4ade80;">🎯</span>
-				<div class="icon-desc"><strong>プレビュー+利用中</strong>両方の状態</div>
-			</div>
-		</div>
-		<h4 style="color: #d97757; margin: 16px 0 12px;">ラベル表記</h4>
-		<div class="diagram" style="font-family: monospace; font-size: 14px; line-height: 2;">
-			<div>● Ｏ  940 CSM拡張機能 &nbsp;&nbsp; <span style="color:#888;">元メッセージ... 19:51 opus</span></div>
-			<div style="color: #888; font-size: 11px; margin-top: 8px;">
-				Ｏ=Opus　Ｓ=Sonnet　Ｈ=Haiku　｜　件数は5桁右揃え　｜　リネーム時は元メッセージをdescriptionに表示
-			</div>
 		</div>
 	</div>
 </div>
 
 <!-- ============================================ -->
-<!-- セクション 2: 右クリックメニュー -->
+<!-- セクション 2: 右クリック操作 -->
 <!-- ============================================ -->
 <div class="section">
 	<div class="section-title"><span class="num">2</span>右クリック操作</div>
 
-	<p>会話を右クリックすると、以下の操作メニューが出ます。</p>
+	<p>会話を右クリックすると操作メニューが出ます。</p>
 
 	<div class="diagram" style="display: flex; gap: 40px; align-items: flex-start; flex-wrap: wrap;">
 		<div>
 			<div style="margin-bottom: 12px; color: #888; font-size: 13px;">会話アイテムを右クリック ↓</div>
 			<div class="ctx-menu-demo">
-				<div class="ctx-item">🔗 <strong>Claude Codeで開く</strong></div>
+				<div class="ctx-item">🔗 Claude Codeで開く</div>
+				<div class="ctx-item">📋 セッションIDをコピー</div>
+				<div class="ctx-item">📂 セッションパスをコピー</div>
 				<div class="ctx-sep"></div>
 				<div class="ctx-item">✏️ 会話をリネーム</div>
 				<div class="ctx-item">🏷 タグを追加</div>
 				<div class="ctx-sep"></div>
-				<div class="ctx-item">⭐ ブックマークに追加</div>
+				<div class="ctx-item">🤖 エージェントとして登録</div>
 			</div>
 		</div>
 		<div style="flex: 1; min-width: 250px;">
 			<div class="step-card" style="margin-bottom: 12px;">
 				<h4>🔗 Claude Codeで開く</h4>
-				<p>VS CodeのClaude Codeパネルでその会話を再開。既に開いていればそのタブにフォーカス。</p>
+				<p>Claude Codeパネルでその会話を再開。</p>
 			</div>
 			<div class="step-card" style="margin-bottom: 12px;">
-				<h4>✏️ リネーム</h4>
-				<p>会話に分かりやすい名前を付ける。例: 「SSHトンネル設定」「見積バグ修正」</p>
+				<h4>📂 セッションパスをコピー</h4>
+				<p>JSONLファイルのパスをクリップボードにコピー。他のエージェントに会話を読ませる時に便利。</p>
 			</div>
 			<div class="step-card" style="margin-bottom: 12px;">
-				<h4>🏷 タグ</h4>
-				<p>自由なカテゴリで分類。例: 「認証」「UI改善」「インフラ」</p>
+				<h4>✏️ リネーム / 🏷 タグ</h4>
+				<p>会話に名前やカテゴリを設定して整理。</p>
 			</div>
 			<div class="step-card">
-				<h4>⭐ ブックマーク</h4>
-				<p>大事な会話をお気に入り登録。ブックマークセクションに表示される。</p>
+				<h4>🤖 エージェントとして登録</h4>
+				<p>その会話をエージェントとして管理する（セクション6参照）。</p>
 			</div>
 		</div>
 	</div>
@@ -661,14 +654,14 @@
 
 	<div class="step-grid">
 		<div>
-			<h4 style="color: #fbbf24; margin-bottom: 12px;">★ ブックマーク</h4>
+			<h4 style="color: #fbbf24; margin-bottom: 12px;">★ 会話ブックマーク</h4>
 			<div class="vscode-sim">
 				<div class="vscode-titlebar">
 					<div class="dots"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
 					ブックマーク
 				</div>
 				<div style="background: #252526; padding: 4px 0;">
-					<div class="section-hdr">▼ ブックマーク</div>
+					<div class="section-hdr">▼ 会話ブックマーク</div>
 					<div class="tree-item">
 						<span class="icon" style="color: #fbbf24;">★</span>
 						<span class="label">DB設計レビュー</span>
@@ -676,10 +669,6 @@
 					<div class="tree-item">
 						<span class="icon" style="color: #fbbf24;">★</span>
 						<span class="label">初期セットアップ手順</span>
-					</div>
-					<div class="tree-item">
-						<span class="icon" style="color: #fbbf24;">★</span>
-						<span class="label">SSHトンネル設定</span>
 					</div>
 				</div>
 			</div>
@@ -689,14 +678,14 @@
 		</div>
 
 		<div>
-			<h4 style="color: #60a5fa; margin-bottom: 12px;">🏷 タグ</h4>
+			<h4 style="color: #60a5fa; margin-bottom: 12px;">🏷 会話タグ</h4>
 			<div class="vscode-sim">
 				<div class="vscode-titlebar">
 					<div class="dots"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
 					タグ
 				</div>
 				<div style="background: #252526; padding: 4px 0;">
-					<div class="section-hdr">▼ タグ</div>
+					<div class="section-hdr">▼ 会話タグ</div>
 					<div class="tree-item" style="padding-left: 14px;">
 						<span class="icon">🏷</span>
 						<span class="label" style="color: #60a5fa;">認証</span>
@@ -709,8 +698,6 @@
 						<span class="label" style="color: #4ade80;">インフラ</span>
 						<span class="desc">3件</span>
 					</div>
-					<div class="tree-sub">└ CI/CDパイプライン構築</div>
-					<div class="tree-sub">└ テスト環境セットアップ</div>
 				</div>
 			</div>
 			<div class="tip" style="margin-top: 12px;">
@@ -746,27 +733,6 @@
 	<div class="tip">
 		<strong>検索対象：</strong>会話タイトル（最初の発言 or リネーム名）、プロジェクトパス、gitブランチ名
 	</div>
-
-	<div class="diagram">
-		<div style="color: #888; font-size: 13px; margin-bottom: 8px;">例：「SSH」で検索</div>
-		<div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
-			<div style="background: #3c3c3c; padding: 8px 16px; border-radius: 4px; border: 1px solid #d97757; color: #ccc; font-size: 13px; min-width: 200px;">
-				🔍 SSH
-			</div>
-			<div style="font-size: 1.2em; color: #d97757;">→</div>
-			<div>
-				<div class="tree-item" style="padding: 4px 8px;">
-					<span class="icon" style="color: #c084fc;">✨</span>
-					<span style="font-size: 13px;">SSHトンネル設定</span>
-				</div>
-				<div class="tree-item" style="padding: 4px 8px;">
-					<span class="icon" style="color: #60a5fa;">⚡</span>
-					<span style="font-size: 13px;">SSH鍵の作成方法</span>
-				</div>
-				<div style="font-size: 11px; color: #666; padding: 4px 8px;">他の会話は非表示</div>
-			</div>
-		</div>
-	</div>
 </div>
 
 <!-- ============================================ -->
@@ -778,55 +744,218 @@
 	<p>一覧の会話をクリックすると、<strong>エディタ領域にチャット形式</strong>で内容が表示されます。</p>
 	<p style="color: #888; margin-top: 4px;">別の会話をクリックしても新しいタブは開かず、同じタブの中身が切り替わります。</p>
 
-	<div class="vscode-sim" style="margin-top: 16px;">
-		<div class="vscode-titlebar">
-			<div class="dots"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
-			プレビュー
-		</div>
-		<div class="vscode-body" style="min-height: 250px;">
-			<div class="sidebar-sim" style="width: 200px;">
-				<div class="section-hdr">▼ 会話一覧</div>
-				<div class="tree-item">
-					<span class="icon" style="color: #fff;">▶</span>
-					<span class="label" style="font-size: 11px;">SSHトンネル設定</span>
-				</div>
-				<div class="tree-item" style="opacity: 0.6;">
-					<span class="icon" style="color: #c084fc;">✨</span>
-					<span class="label" style="font-size: 11px;">見積フォーム修正</span>
-				</div>
-			</div>
-			<div class="editor-sim">
-				<div class="tab-sim">
-					<div class="tab-item active">💬 SSHトンネル設定</div>
-				</div>
-				<div class="editor-content">
-					<div style="background: #3c3c3c; padding: 6px 12px; border-radius: 4px; margin-bottom: 12px;">
-						<input type="text" placeholder="会話内を検索..." style="background: transparent; border: none; color: #ccc; width: 100%; outline: none; font-size: 12px;">
-					</div>
-					<div class="chat-msg chat-user">
-						<div class="chat-role">あなた</div>
-						SSHトンネル接続の設定方法を教えて
-					</div>
-					<div class="chat-msg chat-assistant">
-						<div class="chat-role">Claude</div>
-						Windows Serverから常時SSHトンネルを張る方法です...<br>
-						<code style="color: #ce93d8;">ssh -N -L 13306:localhost:3306 ...</code>
-					</div>
-				</div>
-			</div>
-		</div>
-	</div>
-
 	<div class="tip">
 		<strong>会話内検索：</strong>プレビュー上部の検索バーで、会話の中身をキーワードで絞り込めます。
 	</div>
 </div>
 
 <!-- ============================================ -->
-<!-- セクション 6: メモリ管理 -->
+<!-- セクション 6: エージェント管理 -->
 <!-- ============================================ -->
 <div class="section">
-	<div class="section-title"><span class="num">6</span>メモリ管理</div>
+	<div class="section-title"><span class="num">6</span>エージェント管理</div>
+
+	<p>Claude Codeの会話セッションを<strong>エージェント（部署）</strong>として登録・管理できます。マルチエージェント運用の中核機能です。</p>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">登録方法</h4>
+	<div class="flow">
+		<div class="flow-box">
+			<div class="flow-label">会話一覧で</div>
+			<div class="flow-text">右クリック →<br>「エージェントとして登録」</div>
+		</div>
+		<div class="flow-arrow">→</div>
+		<div class="flow-box">
+			<div class="flow-label">設定フォーム</div>
+			<div class="flow-text">名前・役割・モデル等<br>を入力して保存</div>
+		</div>
+		<div class="flow-arrow">→</div>
+		<div class="flow-box">
+			<div class="flow-label">サイドバーに表示</div>
+			<div class="flow-text">エージェント管理<br>セクションに登場</div>
+		</div>
+	</div>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">エージェント設定項目</h4>
+	<div class="step-grid">
+		<div class="step-card">
+			<h4>名前・役割</h4>
+			<p>例: 「CSM開発部」「テスト担当」。組織図やサイドバーに表示される。</p>
+		</div>
+		<div class="step-card">
+			<h4>モデル</h4>
+			<p>Opus / Sonnet / Haiku。ラベルに <span class="badge badge-opus">opus</span> <span class="badge badge-sonnet">sonnet</span> <span class="badge badge-haiku">haiku</span> と表示。</p>
+		</div>
+		<div class="step-card">
+			<h4>セッション運用</h4>
+			<p>「固定」（同じセッションを継続利用）/ 「使い捨て」（毎回新規）。</p>
+		</div>
+		<div class="step-card">
+			<h4>親エージェント</h4>
+			<p>上位エージェントを設定。組織図でツリー表示される。</p>
+		</div>
+		<div class="step-card">
+			<h4>ルールファイル</h4>
+			<p>CLAUDE.md等のパスを設定。プレビューで内容を閲覧可能。</p>
+		</div>
+		<div class="step-card">
+			<h4>許可ツール・作業フォルダ</h4>
+			<p>エージェントが使えるツールと作業ディレクトリを指定。</p>
+		</div>
+	</div>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">プレビューと設定</h4>
+	<p>サイドバーのエージェントをクリックすると<strong>読み取り専用のプレビュー</strong>が表示されます。</p>
+	<p style="color: #888; margin-top: 4px;">プレビュー内の「設定」ボタンで編集フォームに切り替え。ルールファイルの内容も閲覧可能。</p>
+
+	<div class="vscode-sim" style="margin-top: 16px;">
+		<div class="vscode-titlebar">
+			<div class="dots"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
+			エージェント管理サイドバー
+		</div>
+		<div style="background: #252526; padding: 4px 0;">
+			<div class="section-hdr">▼ エージェント管理 🏢🔄</div>
+			<div class="tree-item">
+				<span class="icon" style="color: #4ade80;">●</span>
+				<span class="label">Ｏ 取締役</span>
+				<span class="desc">全体統括・指示出し...</span>
+			</div>
+			<div class="tree-item">
+				<span class="icon" style="color: #4ade80;">●</span>
+				<span class="label">Ｏ CSM開発部</span>
+				<span class="desc">📄89行 CSM拡張機能...</span>
+			</div>
+			<div class="tree-item">
+				<span class="icon" style="color: #888;">○</span>
+				<span class="label">Ｓ テスト部</span>
+				<span class="desc">テスト自動化...</span>
+			</div>
+			<div class="tree-item">
+				<span class="icon" style="color: #888;">○</span>
+				<span class="label">Ｈ 雑務部</span>
+				<span class="desc">未紐づけ</span>
+			</div>
+		</div>
+	</div>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">右クリック操作</h4>
+	<div class="diagram" style="display: flex; gap: 40px; align-items: flex-start; flex-wrap: wrap;">
+		<div class="ctx-menu-demo">
+			<div class="ctx-item">⚡ セッションを開く</div>
+			<div class="ctx-item">🔄 セッションを新しくする</div>
+			<div class="ctx-sep"></div>
+			<div class="ctx-item">🔗 セッションを紐づけ</div>
+			<div class="ctx-sep"></div>
+			<div class="ctx-item">✏️ エージェント設定を編集</div>
+			<div class="ctx-item">📄 ルールファイルを編集</div>
+			<div class="ctx-sep"></div>
+			<div class="ctx-item" style="color: #e94560;">🗑 エージェントを削除</div>
+		</div>
+		<div style="flex: 1; min-width: 250px;">
+			<div class="step-card" style="margin-bottom: 12px;">
+				<h4>⚡ セッションを開く</h4>
+				<p>紐づけ済みセッションをClaude Codeで開く。すぐに会話を再開可能。</p>
+			</div>
+			<div class="step-card" style="margin-bottom: 12px;">
+				<h4>🔄 セッションを新しくする</h4>
+				<p>引き継ぎメッセージ（遺言）を記録し、セッション紐づけを解除。新しいセッションで再スタート。</p>
+			</div>
+			<div class="step-card" style="margin-bottom: 12px;">
+				<h4>🔗 セッションを紐づけ</h4>
+				<p>既存の会話をこのエージェントに紐づける。</p>
+			</div>
+			<div class="step-card">
+				<h4>📄 ルールファイルを編集</h4>
+				<p>エージェントのルールファイル（CLAUDE.md等）をエディタで開く。</p>
+			</div>
+		</div>
+	</div>
+</div>
+
+<!-- ============================================ -->
+<!-- セクション 7: 組織図 -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">7</span>エージェント組織図</div>
+
+	<p>登録済みエージェントを<strong>組織図として視覚的に表示</strong>。親子関係・動作状態・モデルを一目で把握。</p>
+
+	<div class="flow">
+		<div class="flow-box">
+			<div class="flow-label">開き方 1</div>
+			<div class="flow-text">ステータスバーの<br>「🟢 2 👥 5」をクリック</div>
+		</div>
+		<div class="flow-arrow">or</div>
+		<div class="flow-box">
+			<div class="flow-label">開き方 2</div>
+			<div class="flow-text">サイドバーの<br>🏢 アイコンをクリック</div>
+		</div>
+	</div>
+
+	<div class="diagram">
+		<div style="text-align: center; margin-bottom: 16px;">
+			<div style="display: inline-block; padding: 10px 24px; border: 2px solid #d97757; border-radius: 8px; background: #352d27;">
+				<strong style="color: #d97757;">取締役（メインセッション）</strong><br>
+				<span style="font-size: 12px; color: #888;">全体統括・指示出し・承認</span>
+			</div>
+		</div>
+		<div style="text-align: center; color: #555;">│</div>
+		<div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; margin-top: 8px;">
+			<div style="padding: 10px 16px; border: 1px solid #4a3f37; border-radius: 8px; background: #352d27; min-width: 150px; text-align: center;">
+				<span class="badge badge-opus">opus</span> <strong>CSM開発部</strong><br>
+				<span style="font-size: 11px; color: #888;">拡張機能の開発</span><br>
+				<span style="font-size: 10px; color: #4ade80;">● 動作中</span>
+			</div>
+			<div style="padding: 10px 16px; border: 1px solid #4a3f37; border-radius: 8px; background: #352d27; min-width: 150px; text-align: center;">
+				<span class="badge badge-sonnet">sonnet</span> <strong>テスト部</strong><br>
+				<span style="font-size: 11px; color: #888;">テスト自動化</span><br>
+				<span style="font-size: 10px; color: #888;">○ 停止中</span>
+			</div>
+			<div style="padding: 10px 16px; border: 1px solid #4a3f37; border-radius: 8px; background: #352d27; min-width: 150px; text-align: center;">
+				<span class="badge badge-haiku">haiku</span> <strong>雑務部</strong><br>
+				<span style="font-size: 11px; color: #888;">定型作業</span><br>
+				<span style="font-size: 10px; color: #888;">○ 停止中</span>
+			</div>
+		</div>
+	</div>
+
+	<div class="tip">
+		<strong>組織図の操作：</strong>各カードの📋でセッションIDコピー、▶で会話履歴プレビュー、⚡でClaude Codeで直接開く。
+	</div>
+</div>
+
+<!-- ============================================ -->
+<!-- セクション 8: ステータスバー -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">8</span>ステータスバー</div>
+
+	<p>VS Codeの左下に<strong>エージェントの稼働状況</strong>がリアルタイム表示されます。</p>
+
+	<div class="diagram">
+		<div style="color: #888; font-size: 13px; margin-bottom: 8px;">ステータスバーの表示例</div>
+		<div class="statusbar-demo" style="display: inline-flex;">
+			<span class="item">🟢 2 👥 5</span>
+		</div>
+		<div style="margin-top: 12px; font-size: 13px; color: #aaa;">
+			<div>🟢 <strong>2</strong> = 動作中のエージェント数</div>
+			<div>👥 <strong>5</strong> = 登録済みエージェント総数</div>
+		</div>
+		<div style="margin-top: 12px; font-size: 12px; color: #888;">
+			動作中が0の場合: 「👥 5」（🟢なし）<br>
+			クリックすると組織図を表示
+		</div>
+	</div>
+
+	<div class="tip">
+		<strong>ツールチップ：</strong>マウスホバーで動作中のエージェント名一覧を表示。
+	</div>
+</div>
+
+<!-- ============================================ -->
+<!-- セクション 9: メモリ管理 -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">9</span>メモリ管理</div>
 
 	<p>Claude Codeが記憶している情報（メモリ）を一覧・編集・管理できます。</p>
 
@@ -863,10 +992,6 @@
 				<span style="padding: 1px 6px; border-radius: 8px; font-size: 10px; background: #ce93d822; color: #ce93d8; border: 1px solid #ce93d844;">reference</span>
 				<span class="label">Xserver接続情報</span>
 			</div>
-			<div class="tree-item" style="padding-left: 28px;">
-				<span style="padding: 1px 6px; border-radius: 8px; font-size: 10px; background: #81c78422; color: #81c784; border: 1px solid #81c78444;">project</span>
-				<span class="label">デプロイ手順メモ</span>
-			</div>
 		</div>
 	</div>
 
@@ -893,6 +1018,8 @@
 	<h4 style="color: #d97757; margin: 24px 0 12px;">右クリック操作</h4>
 	<div class="diagram" style="display: flex; gap: 40px; align-items: flex-start; flex-wrap: wrap;">
 		<div class="ctx-menu-demo">
+			<div class="ctx-item">📂 メモリパスをコピー</div>
+			<div class="ctx-sep"></div>
 			<div class="ctx-item">👁 プレビュー</div>
 			<div class="ctx-item">✏️ 編集</div>
 			<div class="ctx-sep"></div>
@@ -903,12 +1030,16 @@
 		</div>
 		<div style="flex: 1; min-width: 250px;">
 			<div class="step-card" style="margin-bottom: 8px;">
+				<h4>📂 メモリパスをコピー</h4>
+				<p>メモリファイルのパスをコピー。他のエージェントに読ませる時に便利。</p>
+			</div>
+			<div class="step-card" style="margin-bottom: 8px;">
 				<h4>🔀 統合（マージ）</h4>
-				<p>似た内容の2つのメモリを1つにまとめる。メモリの整理に。</p>
+				<p>似た内容の2つのメモリを1つにまとめる。</p>
 			</div>
 			<div class="step-card">
 				<h4>✂️ 抽出</h4>
-				<p>1つのメモリから一部を切り出して新しいメモリファイルを作成。</p>
+				<p>1つのメモリから一部を切り出して新しいファイルに。</p>
 			</div>
 		</div>
 	</div>
@@ -919,10 +1050,10 @@
 </div>
 
 <!-- ============================================ -->
-<!-- セクション 7: 実際の活用シーン -->
+<!-- セクション 10: 活用シーン -->
 <!-- ============================================ -->
 <div class="section">
-	<div class="section-title"><span class="num">7</span>こんな時に使う</div>
+	<div class="section-title"><span class="num">10</span>こんな時に使う</div>
 
 	<div class="usecase">
 		<h4>シーン1: 「前に聞いたSSHの設定、どこだっけ？」</h4>
@@ -930,29 +1061,29 @@
 			<div class="emoji">🔍</div>
 			<div class="text">
 				<strong>検索で「SSH」と入力 → 一覧から見つけてクリック → プレビューで内容確認</strong>
-				<p>リネームしておけば「SSHトンネル設定」で即座に見つかる。ブックマークしておけば検索すら不要。</p>
+				<p>リネームやブックマークしておけばさらに素早く見つかる。</p>
 			</div>
 		</div>
 	</div>
 
 	<div class="usecase">
-		<h4>シーン2: 「あの機能の会話をまとめて見たい」</h4>
-		<div class="usecase-scenario">
-			<div class="emoji">🏷</div>
-			<div class="text">
-				<strong>タグセクション → 「認証」「UI改善」等をクリック → 関連会話が一覧表示</strong>
-				<p>事前に会話にタグを付けておくと、機能やテーマ別にまとめて見られる。</p>
-			</div>
-		</div>
-	</div>
-
-	<div class="usecase">
-		<h4>シーン3: 「この会話の続きをClaudeに聞きたい」</h4>
+		<h4>シーン2: 「この会話の続きをClaudeに聞きたい」</h4>
 		<div class="usecase-scenario">
 			<div class="emoji">🔗</div>
 			<div class="text">
-				<strong>会話を右クリック → 「Claude Codeで開く」→ VS CodeのClaudeパネルで再開</strong>
-				<p>前回の文脈を引き継いだまま続きから会話できる。</p>
+				<strong>会話を右クリック → 「Claude Codeで開く」→ 前回の文脈で再開</strong>
+				<p>セッションパスをコピーして別のエージェントに読ませることも可能。</p>
+			</div>
+		</div>
+	</div>
+
+	<div class="usecase">
+		<h4>シーン3: 「マルチエージェント運用で部署を管理したい」</h4>
+		<div class="usecase-scenario">
+			<div class="emoji">🏢</div>
+			<div class="text">
+				<strong>エージェント管理で部署を登録 → 組織図で全体把握 → セッションを開いて指示</strong>
+				<p>ステータスバーで稼働状況をリアルタイムモニタリング。セッション更新で引き継ぎも可能。</p>
 			</div>
 		</div>
 	</div>
@@ -966,6 +1097,136 @@
 				<p>容量バーで使用率をチェック。不要なメモリは削除でスッキリ。</p>
 			</div>
 		</div>
+	</div>
+</div>
+
+<!-- セクション 11: エージェント運用ガイド -->
+<div class="section">
+	<div class="section-title"><span class="num">11</span>エージェント運用ガイド</div>
+
+	<p>CSMを使ったマルチエージェント運用の実践的な手順を紹介します。<strong>取締役 → 部署 → 班</strong>の三階層構造で、大規模プロジェクトも効率よく管理できます。</p>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">ステップ1: 取締役を登録する</h4>
+	<div class="step-grid">
+		<div class="step-card">
+			<h4>取締役の役割</h4>
+			<p>全体統括・タスク分割・最終判断を担う最上位エージェント。ユーザーからの指示を受け取り、各部署に割り振る。</p>
+		</div>
+		<div class="step-card">
+			<h4>推奨設定</h4>
+			<p>モデル: <strong>Opus</strong>（高度な判断に対応）<br>セッション運用: <strong>固定</strong>（長期の文脈を保持）</p>
+		</div>
+	</div>
+	<div class="flow" style="margin: 16px 0;">
+		<div class="flow-box">
+			<div class="flow-label">エージェント管理</div>
+			<div class="flow-text">ウェルカム画面の<br>「取締役を登録」</div>
+		</div>
+		<div class="flow-arrow">→</div>
+		<div class="flow-box">
+			<div class="flow-label">フォームで</div>
+			<div class="flow-text">名前・モデル・<br>ルールを入力</div>
+		</div>
+		<div class="flow-arrow">→</div>
+		<div class="flow-box">
+			<div class="flow-label">セッションを</div>
+			<div class="flow-text">紐づけて<br>運用開始</div>
+		</div>
+	</div>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">ステップ2: 部署（子エージェント）を追加する</h4>
+	<p>業務内容に応じて部署を追加します。<strong>親エージェントに「取締役」を設定</strong>することで、組織図にツリー表示されます。</p>
+
+	<div class="tip">
+		<strong>モデルの使い分け:</strong> 重要な判断・設計 → Opus / 通常の開発・調査 → Sonnet / 定型・軽量タスク → Haiku（コスト効率◎）
+	</div>
+
+	<div class="tip">
+		<strong>固定 vs 使い捨て:</strong> 会話文脈を積み上げたい部署（開発部など）は「固定」、毎回クリーンな状態で動かしたい部署（調査部・テスト部など）は「使い捨て」がおすすめです。
+	</div>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">ステップ3: ルールファイルを育てる</h4>
+	<p>各エージェントにルールファイル（<code>.md</code>）を設定し、役割・禁止事項・ノウハウを蓄積します。</p>
+
+	<div class="step-grid">
+		<div class="step-card">
+			<h4>ルールに書くこと</h4>
+			<ul style="color: #aaa; font-size: 0.9em; padding-left: 16px; margin-top: 8px;">
+				<li>エージェントの役割と担当範囲</li>
+				<li>禁止事項（例: rm禁止 → .trash/に移動）</li>
+				<li>使用ツールと作業フォルダ</li>
+				<li>出力形式・言語の指定</li>
+			</ul>
+		</div>
+		<div class="step-card">
+			<h4>育成のコツ</h4>
+			<ul style="color: #aaa; font-size: 0.9em; padding-left: 16px; margin-top: 8px;">
+				<li>作業中のフィードバックをその都度追記</li>
+				<li>「毎回同じ指示」をルール化して省力化</li>
+				<li>プロジェクト固有のノウハウを蓄積</li>
+			</ul>
+		</div>
+	</div>
+
+	<div class="tip">
+		<strong>編集方法:</strong> エージェントを右クリック → 「ルールファイルを編集」でエディタが開きます。ルールファイルはセッションをまたいで引き継がれる<strong>長期記憶</strong>として機能します。
+	</div>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">ステップ4: セッションの引き継ぎ</h4>
+	<p>コンテキストウィンドウの上限に達したら<strong>「セッションを新しくする」</strong>で引き継ぎます。</p>
+
+	<div class="flow">
+		<div class="flow-box">
+			<div class="flow-label">エージェントを右クリック</div>
+			<div class="flow-text">「セッションを<br>新しくする」</div>
+		</div>
+		<div class="flow-arrow">→</div>
+		<div class="flow-box">
+			<div class="flow-label">遺言を入力</div>
+			<div class="flow-text">完了事項・未解決課題<br>・次の着手点を記録</div>
+		</div>
+		<div class="flow-arrow">→</div>
+		<div class="flow-box">
+			<div class="flow-label">新セッションへ</div>
+			<div class="flow-text">遺言を読んで<br>引き継ぎ指示を出す</div>
+		</div>
+	</div>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">おすすめ構成例</h4>
+	<p>取締役 → 部署 → 班の<strong>三階層構造</strong>による実践的な組織設計です。</p>
+
+	<div class="diagram" style="text-align: center; padding: 20px;">
+		<div style="display: inline-block; padding: 10px 24px; border: 2px solid #d97757; border-radius: 8px; background: #352d27;">
+			<strong style="color: #d97757;">取締役</strong> <span style="font-size: 10px; background: rgba(179,136,255,0.15); color: #b388ff; padding: 1px 5px; border-radius: 3px;">opus</span> 固定<br>
+			<span style="font-size: 12px; color: #888;">全体統括・タスク分割・最終判断</span>
+		</div>
+		<div style="color: #555; font-size: 20px; margin: 8px 0;">│</div>
+		<div style="display: flex; justify-content: center; gap: 12px; flex-wrap: wrap;">
+			<div style="border: 1px solid #4a3f37; border-radius: 8px; background: #352d27; padding: 12px 16px; min-width: 150px;">
+				<div><strong>開発部</strong> <span style="font-size: 9px; background: rgba(179,136,255,0.15); color: #b388ff; padding: 1px 4px; border-radius: 3px;">opus</span></div>
+				<div style="font-size: 11px; color: #888;">実装・レビュー・設計</div>
+				<div style="font-size: 10px; color: #555; margin-top: 4px;">├ 実装班A (sonnet)<br>└ 実装班B (sonnet)</div>
+			</div>
+			<div style="border: 1px solid #4a3f37; border-radius: 8px; background: #352d27; padding: 12px 16px; min-width: 150px;">
+				<div><strong>テスト部</strong> <span style="font-size: 9px; background: rgba(100,181,246,0.15); color: #64b5f6; padding: 1px 4px; border-radius: 3px;">sonnet</span></div>
+				<div style="font-size: 11px; color: #888;">テスト・品質管理</div>
+				<div style="font-size: 10px; color: #555; margin-top: 4px;">使い捨て</div>
+			</div>
+			<div style="border: 1px solid #4a3f37; border-radius: 8px; background: #352d27; padding: 12px 16px; min-width: 150px;">
+				<div><strong>調査部</strong> <span style="font-size: 9px; background: rgba(100,181,246,0.15); color: #64b5f6; padding: 1px 4px; border-radius: 3px;">sonnet</span></div>
+				<div style="font-size: 11px; color: #888;">技術調査・情報収集</div>
+				<div style="font-size: 10px; color: #555; margin-top: 4px;">使い捨て</div>
+			</div>
+			<div style="border: 1px solid #4a3f37; border-radius: 8px; background: #352d27; padding: 12px 16px; min-width: 150px;">
+				<div><strong>雑務部</strong> <span style="font-size: 9px; background: rgba(129,199,132,0.15); color: #81c784; padding: 1px 4px; border-radius: 3px;">haiku</span></div>
+				<div style="font-size: 11px; color: #888;">ドキュメント・定型作業</div>
+				<div style="font-size: 10px; color: #555; margin-top: 4px;">使い捨て</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="tip">
+		<strong>ステータスバーで全体把握:</strong> 画面左下の「🟢 動作中エージェント数 👥 総数」をクリックすると組織図が開きます。どの部署が動いているかを一目で確認できます。
 	</div>
 </div>
 

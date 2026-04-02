@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import { AgentConfig } from './types';
 import * as dataStore from './dataStore';
 
@@ -7,14 +8,9 @@ export interface AgentInfo extends AgentConfig {
 	sessionTitle?: string;  // セッション表示名
 }
 
-// エージェント一覧を読み込み（session-manager.json優先、なければMdフォールバック）
-export function loadAgents(): AgentInfo[] {
-	const stored = dataStore.getAgents();
-	if (stored.length > 0) {
-		return stored as AgentInfo[];
-	}
-	// フォールバック: エージェント一覧.md をパース
-	return parseAgentListMd();
+// エージェント一覧を取得（session-manager.json に一本化）
+export function getAgents(): AgentInfo[] {
+	return dataStore.getAgents() as AgentInfo[];
 }
 
 // セッション情報をマージ（sessionLoaderの結果からタイトルを補完）
@@ -30,74 +26,29 @@ export function enrichAgentsWithSessions(
 	}));
 }
 
-// エージェント一覧.md をパースしてAgentInfo配列に変換（フォールバック用）
-function parseAgentListMd(): AgentInfo[] {
-	const mdPath = 'c:/xampp/Project/agent-rules/エージェント一覧.md';
-	if (!fs.existsSync(mdPath)) {
-		return [];
+// ルールファイルのフルパスを解決（ファイル名のみならルールフォルダと結合）
+export function resolveRuleFilePath(ruleFilePath: string): string {
+	if (!ruleFilePath) { return ''; }
+	// 既にフルパスの場合はそのまま
+	if (path.isAbsolute(ruleFilePath) || ruleFilePath.includes('/') || ruleFilePath.includes('\\')) {
+		return ruleFilePath;
 	}
+	// ファイル名のみの場合はルールフォルダと結合
+	const ruleFolder = dataStore.getRuleFolder();
+	return path.join(ruleFolder, ruleFilePath);
+}
 
-	const content = fs.readFileSync(mdPath, 'utf-8');
-	const agents: AgentInfo[] = [];
-
-	// セッション管理テーブルからID対応表を作成
-	const sessionMap = new Map<string, string>();
-	const sessionTableMatch = content.match(/## セッション管理[\s\S]*?\n((?:\|.*\n)+)/);
-	if (sessionTableMatch) {
-		const rows = sessionTableMatch[1].split('\n').filter((l) => l.startsWith('|'));
-		for (const row of rows) {
-			const cells = row.split('|').map((c) => c.trim()).filter(Boolean);
-			if (cells.length >= 2 && cells[0] !== '部署' && cells[0] !== '---') {
-				const name = cells[0];
-				const sid = cells[1];
-				if (/^[0-9a-f]{8}-/.test(sid)) {
-					sessionMap.set(name, sid);
-				}
-			}
-		}
+// ルールファイルの行数とサイズを取得
+export function getRuleFileInfo(ruleFilePath: string): { lines: number; sizeKb: string } | null {
+	try {
+		const resolved = resolveRuleFilePath(ruleFilePath);
+		if (!fs.existsSync(resolved)) { return null; }
+		const stat = fs.statSync(resolved);
+		const content = fs.readFileSync(resolved, 'utf-8');
+		const lines = content.split('\n').length;
+		const sizeKb = (stat.size / 1024).toFixed(1);
+		return { lines, sizeKb };
+	} catch {
+		return null;
 	}
-
-	// エージェント一覧テーブルをパース
-	const tableMatch = content.match(/# エージェント一覧\n\n((?:\|.*\n)+)/);
-	if (!tableMatch) {
-		return agents;
-	}
-
-	const rows = tableMatch[1].split('\n').filter((l) => l.startsWith('|'));
-	for (const row of rows) {
-		const cells = row.split('|').map((c) => c.trim()).filter(Boolean);
-		if (cells.length < 4 || cells[0] === '部署' || cells[0].startsWith('---')) {
-			continue;
-		}
-
-		const name = cells[0];
-		const role = cells[1];
-		const ruleFile = cells[2] ? `c:/xampp/Project/agent-rules/${cells[2]}` : undefined;
-		const modelRaw = cells[3].toLowerCase();
-		const model = modelRaw.includes('opus') ? 'opus'
-			: modelRaw.includes('haiku') ? 'haiku'
-			: 'sonnet';
-		const toolsRaw = cells[4] || '';
-		const allowedTools = toolsRaw === '制限なし（Web検索必要）'
-			? ['制限なし']
-			: toolsRaw.split(',').map((t) => t.trim()).filter(Boolean);
-
-		let parentAgent: string | undefined;
-		if (name.includes('班') && name.startsWith('AL')) {
-			parentAgent = 'ALOrderForge開発部';
-		}
-
-		agents.push({
-			name,
-			sessionId: sessionMap.get(name) || '',
-			role,
-			model: model as AgentInfo['model'],
-			ruleFile,
-			allowedTools,
-			parentAgent,
-			status: 'idle',
-		});
-	}
-
-	return agents;
 }

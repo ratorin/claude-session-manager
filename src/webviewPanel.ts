@@ -81,8 +81,8 @@ export function updatePreviewTitle(title: string): void {
 }
 
 // 会話プレビューパネル
-export function showSessionPreview(session: ParsedSession, context: vscode.ExtensionContext): void {
-	const fullSession = loadSessionFull(session.filePath);
+export function showSessionPreview(session: ParsedSession, context: vscode.ExtensionContext, showThinking: boolean = false): void {
+	const fullSession = loadSessionFull(session.filePath, showThinking);
 	if (!fullSession) {
 		vscode.window.showErrorMessage('会話の読み込みに失敗しました');
 		return;
@@ -137,6 +137,10 @@ export function showSessionPreview(session: ParsedSession, context: vscode.Exten
 			const updatedTags = dataStore.getTagsForSession(session.id);
 			const updatedNote = dataStore.getNote(session.id);
 			previewPanel!.webview.html = getSessionHtml(fullSession!, updatedNote, updatedTags);
+		} else if (message.type === 'editAgent') {
+			vscode.commands.executeCommand('claudeManager.editAgentBySessionId', session.id);
+		} else if (message.type === 'editRuleFile') {
+			vscode.commands.executeCommand('claudeManager.editRuleFileBySessionId', session.id);
 		} else if (message.type === 'openLink') {
 			if (message.linkType === 'url') {
 				// URLをブラウザで開く
@@ -170,23 +174,29 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[]): s
 			<span class="agent-model badge-${agent.model}">${agent.model.toUpperCase()}</span>
 			<span class="agent-name">${escapeHtml(agent.name)}</span>
 			<span class="agent-role">${escapeHtml(agent.role)}</span>
+			<span class="agent-actions">
+				<a class="agent-link" onclick="editAgent()">設定編集</a>
+				${agent.ruleFile ? '<a class="agent-link" onclick="editRuleFile()">ルールファイル</a>' : ''}
+			</span>
 		</div>`
 		: '';
 
 	const messagesHtml = session.messages.map((msg) => {
-		const roleClass = msg.role === 'user' ? 'user' : 'assistant';
-		const roleLabel = msg.role === 'user' ? 'あなた' : 'Claude';
+		const isThinking = msg.role === 'system' && msg.content.startsWith('[思考]');
+		const roleClass = isThinking ? 'thinking' : (msg.role === 'user' ? 'user' : 'assistant');
+		const roleLabel = isThinking ? '💭 思考' : (msg.role === 'user' ? 'あなた' : 'Claude');
 		const time = msg.timestamp.toLocaleString('ja-JP');
-		const content = renderMarkdown(msg.content);
+		const content = renderMarkdown(isThinking ? msg.content.substring(4) : msg.content);
 		const modelTag = msg.model ? `<span class="model">${msg.model}</span>` : '';
 
 		// ツール操作メッセージは小さくコンパクトに
-		const isToolMsg = msg.content.startsWith('📄') || msg.content.startsWith('✏️') ||
+		const isToolMsg = !isThinking && (
+			msg.content.startsWith('📄') || msg.content.startsWith('✏️') ||
 			msg.content.startsWith('📝') || msg.content.startsWith('💻') ||
 			msg.content.startsWith('🔍') || msg.content.startsWith('📂') ||
 			msg.content.startsWith('🤖') || msg.content.startsWith('📋') ||
 			msg.content.startsWith('🌐') || msg.content.startsWith('🔧') ||
-			msg.content.startsWith('✅');
+			msg.content.startsWith('✅'));
 		const toolClass = isToolMsg ? ' tool-msg' : '';
 
 		return `<div class="message ${roleClass}${toolClass}">
@@ -387,6 +397,17 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[]): s
 	}
 	.tool-msg .message-header { margin-bottom: 2px; }
 	.tool-msg .message-content { font-family: monospace; }
+	.message.thinking {
+		opacity: 0.6;
+		padding: 6px 12px;
+		font-size: 0.8em;
+		border-left: 3px solid #ce93d8;
+		border-radius: 0 6px 6px 0;
+		background: rgba(206, 147, 216, 0.06) !important;
+		margin-right: 40px;
+	}
+	.message.thinking .role { color: #ce93d8; }
+	.message.thinking .message-content { font-style: italic; }
 
 	/* エージェントバッジ */
 	.agent-badge {
@@ -409,6 +430,15 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[]): s
 	.badge-haiku { background: rgba(129,199,132,0.15); color: #81c784; border: 1px solid rgba(129,199,132,0.3); }
 	.agent-badge .agent-name { font-weight: 600; font-size: 0.85em; color: #e27e4a; }
 	.agent-badge .agent-role { font-size: 0.75em; opacity: 0.6; }
+	.agent-badge .agent-actions { margin-left: auto; display: flex; gap: 8px; }
+	.agent-badge .agent-link {
+		font-size: 0.75em;
+		color: var(--vscode-textLink-foreground);
+		cursor: pointer;
+		text-decoration: none;
+		border-bottom: 1px dotted currentColor;
+	}
+	.agent-badge .agent-link:hover { border-bottom-style: solid; }
 
 	/* Markdownレンダリング */
 	.message-content h1, .message-content h2, .message-content h3, .message-content h4 {
@@ -523,6 +553,13 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[]): s
 		}
 		function removeTag(tag) {
 			vscode.postMessage({ type: 'removeTag', tag: tag });
+		}
+
+		function editAgent() {
+			vscode.postMessage({ type: 'editAgent' });
+		}
+		function editRuleFile() {
+			vscode.postMessage({ type: 'editRuleFile' });
 		}
 
 		function filterMessages(keyword) {

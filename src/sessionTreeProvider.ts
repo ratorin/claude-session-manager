@@ -27,8 +27,14 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 	private previewSessionId: string | undefined;
 	private liveSessionIds: Set<string> = new Set();
 	private watcher: fs.FSWatcher | undefined;
+	private pollTimer: ReturnType<typeof setInterval> | undefined;
+	private onLiveChangeCallback: (() => void) | undefined;
 	// 親セッションID → 子エージェントセッション[] のマップ
 	private subagentMap: Map<string, ParsedSession[]> = new Map();
+	// ソートモード
+	private sortMode: 'updated-desc' | 'updated-asc' | 'created-desc' | 'created-asc' | 'name' | 'count' | 'model' = 'updated-desc';
+	// グループモード
+	private groupMode: 'date' | 'tag' | 'agent' | 'flat' = 'date';
 
 	// プレビュー中のセッションを設定
 	setActiveSession(sessionId: string): void {
@@ -40,6 +46,28 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 		return this.previewSessionId;
 	}
 
+	// ソートモード設定
+	setSortMode(mode: 'updated-desc' | 'updated-asc' | 'created-desc' | 'created-asc' | 'name' | 'count' | 'model'): void {
+		this.sortMode = mode;
+		const target = this.filteredSessions || this.sessions;
+		this.sortSessions(target);
+		this.buildGroups(target);
+		this._onDidChangeTreeData.fire(undefined);
+	}
+
+	// グループモード設定
+	setGroupMode(mode: 'date' | 'tag' | 'agent' | 'flat'): void {
+		this.groupMode = mode;
+		const target = this.filteredSessions || this.sessions;
+		this.buildGroups(target);
+		this._onDidChangeTreeData.fire(undefined);
+	}
+
+	// ライブセッション変化時のコールバック設定（ステータスバー更新用）
+	onLiveChange(callback: () => void): void {
+		this.onLiveChangeCallback = callback;
+	}
+
 	// sessions/ ディレクトリを監視してライブセッションを自動検出
 	startWatching(): void {
 		const sessionsDir = path.join(os.homedir(), '.claude', 'sessions');
@@ -47,14 +75,48 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
 		this.updateLiveSessions(sessionsDir);
 
-		this.watcher = fs.watch(sessionsDir, () => {
+		// fs.watch によるリアルタイム監視
+		try {
+			this.watcher = fs.watch(sessionsDir, () => {
+				this.updateLiveSessions(sessionsDir);
+				this._onDidChangeTreeData.fire(undefined);
+				this.onLiveChangeCallback?.();
+			});
+		} catch {
+			// watchが使えない環境もある
+		}
+
+		// フォールバック: 設定値に応じた間隔のポーリング（Windowsでfs.watchイベントが漏れる対策）
+		const intervalSec = vscode.workspace.getConfiguration('claudeManager').get<number>('agentMonitorInterval', 5);
+		this.pollTimer = setInterval(() => {
+			const prevSize = this.liveSessionIds.size;
+			const prevIds = new Set(this.liveSessionIds);
 			this.updateLiveSessions(sessionsDir);
-			this._onDidChangeTreeData.fire(undefined);
-		});
+			// 変化があった場合のみツリーを更新
+			if (this.liveSessionIds.size !== prevSize ||
+				[...this.liveSessionIds].some((id) => !prevIds.has(id))) {
+				this._onDidChangeTreeData.fire(undefined);
+				this.onLiveChangeCallback?.();
+			}
+		}, intervalSec * 1000);
 	}
 
 	stopWatching(): void {
 		this.watcher?.close();
+		if (this.pollTimer) {
+			clearInterval(this.pollTimer);
+			this.pollTimer = undefined;
+		}
+	}
+
+	// PIDが生存しているか確認
+	private isProcessAlive(pid: number): boolean {
+		try {
+			process.kill(pid, 0); // シグナル0 = 存在確認のみ
+			return true;
+		} catch {
+			return false;
+		}
 	}
 
 	private updateLiveSessions(sessionsDir: string): void {
@@ -63,14 +125,22 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 			const files = fs.readdirSync(sessionsDir);
 			for (const file of files) {
 				if (!file.endsWith('.json')) { continue; }
+				const filePath = path.join(sessionsDir, file);
 				try {
-					const content = fs.readFileSync(path.join(sessionsDir, file), 'utf-8');
+					const content = fs.readFileSync(filePath, 'utf-8');
 					const data = JSON.parse(content);
-					if (data.sessionId) {
-						this.liveSessionIds.add(data.sessionId);
+					if (!data.sessionId) { continue; }
+
+					// PIDが記録されている場合、プロセス生存を確認
+					if (data.pid && !this.isProcessAlive(data.pid)) {
+						// プロセス終了済み → ゾンビJSONを削除
+						try { fs.unlinkSync(filePath); } catch { /* 削除失敗は無視 */ }
+						continue;
 					}
+
+					this.liveSessionIds.add(data.sessionId);
 				} catch {
-					// 読み込みエラーはスキップ
+					// 読み込み/パースエラーはスキップ
 				}
 			}
 		} catch {
@@ -83,7 +153,8 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 	}
 
 	refresh(): void {
-		const allSessions = loadAllSessions();
+		const maxSessions = vscode.workspace.getConfiguration('claudeManager').get<number>('maxSessionsShown', 500);
+		const allSessions = loadAllSessions(maxSessions);
 		const customNames = dataStore.getAllCustomNames();
 
 		// サブエージェントマップを構築
@@ -206,8 +277,61 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 		return [];
 	}
 
+	// ソート適用
+	private sortSessions(sessions: ParsedSession[]): void {
+		switch (this.sortMode) {
+			case 'updated-desc':
+				sessions.sort((a, b) => b.lastTimestamp.getTime() - a.lastTimestamp.getTime());
+				break;
+			case 'updated-asc':
+				sessions.sort((a, b) => a.lastTimestamp.getTime() - b.lastTimestamp.getTime());
+				break;
+			case 'created-desc':
+				sessions.sort((a, b) => b.firstTimestamp.getTime() - a.firstTimestamp.getTime());
+				break;
+			case 'created-asc':
+				sessions.sort((a, b) => a.firstTimestamp.getTime() - b.firstTimestamp.getTime());
+				break;
+			case 'name':
+				sessions.sort((a, b) => {
+					const na = a.customName || a.claudeTitle || a.firstMessage;
+					const nb = b.customName || b.claudeTitle || b.firstMessage;
+					return na.localeCompare(nb, 'ja');
+				});
+				break;
+			case 'count':
+				sessions.sort((a, b) => b.messageCount - a.messageCount);
+				break;
+			case 'model':
+				sessions.sort((a, b) => (a.model || '').localeCompare(b.model || ''));
+				break;
+		}
+	}
+
 	private buildGroups(sessions: ParsedSession[]): void {
 		this.groupedSessions = new Map();
+
+		switch (this.groupMode) {
+			case 'flat':
+				this.groupedSessions.set('📋 すべて', [...sessions]);
+				break;
+
+			case 'tag':
+				this.buildTagGroups(sessions);
+				break;
+
+			case 'agent':
+				this.buildAgentGroups(sessions);
+				break;
+
+			case 'date':
+			default:
+				this.buildDateGroups(sessions);
+				break;
+		}
+	}
+
+	private buildDateGroups(sessions: ParsedSession[]): void {
 		const now = new Date();
 		const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 		const yesterdayStart = new Date(todayStart);
@@ -236,6 +360,50 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 				this.groupedSessions.set(group, []);
 			}
 			this.groupedSessions.get(group)!.push(session);
+		}
+	}
+
+	private buildTagGroups(sessions: ParsedSession[]): void {
+		const allTags = dataStore.getAllTags();
+		const taggedIds = new Set<string>();
+
+		for (const [tag, ids] of Object.entries(allTags)) {
+			const grouped = sessions.filter((s) => ids.includes(s.id));
+			if (grouped.length > 0) {
+				this.groupedSessions.set(`🏷️ ${tag}`, grouped);
+				grouped.forEach((s) => taggedIds.add(s.id));
+			}
+		}
+
+		// タグなし
+		const untagged = sessions.filter((s) => !taggedIds.has(s.id));
+		if (untagged.length > 0) {
+			this.groupedSessions.set('🏷️ タグなし', untagged);
+		}
+	}
+
+	private buildAgentGroups(sessions: ParsedSession[]): void {
+		const agentSessions = new Map<string, ParsedSession[]>();
+		const unlinked: ParsedSession[] = [];
+
+		for (const session of sessions) {
+			const agent = dataStore.getAgentBySessionId(session.id);
+			if (agent) {
+				const key = `🤖 ${agent.name}`;
+				if (!agentSessions.has(key)) {
+					agentSessions.set(key, []);
+				}
+				agentSessions.get(key)!.push(session);
+			} else {
+				unlinked.push(session);
+			}
+		}
+
+		for (const [key, group] of agentSessions) {
+			this.groupedSessions.set(key, group);
+		}
+		if (unlinked.length > 0) {
+			this.groupedSessions.set('🤖 未紐づけ', unlinked);
 		}
 	}
 }
@@ -315,6 +483,9 @@ export class SessionItem extends vscode.TreeItem {
 		const date = session.lastTimestamp;
 		const timeStr = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 
+		// エージェント登録状態（descriptionで使うので先に取得）
+		const agentConfig = !isSub ? dataStore.getAgentBySessionId(session.id) : undefined;
+
 		if (isSub) {
 			// サブエージェント用のdescription
 			this.description = `${session.messageCount}件 ${timeStr}`;
@@ -333,7 +504,8 @@ export class SessionItem extends vscode.TreeItem {
 
 			// ステータス表示
 			const statusPrefix = isLive ? '● ' : '';
-			this.description = `${statusPrefix}${originalMsg ? originalMsg + ' ' : ''}${timeStr} ${modelShort}${tagStr}`;
+			const agentLabel = agentConfig ? `🤖${agentConfig.name} ` : '';
+			this.description = `${statusPrefix}${agentLabel}${originalMsg ? originalMsg + ' ' : ''}${timeStr} ${modelShort}${tagStr}`;
 		}
 
 		// ツールチップ
@@ -363,7 +535,18 @@ export class SessionItem extends vscode.TreeItem {
 			);
 		}
 
-		this.contextValue = isSub ? 'subagentSession' : (isBookmarked ? 'bookmarkedSession' : 'session');
+		const isRegistered = !!agentConfig;
+		if (isSub) {
+			this.contextValue = 'subagentSession';
+		} else if (isRegistered && isBookmarked) {
+			this.contextValue = 'sessionRegisteredBookmarked';
+		} else if (isRegistered) {
+			this.contextValue = 'sessionRegistered';
+		} else if (isBookmarked) {
+			this.contextValue = 'sessionBookmarked';
+		} else {
+			this.contextValue = 'session';
+		}
 
 		// アイコン
 		if (isSub) {

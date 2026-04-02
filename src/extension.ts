@@ -1,15 +1,26 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
+import { execSync } from 'child_process';
 import { SessionTreeProvider, SessionItem, SessionDecorationProvider } from './sessionTreeProvider';
 import { BookmarkTreeProvider } from './bookmarkTreeProvider';
 import { TagTreeProvider, TagSessionItem } from './tagTreeProvider';
 import { MemoryTreeProvider, MemoryFileItem } from './memoryTreeProvider';
+import { AgentTreeProvider, AgentItem } from './agentTreeProvider';
 import { showSessionPreview, showMemoryPreview, updatePreviewTitle } from './webviewPanel';
+import { showAgentFormPanel } from './agentFormPanel';
+import { showAgentPreview } from './agentPreviewPanel';
 import { showOrgChart } from './orgChartPanel';
 import * as dataStore from './dataStore';
 import { AgentConfig } from './types';
 import { loadMemoryFiles, deleteMemoryFile, mergeMemoryFiles, extractFromMemory, addToIndex } from './memoryManager';
+import { resolveRuleFilePath } from './agentManager';
+
+// VS Code設定から値を取得するヘルパー
+function getConfig<T>(key: string, defaultValue: T): T {
+	return vscode.workspace.getConfiguration('claudeManager').get<T>(key, defaultValue);
+}
 
 export function activate(context: vscode.ExtensionContext) {
 	// TreeViewプロバイダーを作成
@@ -18,47 +29,131 @@ export function activate(context: vscode.ExtensionContext) {
 	const tagProvider = new TagTreeProvider(() => sessionProvider.getSessions());
 	const memoryProvider = new MemoryTreeProvider();
 	const sessionDecoProvider = new SessionDecorationProvider();
+	const agentProvider = new AgentTreeProvider(
+		() => sessionProvider.getSessions(),
+		(id) => sessionProvider.isLiveSession(id)
+	);
 
 	// デコレーションプロバイダーを登録
 	context.subscriptions.push(vscode.window.registerFileDecorationProvider(sessionDecoProvider));
 
-	// ステータスバーにエージェント状態表示
+	// ステータスバーにエージェント稼働状況表示
 	const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
 	statusBarItem.command = 'claudeManager.openOrgChart';
-	statusBarItem.tooltip = 'エージェント組織図を開く';
+	statusBarItem.tooltip = '組織図を開く';
 	context.subscriptions.push(statusBarItem);
 
+	// claude.exeの全PIDを取得（tasklistコマンド）
+	function getClaudeProcessPids(): number[] {
+		try {
+			const output = execSync('tasklist /FI "IMAGENAME eq claude.exe" /FO CSV /NH', {
+				encoding: 'utf-8',
+				timeout: 5000,
+				windowsHide: true,
+			});
+			const pids: number[] = [];
+			for (const line of output.split('\n')) {
+				const trimmed = line.trim();
+				if (!trimmed || trimmed.startsWith('INFO:')) { continue; }
+				// CSV形式: "claude.exe","1234","Console","1","50,000 K"
+				const match = trimmed.match(/^"[^"]+","(\d+)"/);
+				if (match) {
+					pids.push(parseInt(match[1], 10));
+				}
+			}
+			return pids;
+		} catch {
+			return [];
+		}
+	}
+
+	// sessions/ JSONから既知セッションのPIDを取得（interactive/vscode等）
+	function getSessionPids(): Set<number> {
+		const sessionsDir = path.join(os.homedir(), '.claude', 'sessions');
+		const pids = new Set<number>();
+		try {
+			const files = fs.readdirSync(sessionsDir);
+			for (const file of files) {
+				if (!file.endsWith('.json')) { continue; }
+				try {
+					const content = fs.readFileSync(path.join(sessionsDir, file), 'utf-8');
+					const data = JSON.parse(content);
+					if (data.pid) {
+						pids.add(data.pid);
+					}
+				} catch { /* skip */ }
+			}
+		} catch { /* skip */ }
+		return pids;
+	}
+
 	function updateStatusBar(): void {
-		const agents = dataStore.getAgents();
-		const liveCount = agents.filter((a) => a.sessionId && sessionProvider.isLiveSession(a.sessionId)).length;
-		const total = agents.length;
-		if (total === 0) {
-			statusBarItem.text = '$(organization) エージェント未設定';
-		} else if (liveCount > 0) {
-			statusBarItem.text = `$(broadcast) ${liveCount}/${total} アクティブ`;
+		const allPids = getClaudeProcessPids();
+		const sessionPids = getSessionPids();
+
+		// sessions/ JSONに登録されていないclaude.exe = --printモードの子エージェント
+		const agentPids = allPids.filter((pid) => !sessionPids.has(pid));
+		const activeCount = agentPids.length;
+		const totalAgents = dataStore.getAgents().length;
+
+		if (activeCount === 0) {
+			statusBarItem.text = `👥 ${totalAgents}`;
+			statusBarItem.tooltip = `動作中のエージェントなし（全${totalAgents}件）`;
 		} else {
-			statusBarItem.text = `$(organization) ${total} エージェント`;
+			statusBarItem.text = `🟢 ${activeCount} 👥 ${totalAgents}`;
+			const pidList = agentPids.map((pid) => `• PID ${pid}`).join('\n');
+			statusBarItem.tooltip = `動作中: ${activeCount}プロセス / 全${totalAgents}件\n${pidList}`;
 		}
 		statusBarItem.show();
 	}
 	updateStatusBar();
+
+	// 設定からデフォルトのソート/グループモードを適用
+	const initialSortMode = getConfig<string>('defaultSortMode', 'updated-desc');
+	const initialGroupMode = getConfig<string>('defaultGroupMode', 'date');
+	sessionProvider.setSortMode(initialSortMode as 'updated-desc' | 'updated-asc' | 'created-desc' | 'created-asc' | 'name' | 'count' | 'model');
+	sessionProvider.setGroupMode(initialGroupMode as 'date' | 'tag' | 'agent' | 'flat');
+
+	// エージェント監視ポーリングタイマー（tasklist用）
+	let agentPollTimer: ReturnType<typeof setInterval> | undefined;
+	function startAgentPolling(): void {
+		if (agentPollTimer) { clearInterval(agentPollTimer); }
+		const intervalSec = getConfig<number>('agentMonitorInterval', 5);
+		agentPollTimer = setInterval(() => updateStatusBar(), intervalSec * 1000);
+	}
+	startAgentPolling();
+	context.subscriptions.push({ dispose: () => { if (agentPollTimer) { clearInterval(agentPollTimer); } } });
+
+	// 設定変更時にポーリング間隔を再適用
+	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
+		if (e.affectsConfiguration('claudeManager.agentMonitorInterval')) {
+			startAgentPolling();
+		}
+	}));
+
+	// 全ビューをリフレッシュするヘルパー
+	function refreshAll(): void {
+		sessionProvider.refresh();
+		bookmarkProvider.refresh();
+		tagProvider.refresh();
+		agentProvider.refresh();
+		sessionDecoProvider.refresh();
+		updateStatusBar();
+	}
 
 	// TreeViewを登録
 	vscode.window.createTreeView('claudeSessions', { treeDataProvider: sessionProvider });
 	vscode.window.createTreeView('claudeBookmarks', { treeDataProvider: bookmarkProvider });
 	vscode.window.createTreeView('claudeTags', { treeDataProvider: tagProvider });
 	vscode.window.createTreeView('claudeMemory', { treeDataProvider: memoryProvider });
+	vscode.window.createTreeView('claudeAgents', { treeDataProvider: agentProvider });
 
 	// --- 会話関連コマンド ---
 
 	// 会話一覧を更新
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.refreshSessions', () => {
-			sessionProvider.refresh();
-			bookmarkProvider.refresh();
-			tagProvider.refresh();
-			sessionDecoProvider.refresh();
-			updateStatusBar();
+			refreshAll();
 			vscode.window.showInformationMessage('会話一覧を更新しました');
 		})
 	);
@@ -71,7 +166,7 @@ export function activate(context: vscode.ExtensionContext) {
 				sessionProvider.setActiveSession(session.id);
 				bookmarkProvider.refresh();
 				tagProvider.refresh();
-				showSessionPreview(session, context);
+				showSessionPreview(session, context, getConfig<boolean>('preview.showThinkingBlocks', false));
 			}
 		})
 	);
@@ -145,7 +240,6 @@ export function activate(context: vscode.ExtensionContext) {
 			});
 			if (newName) {
 				dataStore.setCustomName(item.session.id, newName);
-				// Claude Code側のJSONLにもcustom-titleを書き込み
 				try {
 					const titleEntry = JSON.stringify({
 						type: 'custom-title',
@@ -154,7 +248,7 @@ export function activate(context: vscode.ExtensionContext) {
 					});
 					fs.appendFileSync(item.session.filePath, '\n' + titleEntry);
 				} catch {
-					// 書き込み失敗は無視（Session Manager側は反映済み）
+					// 書き込み失敗は無視
 				}
 				if (sessionProvider.getActiveSessionId() === item.session.id) {
 					updatePreviewTitle(newName);
@@ -181,7 +275,6 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// --- メモリ関連コマンド ---
 
-	// メモリを更新
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.refreshMemory', () => {
 			memoryProvider.refresh();
@@ -189,14 +282,12 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	// メモリをプレビュー
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.previewMemory', (item: MemoryFileItem) => {
 			showMemoryPreview(item.memoryFile);
 		})
 	);
 
-	// メモリを編集（VS Codeエディタで開く）
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.editMemory', (item: MemoryFileItem) => {
 			vscode.workspace.openTextDocument(item.memoryFile.filePath).then((doc) => {
@@ -205,7 +296,6 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	// メモリを削除
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.deleteMemory', async (item: MemoryFileItem) => {
 			const confirm = await vscode.window.showWarningMessage(
@@ -221,10 +311,8 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	// メモリを統合（マージ）
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.mergeMemories', async (item: MemoryFileItem) => {
-			// 同じディレクトリの他のメモリファイルを選択肢に
 			const groups = loadMemoryFiles();
 			const memoryDir = path.dirname(item.memoryFile.filePath);
 			const group = groups.find((g) => g.dir === memoryDir);
@@ -242,81 +330,46 @@ export function activate(context: vscode.ExtensionContext) {
 			);
 			if (!picked) { return; }
 
-			const newName = await vscode.window.showInputBox({
-				prompt: '統合後のメモリ名',
-				value: item.memoryFile.name,
-			});
+			const newName = await vscode.window.showInputBox({ prompt: '統合後のメモリ名', value: item.memoryFile.name });
 			if (!newName) { return; }
 
-			const newDescription = await vscode.window.showInputBox({
-				prompt: '統合後の説明',
-				value: item.memoryFile.description,
-			});
+			const newDescription = await vscode.window.showInputBox({ prompt: '統合後の説明', value: item.memoryFile.description });
 			if (!newDescription) { return; }
 
 			const mergedContent = mergeMemoryFiles(item.memoryFile, picked.file, newName, newDescription);
-
-			// 統合先ファイルに書き込み
 			fs.writeFileSync(item.memoryFile.filePath, mergedContent, 'utf-8');
-
-			// 統合元を削除
 			deleteMemoryFile(picked.file.filePath);
-
 			memoryProvider.refresh();
 			vscode.window.showInformationMessage(`「${item.memoryFile.name}」と「${picked.file.name}」を統合しました`);
 		})
 	);
 
-	// メモリから抽出
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.extractMemory', async (item: MemoryFileItem) => {
-			// エディタで開いてユーザーに抽出部分を選択させる
 			const doc = await vscode.workspace.openTextDocument(item.memoryFile.filePath);
-			const editor = await vscode.window.showTextDocument(doc);
+			await vscode.window.showTextDocument(doc);
 
-			const extractContent = await vscode.window.showInputBox({
-				prompt: '抽出する内容を入力（または開いたファイルから選択してコピー）',
-				placeHolder: '抽出する内容...',
-			});
+			const extractContent = await vscode.window.showInputBox({ prompt: '抽出する内容を入力', placeHolder: '抽出する内容...' });
 			if (!extractContent) { return; }
 
-			const newFileName = await vscode.window.showInputBox({
-				prompt: '新しいファイル名（.md不要）',
-			});
+			const newFileName = await vscode.window.showInputBox({ prompt: '新しいファイル名（.md不要）' });
 			if (!newFileName) { return; }
 
-			const newName = await vscode.window.showInputBox({
-				prompt: '新しいメモリ名',
-			});
+			const newName = await vscode.window.showInputBox({ prompt: '新しいメモリ名' });
 			if (!newName) { return; }
 
-			const newDescription = await vscode.window.showInputBox({
-				prompt: '説明',
-			});
+			const newDescription = await vscode.window.showInputBox({ prompt: '説明' });
 			if (!newDescription) { return; }
 
 			const typeOptions = ['user', 'feedback', 'project', 'reference'];
-			const newType = await vscode.window.showQuickPick(typeOptions, {
-				placeHolder: 'メモリタイプを選択',
-			});
+			const newType = await vscode.window.showQuickPick(typeOptions, { placeHolder: 'メモリタイプを選択' });
 			if (!newType) { return; }
 
-			const newContent = extractFromMemory(
-				item.memoryFile,
-				extractContent,
-				newFileName,
-				newName,
-				newDescription,
-				newType
-			);
-
+			const newContent = extractFromMemory(item.memoryFile, extractContent, newFileName, newName, newDescription, newType);
 			const memoryDir = path.dirname(item.memoryFile.filePath);
 			const newFilePath = path.join(memoryDir, `${newFileName}.md`);
 			fs.writeFileSync(newFilePath, newContent, 'utf-8');
-
-			// インデックスに追加
 			addToIndex(memoryDir, `${newFileName}.md`, newName, newDescription);
-
 			memoryProvider.refresh();
 			vscode.window.showInformationMessage(`「${newName}」を抽出しました`);
 		})
@@ -331,62 +384,9 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	// エージェント役割を設定（[agent]プレフィックス付きタグ）
-	context.subscriptions.push(
-		vscode.commands.registerCommand('claudeManager.setAgentRole', async (item: SessionItem) => {
-			// 既存の [agent] タグを候補に列挙
-			const allTags = Object.keys(dataStore.getAllTags());
-			const agentTags = allTags.filter((t) => t.startsWith('[agent]'));
-			const NEW_ROLE = '+ 新しい役割を作成...';
-			const REMOVE_ROLE = '× 役割を削除';
-
-			const currentAgentTags = dataStore.getTagsForSession(item.session.id).filter((t) => t.startsWith('[agent]'));
-			const candidates = [...agentTags.filter((t) => !currentAgentTags.includes(t)), NEW_ROLE];
-			if (currentAgentTags.length > 0) {
-				candidates.push(REMOVE_ROLE);
-			}
-
-			const picked = await vscode.window.showQuickPick(candidates, {
-				placeHolder: currentAgentTags.length > 0
-					? `現在の役割: ${currentAgentTags.join(', ')}`
-					: 'エージェント役割を選択（例: [agent]テスト部）',
-			});
-			if (!picked) { return; }
-
-			if (picked === REMOVE_ROLE) {
-				// 既存の [agent] タグをすべて削除
-				for (const t of currentAgentTags) {
-					dataStore.removeTagFromSession(t, item.session.id);
-				}
-				sessionProvider.refresh();
-				tagProvider.refresh();
-				vscode.window.showInformationMessage('エージェント役割を削除しました');
-				return;
-			}
-
-			let roleName: string | undefined;
-			if (picked === NEW_ROLE) {
-				const input = await vscode.window.showInputBox({
-					prompt: '役割名を入力（[agent]プレフィックスは自動付与）',
-					placeHolder: 'テスト部',
-				});
-				if (!input) { return; }
-				roleName = `[agent]${input}`;
-			} else {
-				roleName = picked;
-			}
-
-			dataStore.addTag(roleName, item.session.id);
-			sessionProvider.refresh();
-			tagProvider.refresh();
-			vscode.window.showInformationMessage(`エージェント役割「${roleName}」を設定しました`);
-		})
-	);
-
-	// Claude Codeで開く（VS Code拡張のパネルで再開）
+	// Claude Codeで開く
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.openInClaude', (item: SessionItem) => {
-			// 現在のIDEに合わせたURIスキームを使用（Antigravity等フォーク対応）
 			const scheme = vscode.env.uriScheme;
 			const uri = vscode.Uri.parse(
 				`${scheme}://anthropic.claude-code/open?session=` +
@@ -396,73 +396,272 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	// エージェントとして登録
+	// --- エージェント関連コマンド ---
+
+	// エージェントプレビュー（クリック時）
 	context.subscriptions.push(
-		vscode.commands.registerCommand('claudeManager.registerAgent', async (item: SessionItem) => {
-			const session = item.session;
+		vscode.commands.registerCommand('claudeManager.previewAgent', (item: AgentItem) => {
+			const agent = item.agent;
+			const isLive = agent.sessionId ? sessionProvider.isLiveSession(agent.sessionId) : false;
+			const sessions = sessionProvider.getSessions();
+			const session = agent.sessionId ? sessions.find((s) => s.id === agent.sessionId) : undefined;
+			const sessionTitle = session ? (session.customName || session.claudeTitle || session.firstMessage.substring(0, 40)) : undefined;
 
-			const name = await vscode.window.showInputBox({
-				prompt: 'エージェント名（部署名）',
-				placeHolder: 'テスト部',
-			});
-			if (!name) { return; }
-
-			const role = await vscode.window.showInputBox({
-				prompt: '役割',
-				placeHolder: 'デバッグ・品質確認',
-			});
-			if (!role) { return; }
-
-			const modelPick = await vscode.window.showQuickPick(
-				['opus', 'sonnet', 'haiku'],
-				{ placeHolder: 'モデルを選択' }
+			showAgentPreview(
+				agent,
+				isLive,
+				sessionTitle,
+				// 設定ボタン → 編集フォームを開く
+				(a) => {
+					const oldName = a.name;
+					showAgentFormPanel(a, a.sessionId, (config) => {
+						if (config.name !== oldName) { dataStore.removeAgent(oldName); }
+						dataStore.addAgent(config);
+						refreshAll();
+						vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
+					});
+				},
+				// ルールファイル編集
+				async (a) => {
+					if (!a.ruleFile) { return; }
+					const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(a.ruleFile));
+					await vscode.window.showTextDocument(doc);
+				},
+				// セッション履歴を開く
+				(sessionId) => {
+					const s = sessionProvider.getSessionById(sessionId);
+					if (s) {
+						sessionProvider.setActiveSession(s.id);
+						bookmarkProvider.refresh();
+						tagProvider.refresh();
+						showSessionPreview(s, context, getConfig<boolean>('preview.showThinkingBlocks', false));
+					}
+				}
 			);
-			if (!modelPick) { return; }
+		})
+	);
 
-			const ruleFile = await vscode.window.showInputBox({
-				prompt: 'ルールファイルのパス（空欄で省略可）',
-				placeHolder: 'c:/xampp/Project/agent-rules/テスト部.md',
+	// エージェントとして登録（新規 — Webviewフォーム）
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.registerAgent', (item: SessionItem) => {
+			showAgentFormPanel(undefined, item.session.id, (config) => {
+				dataStore.addAgent(config);
+				refreshAll();
+				vscode.window.showInformationMessage(`「${config.name}」をエージェントとして登録しました`);
 			});
+		})
+	);
 
-			const parentAgent = await vscode.window.showInputBox({
-				prompt: '親エージェント名（空欄でトップレベル）',
+	// エージェント設定を編集（Webviewフォーム）
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.editAgent', (item: SessionItem | AgentItem) => {
+			let existing: AgentConfig | undefined;
+			let sessionId: string;
+			if (item instanceof AgentItem) {
+				existing = item.agent;
+				sessionId = existing.sessionId;
+			} else {
+				existing = dataStore.getAgentBySessionId(item.session.id);
+				sessionId = item.session.id;
+			}
+			if (!existing) {
+				vscode.window.showWarningMessage('エージェントが見つかりません');
+				return;
+			}
+
+			const oldName = existing.name;
+			showAgentFormPanel(existing, sessionId, (config) => {
+				if (config.name !== oldName) {
+					dataStore.removeAgent(oldName);
+				}
+				dataStore.addAgent(config);
+				refreshAll();
+				vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
 			});
+		})
+	);
 
-			const toolsInput = await vscode.window.showInputBox({
-				prompt: '許可ツール（カンマ区切り、空欄で制限なし）',
-				placeHolder: 'Read, Glob, Grep',
+	// プレビューヘッダからの設定編集（セッションIDベース）
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.editAgentBySessionId', (sessionId: string) => {
+			const existing = dataStore.getAgentBySessionId(sessionId);
+			if (!existing) { return; }
+			const oldName = existing.name;
+			showAgentFormPanel(existing, sessionId, (config) => {
+				if (config.name !== oldName) { dataStore.removeAgent(oldName); }
+				dataStore.addAgent(config);
+				refreshAll();
+				vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
 			});
+		})
+	);
 
-			const agent: AgentConfig = {
-				name,
-				sessionId: session.id,
-				role,
-				model: modelPick as AgentConfig['model'],
-				ruleFile: ruleFile || undefined,
-				parentAgent: parentAgent || undefined,
-				allowedTools: toolsInput ? toolsInput.split(',').map((t) => t.trim()) : undefined,
-				status: 'active',
-			};
-
-			dataStore.addAgent(agent);
-			updateStatusBar();
-			sessionProvider.refresh();
-			tagProvider.refresh();
-			vscode.window.showInformationMessage(`「${name}」をエージェントとして登録しました`);
+	// プレビューヘッダからのルールファイル編集（セッションIDベース）
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.editRuleFileBySessionId', async (sessionId: string) => {
+			const agent = dataStore.getAgentBySessionId(sessionId);
+			if (!agent || !agent.ruleFile) { return; }
+			const resolved = resolveRuleFilePath(agent.ruleFile);
+			const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(resolved));
+			await vscode.window.showTextDocument(doc);
 		})
 	);
 
 	// ルールファイルを編集
 	context.subscriptions.push(
-		vscode.commands.registerCommand('claudeManager.editRuleFile', async (item: SessionItem) => {
-			const agent = dataStore.getAgentBySessionId(item.session.id);
+		vscode.commands.registerCommand('claudeManager.editRuleFile', async (item: SessionItem | AgentItem) => {
+			let agent: AgentConfig | undefined;
+			if (item instanceof AgentItem) {
+				agent = item.agent;
+			} else {
+				agent = dataStore.getAgentBySessionId(item.session.id);
+			}
 			if (!agent || !agent.ruleFile) {
 				vscode.window.showWarningMessage('ルールファイルが設定されていません');
 				return;
 			}
-			const uri = vscode.Uri.file(agent.ruleFile);
+			const resolved = resolveRuleFilePath(agent.ruleFile);
+			const uri = vscode.Uri.file(resolved);
 			const doc = await vscode.workspace.openTextDocument(uri);
 			await vscode.window.showTextDocument(doc);
+		})
+	);
+
+	// セッションを紐づけ（エージェントサイドバーから）
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.linkSession', async (item: AgentItem) => {
+			const sessions = sessionProvider.getSessions();
+			const sessionItems = sessions.map((s) => {
+				const existingAgent = dataStore.getAgentBySessionId(s.id);
+				const usedLabel = existingAgent ? ` [${existingAgent.name}に紐づけ済み]` : '';
+				return {
+					label: (s.customName || s.claudeTitle || s.firstMessage.substring(0, 50)) + usedLabel,
+					description: `${s.project} — ${s.lastTimestamp.toLocaleString('ja-JP')}`,
+					sessionId: s.id,
+					alreadyLinked: !!existingAgent,
+					linkedAgentName: existingAgent?.name,
+				};
+			});
+
+			if (sessionItems.length === 0) {
+				vscode.window.showInformationMessage('紐づけ可能なセッションがありません');
+				return;
+			}
+
+			const isAlreadyLinked = !!item.agent.sessionId;
+			const picked = await vscode.window.showQuickPick(sessionItems, {
+				placeHolder: '紐づけるセッションを選択',
+				title: `「${item.agent.name}」に${isAlreadyLinked ? 'セッションを変更' : 'セッションを紐づけ'}`,
+			});
+			if (!picked) { return; }
+
+			// 他エージェントに紐づけ済みの場合は警告
+			if (picked.alreadyLinked && picked.linkedAgentName !== item.agent.name) {
+				const confirm = await vscode.window.showWarningMessage(
+					`このセッションは「${picked.linkedAgentName}」に紐づけ済みです。上書きしますか？`,
+					'上書き', 'キャンセル'
+				);
+				if (confirm !== '上書き') { return; }
+				// 旧エージェントの紐づけを解除
+				const oldAgent = dataStore.getAgentBySessionId(picked.sessionId);
+				if (oldAgent) {
+					dataStore.addAgent({ ...oldAgent, sessionId: '' });
+				}
+			}
+
+			const agent = { ...item.agent, sessionId: picked.sessionId };
+			dataStore.addAgent(agent);
+			refreshAll();
+			vscode.window.showInformationMessage(`「${item.agent.name}」にセッションを紐づけました`);
+		})
+	);
+
+	// エージェントのセッションを開く（Claude Codeで開く）
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.openAgentSession', (item: AgentItem) => {
+			if (!item.agent.sessionId) {
+				vscode.window.showWarningMessage('セッションが紐づけされていません');
+				return;
+			}
+			const scheme = vscode.env.uriScheme;
+			const uri = vscode.Uri.parse(
+				`${scheme}://anthropic.claude-code/open?session=` +
+				encodeURIComponent(item.agent.sessionId)
+			);
+			vscode.env.openExternal(uri);
+		})
+	);
+
+	// セッションを新しくする（遺言を残して新セッション作成）
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.renewAgentSession', async (item: AgentItem) => {
+			const agent = item.agent;
+			if (!agent.sessionId) {
+				vscode.window.showWarningMessage('セッションが紐づけされていません');
+				return;
+			}
+
+			// 引き継ぎメッセージの入力
+			const testament = await vscode.window.showInputBox({
+				prompt: '引き継ぎメッセージ（遺言）を入力してください',
+				placeHolder: '次のセッションへの引き継ぎ事項...',
+				value: `${agent.name}の前セッションから引き継ぎ。`,
+			});
+			if (testament === undefined) { return; } // キャンセル
+
+			// 旧セッションのJSONLに引き継ぎメッセージを追記
+			const oldSession = sessionProvider.getSessionById(agent.sessionId);
+			if (oldSession) {
+				try {
+					const entry = JSON.stringify({
+						type: 'user',
+						uuid: `testament-${Date.now()}`,
+						parentUuid: null,
+						timestamp: new Date().toISOString(),
+						sessionId: agent.sessionId,
+						message: {
+							role: 'user',
+							content: `[セッション終了] ${testament}`,
+						},
+					});
+					fs.appendFileSync(oldSession.filePath, '\n' + entry);
+				} catch {
+					// 書き込み失敗は無視
+				}
+			}
+
+			// セッションID紐づけを解除（空にする）
+			const updatedAgent = { ...agent, sessionId: '' };
+			dataStore.addAgent(updatedAgent);
+			refreshAll();
+			vscode.window.showInformationMessage(
+				`「${agent.name}」のセッション紐づけを解除しました。新しいセッションを紐づけてください。`
+			);
+		})
+	);
+
+	// エージェントを削除
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.deleteAgent', async (item: AgentItem) => {
+			const confirm = await vscode.window.showWarningMessage(
+				`エージェント「${item.agent.name}」を削除しますか？`,
+				{ modal: true },
+				'削除'
+			);
+			if (confirm !== '削除') { return; }
+
+			dataStore.removeAgent(item.agent.name);
+			refreshAll();
+			vscode.window.showInformationMessage(`「${item.agent.name}」を削除しました`);
+		})
+	);
+
+	// エージェント管理を更新
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.refreshAgents', () => {
+			agentProvider.refresh();
+			updateStatusBar();
+			vscode.window.showInformationMessage('エージェント管理を更新しました');
 		})
 	);
 
@@ -472,34 +671,182 @@ export function activate(context: vscode.ExtensionContext) {
 			showOrgChart(
 				() => sessionProvider.getSessions(),
 				(id) => sessionProvider.isLiveSession(id),
+				// 履歴プレビュー
 				(sessionId) => {
-					// 組織図からセッションをプレビュー
 					const session = sessionProvider.getSessionById(sessionId);
 					if (session) {
 						sessionProvider.setActiveSession(session.id);
 						bookmarkProvider.refresh();
 						tagProvider.refresh();
-						showSessionPreview(session, context);
+						showSessionPreview(session, context, getConfig<boolean>('preview.showThinkingBlocks', false));
 					}
+				},
+				// Claude Codeで開く
+				(sessionId) => {
+					const scheme = vscode.env.uriScheme;
+					const uri = vscode.Uri.parse(
+						`${scheme}://anthropic.claude-code/open?session=` +
+						encodeURIComponent(sessionId)
+					);
+					vscode.env.openExternal(uri);
 				}
 			);
 		})
 	);
 
-	// 使い方ガイドを開く
+	// 使い方ガイドを開く（Webviewパネル）
+	let guidePanel: vscode.WebviewPanel | undefined;
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.openGuide', () => {
 			const guidePath = path.join(context.extensionPath, 'guide.html');
-			if (fs.existsSync(guidePath)) {
-				vscode.env.openExternal(vscode.Uri.file(guidePath));
-			} else {
+			if (!fs.existsSync(guidePath)) {
 				vscode.window.showErrorMessage('guide.html が見つかりません');
+				return;
 			}
+
+			if (guidePanel) {
+				guidePanel.reveal(vscode.ViewColumn.One);
+				return;
+			}
+
+			guidePanel = vscode.window.createWebviewPanel(
+				'claudeGuide',
+				'📖 使い方ガイド',
+				vscode.ViewColumn.One,
+				{
+					enableScripts: false,
+					localResourceRoots: [vscode.Uri.file(context.extensionPath)],
+				}
+			);
+
+			// HTMLを読み込み、画像パスをWebview URIに変換
+			let html = fs.readFileSync(guidePath, 'utf-8');
+			const imagesUri = guidePanel.webview.asWebviewUri(
+				vscode.Uri.file(path.join(context.extensionPath, 'images'))
+			);
+			html = html.replace(/images\//g, `${imagesUri}/`);
+			guidePanel.webview.html = html;
+			guidePanel.onDidDispose(() => { guidePanel = undefined; });
+		})
+	);
+
+	// セッションパスをコピー
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.copySessionPath', (item: SessionItem) => {
+			vscode.env.clipboard.writeText(item.session.filePath).then(() => {
+				vscode.window.showInformationMessage(`セッションパスをコピーしました`);
+			});
+		})
+	);
+
+	// メモリパスをコピー
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.copyMemoryPath', (item: MemoryFileItem) => {
+			vscode.env.clipboard.writeText(item.memoryFile.filePath).then(() => {
+				vscode.window.showInformationMessage(`メモリパスをコピーしました`);
+			});
+		})
+	);
+
+	// --- セッション削除 ---
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.deleteSession', async (item: SessionItem) => {
+			const displayName = item.session.customName || item.session.claudeTitle || item.session.firstMessage.substring(0, 40);
+			const linkedAgent = dataStore.getAgentBySessionId(item.session.id);
+			let warningMsg = `セッション「${displayName}」を削除しますか？`;
+			if (linkedAgent) {
+				warningMsg += `\n（エージェント「${linkedAgent.name}」の紐づけも解除されます）`;
+			}
+
+			const confirm = await vscode.window.showWarningMessage(
+				warningMsg,
+				{ modal: true },
+				'削除'
+			);
+			if (confirm !== '削除') { return; }
+
+			// .trash/ ディレクトリに移動（rm禁止ルール準拠）
+			const configTrash = getConfig<string>('trash.folder', '');
+			const trashDir = configTrash || path.join(os.homedir(), '.claude', '.trash');
+			if (!fs.existsSync(trashDir)) {
+				fs.mkdirSync(trashDir, { recursive: true });
+			}
+			try {
+				const fileName = path.basename(item.session.filePath);
+				const trashPath = path.join(trashDir, `${Date.now()}_${fileName}`);
+				fs.renameSync(item.session.filePath, trashPath);
+			} catch {
+				vscode.window.showErrorMessage('セッションファイルの移動に失敗しました');
+				return;
+			}
+
+			// 関連データのクリーンアップ
+			dataStore.cleanupSessionData(item.session.id);
+			refreshAll();
+			vscode.window.showInformationMessage(`セッション「${displayName}」を削除しました`);
+		})
+	);
+
+	// --- ソート機能 ---
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.sortSessions', async () => {
+			const options = [
+				{ label: '更新日（新しい順）', description: 'デフォルト', value: 'updated-desc' },
+				{ label: '更新日（古い順）', value: 'updated-asc' },
+				{ label: '作成日（新しい順）', value: 'created-desc' },
+				{ label: '作成日（古い順）', value: 'created-asc' },
+				{ label: '名前', value: 'name' },
+				{ label: 'メッセージ数', value: 'count' },
+				{ label: 'モデル', value: 'model' },
+			];
+			const picked = await vscode.window.showQuickPick(options, {
+				placeHolder: 'ソート基準を選択',
+			});
+			if (picked) {
+				sessionProvider.setSortMode(picked.value as 'updated-desc' | 'updated-asc' | 'created-desc' | 'created-asc' | 'name' | 'count' | 'model');
+			}
+		})
+	);
+
+	// --- グループ化切り替え ---
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.groupSessions', async () => {
+			const options = [
+				{ label: '日付別（デフォルト）', value: 'date' },
+				{ label: 'タグ別', value: 'tag' },
+				{ label: 'エージェント別', value: 'agent' },
+				{ label: 'フラット（グループなし）', value: 'flat' },
+			];
+			const picked = await vscode.window.showQuickPick(options, {
+				placeHolder: 'グループ表示モードを選択',
+			});
+			if (picked) {
+				sessionProvider.setGroupMode(picked.value as 'date' | 'tag' | 'agent' | 'flat');
+			}
+		})
+	);
+
+	// --- ウェルカム: 取締役プリセットで登録 ---
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.registerDirector', () => {
+			const preset: AgentConfig = {
+				name: '取締役',
+				sessionId: '',
+				role: '全体統括・タスク分割・承認判断',
+				model: 'opus',
+				sessionMode: 'fixed',
+			};
+			showAgentFormPanel(preset, '', (config) => {
+				dataStore.addAgent(config);
+				refreshAll();
+				vscode.window.showInformationMessage(`「${config.name}」をエージェントとして登録しました`);
+			});
 		})
 	);
 
 	// 初回読み込み＆ライブセッション監視開始
 	sessionProvider.refresh();
+	sessionProvider.onLiveChange(() => updateStatusBar());
 	sessionProvider.startWatching();
 
 	context.subscriptions.push({

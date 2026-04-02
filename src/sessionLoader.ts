@@ -118,19 +118,26 @@ function toolLabel(name: string): string {
 }
 
 // コンテンツブロックからテキストを抽出
-function extractText(content: string | ContentBlock[]): string {
+function extractText(content: string | ContentBlock[], includeThinking: boolean = false): string {
 	if (typeof content === 'string') {
 		return stripSystemTags(content);
 	}
 	if (Array.isArray(content)) {
+		// 思考ブロックを収集（オプション）
+		const thinkingTexts = includeThinking
+			? content
+				.filter((b) => b.type === 'thinking' && b.text)
+				.map((b) => `[思考]${b.text!.substring(0, 500)}`)
+			: [];
+
 		// テキストブロックを収集
 		const texts = content
 			.filter((b) => b.type === 'text' && b.text)
 			.map((b) => stripSystemTags(b.text!))
 			.filter((t) => t.length > 0);
 
-		if (texts.length > 0) {
-			return texts.join('\n');
+		if (texts.length > 0 || thinkingTexts.length > 0) {
+			return [...thinkingTexts, ...texts].join('\n');
 		}
 
 		// テキストがない場合、ツール操作の概要を表示
@@ -233,7 +240,7 @@ function extractCwdFromJsonl(filePath: string): string | undefined {
 }
 
 // JSONLファイルからセッションをパース
-export function parseSessionFile(filePath: string): ParsedSession | null {
+export function parseSessionFile(filePath: string, includeThinking: boolean = false): ParsedSession | null {
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
 		const lines = content.split('\n').filter((line) => line.trim());
@@ -283,6 +290,18 @@ export function parseSessionFile(filePath: string): ParsedSession | null {
 						timestamp: new Date(parsed.timestamp),
 					});
 				} else if (parsed.type === 'assistant' && parsed.message) {
+					// thinkingブロックを別メッセージとして分離
+					if (includeThinking && Array.isArray(parsed.message.content)) {
+						const thinkingBlocks = parsed.message.content
+							.filter((b: ContentBlock) => b.type === 'thinking' && b.text);
+						for (const tb of thinkingBlocks) {
+							messages.push({
+								role: 'system',
+								content: `[思考]${tb.text!.substring(0, 1000)}`,
+								timestamp: new Date(parsed.timestamp),
+							});
+						}
+					}
 					const text = extractText(parsed.message.content);
 					if (parsed.message.model) {
 						model = parsed.message.model;
@@ -327,7 +346,7 @@ export function parseSessionFile(filePath: string): ParsedSession | null {
 }
 
 // 全セッションを読み込み（軽量版：最初と最後のメッセージのみ）
-export function loadAllSessions(): ParsedSession[] {
+export function loadAllSessions(maxSessions: number = 500): ParsedSession[] {
 	const fileInfos = getSessionFileInfos();
 	const sessions: ParsedSession[] = [];
 
@@ -354,6 +373,10 @@ export function loadAllSessions(): ParsedSession[] {
 
 	// 最終更新日時で降順ソート
 	sessions.sort((a, b) => b.lastTimestamp.getTime() - a.lastTimestamp.getTime());
+	// 最大件数制限
+	if (maxSessions > 0 && sessions.length > maxSessions) {
+		return sessions.slice(0, maxSessions);
+	}
 	return sessions;
 }
 
@@ -463,6 +486,6 @@ function parseSessionQuick(filePath: string): ParsedSession | null {
 }
 
 // セッション全メッセージを読み込み（プレビュー用）
-export function loadSessionFull(filePath: string): ParsedSession | null {
-	return parseSessionFile(filePath);
+export function loadSessionFull(filePath: string, showThinking: boolean = false): ParsedSession | null {
+	return parseSessionFile(filePath, showThinking);
 }
