@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager - セッション履歴管理",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.2.1",
+	"version": "0.3.0",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -12,6 +12,7 @@
 		"Other"
 	],
 	"activationEvents": [
+		"onStartupFinished",
 		"onView:claudeSessions",
 		"onView:claudeMemory",
 		"onView:claudeAgents"
@@ -55,7 +56,7 @@
 			{
 				"view": "claudeAgents",
 				"contents": "エージェントが未登録です。\nまずは取締役を登録して、マルチエージェント運用を始めましょう。\n[取締役を登録](command:claudeManager.registerDirector)\n[使い方ガイドを開く](command:claudeManager.openGuide)",
-				"when": "true"
+				"when": "!claudeManager.hasAgents"
 			}
 		],
 		"commands": [
@@ -259,6 +260,84 @@
 				"title": "取締役を登録",
 				"icon": "$(person-add)",
 				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.addAgent",
+				"title": "エージェントを追加",
+				"icon": "$(add)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.openSettings",
+				"title": "設定を開く",
+				"icon": "$(gear)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.toggleSessionFilter",
+				"title": "プロジェクト/全て切替",
+				"icon": "$(filter)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.openProjectInVSC",
+				"title": "VS Codeで開く",
+				"icon": "$(folder-opened)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.openSettingsFile",
+				"title": "設定ファイルを開く",
+				"icon": "$(gear)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.addTaskLog",
+				"title": "タスクを記録",
+				"icon": "$(add)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.completeTaskLog",
+				"title": "タスクを完了にする",
+				"icon": "$(check)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.deleteTaskLog",
+				"title": "タスクログを削除",
+				"icon": "$(trash)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.openTaskOutput",
+				"title": "出力ファイルを開く",
+				"icon": "$(file)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.clearTaskLogs",
+				"title": "全タスクログをクリア",
+				"icon": "$(clear-all)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.refreshUsage",
+				"title": "利用制限を更新",
+				"icon": "$(refresh)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.toggleBookmarkFilter",
+				"title": "プロジェクト/全て切替",
+				"icon": "$(filter)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.toggleMemoryFilter",
+				"title": "プロジェクト/全て切替",
+				"icon": "$(filter)",
+				"category": "Claude Session Manager"
 			}
 		],
 		"menus": {
@@ -294,8 +373,38 @@
 					"group": "navigation"
 				},
 				{
+					"command": "claudeManager.toggleSessionFilter",
+					"when": "view == claudeSessions",
+					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.openSettings",
+					"when": "view == claudeSessions",
+					"group": "navigation@999"
+				},
+				{
+					"command": "claudeManager.toggleBookmarkFilter",
+					"when": "view == claudeBookmarks",
+					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.toggleMemoryFilter",
+					"when": "view == claudeMemory",
+					"group": "navigation"
+				},
+				{
 					"command": "claudeManager.refreshMemory",
 					"when": "view == claudeMemory",
+					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.addAgent",
+					"when": "view == claudeAgents",
+					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.addTaskLog",
+					"when": "view == claudeAgents",
 					"group": "navigation"
 				},
 				{
@@ -439,20 +548,99 @@
 					"command": "claudeManager.deleteMemory",
 					"when": "view == claudeMemory && viewItem == memoryFile",
 					"group": "3_danger"
+				},
+				{
+					"command": "claudeManager.openProjectInVSC",
+					"when": "view == claudeMemory && viewItem == memoryProject",
+					"group": "0_open"
+				},
+				{
+					"command": "claudeManager.openTaskOutput",
+					"when": "view == claudeAgents && viewItem =~ /taskLogItem.*WithOutput/",
+					"group": "inline"
+				},
+				{
+					"command": "claudeManager.completeTaskLog",
+					"when": "view == claudeAgents && viewItem =~ /taskLogItemActive/",
+					"group": "1_task"
+				},
+				{
+					"command": "claudeManager.deleteTaskLog",
+					"when": "view == claudeAgents && viewItem =~ /^taskLogItem/",
+					"group": "2_danger"
 				}
 			]
 		},
-		"configuration": {
-			"title": "Claude Session Manager",
-			"properties": {
-				"claudeManager.agentMonitorInterval": {
-					"type": "number",
-					"default": 5,
-					"minimum": 1,
-					"maximum": 60,
-					"description": "エージェントの動作状況を監視する間隔（秒）。短くするとリアルタイム性が上がりますが、PCへの負荷が高まります"
-				},
-				"claudeManager.defaultSortMode": {
+		"configuration": [
+			{
+				"title": "エージェント監視",
+				"order": 1,
+				"properties": {
+					"claudeManager.enableAgentMonitor": {
+						"type": "boolean",
+						"default": false,
+						"order": 1,
+						"markdownDescription": "エージェント監視を有効にします。ONにするとステータスバーに稼働中エージェントをリアルタイム表示します。\n\n⚠️ **有効にするとPC負荷が若干上がります**（定期的なセッション状態チェックのため）"
+					},
+					"claudeManager.agentMonitorInterval": {
+						"type": "number",
+						"default": 5,
+						"minimum": 1,
+						"maximum": 60,
+						"order": 2,
+						"markdownDescription": "エージェント監視の更新間隔（秒）。`#claudeManager.enableAgentMonitor#` が有効のときに使用されます。\n\n短くするとリアルタイム性が上がりますが、PC負荷も高まります"
+					},
+					"claudeManager.enableNotifications": {
+						"type": "boolean",
+						"default": true,
+						"order": 3,
+						"description": "タスク完了・エラー・停止時のVS Code通知を有効にする"
+					},
+					"claudeManager.taskStalledThreshold": {
+						"type": "number",
+						"default": 60,
+						"minimum": 10,
+						"maximum": 600,
+						"order": 4,
+						"description": "stalled判定の閾値（秒）。この時間セッションの更新がないと停止扱い"
+					},
+					"claudeManager.taskAutoCleanupHours": {
+						"type": "number",
+						"default": 72,
+						"minimum": 1,
+						"maximum": 720,
+						"order": 5,
+						"description": "完了/エラーのタスクログを自動削除するまでの時間（時間）"
+					},
+					"claudeManager.taskMaxLogs": {
+						"type": "number",
+						"default": 100,
+						"minimum": 10,
+						"maximum": 500,
+						"order": 6,
+						"description": "保持するタスクログの最大件数"
+					},
+					"claudeManager.enableUsageMonitor": {
+						"type": "boolean",
+						"default": false,
+						"order": 7,
+						"markdownDescription": "Claude Code利用制限をステータスバーに表示します。\n\n⚠️ 有効にするとAnthropic APIへの軽量リクエストが定期的に発生します（更新間隔に応じてコスト発生、月額$0.01未満）"
+					},
+					"claudeManager.usageMonitorInterval": {
+						"type": "number",
+						"default": 300,
+						"minimum": 60,
+						"maximum": 3600,
+						"order": 8,
+						"markdownDescription": "利用制限モニターの更新間隔（秒）。`#claudeManager.enableUsageMonitor#` が有効のときに使用されます"
+					}
+				}
+			},
+			{
+				"title": "セッション表示",
+				"order": 2,
+				"properties": {
+					"claudeManager.defaultSortMode": {
 					"type": "string",
 					"default": "updated-desc",
 					"enum": ["updated-desc", "updated-asc", "created-desc", "created-asc", "name", "count", "model"],
@@ -479,11 +667,6 @@
 					],
 					"description": "セッション一覧のデフォルトのグループ化"
 				},
-				"claudeManager.defaultRuleFolder": {
-					"type": "string",
-					"default": "",
-					"description": "エージェントのルールファイルを格納するフォルダのパス。未設定の場合はsession-manager.jsonのruleFolderを使用します"
-				},
 				"claudeManager.maxSessionsShown": {
 					"type": "number",
 					"default": 500,
@@ -491,18 +674,40 @@
 					"maximum": 5000,
 					"description": "セッション一覧に表示する最大件数。多すぎると動作が重くなる場合があります"
 				},
-				"claudeManager.preview.showThinkingBlocks": {
-					"type": "boolean",
-					"default": false,
-					"description": "Claudeが回答前に内部で考えた思考プロセスをセッションプレビューに表示します"
-				},
-				"claudeManager.trash.folder": {
+				"claudeManager.sessionFilterMode": {
 					"type": "string",
-					"default": "",
-					"description": "削除したセッションの移動先フォルダ。未設定の場合は ~/.claude/.trash/ を使用します"
+					"default": "all",
+					"enum": ["project", "all"],
+					"enumDescriptions": [
+						"現在のプロジェクトのセッションのみ表示",
+						"すべてのセッションを表示"
+					],
+					"description": "会話一覧のフィルターモード"
+				}
+				}
+			},
+			{
+				"title": "その他",
+				"order": 3,
+				"properties": {
+					"claudeManager.defaultRuleFolder": {
+						"type": "string",
+						"default": "",
+						"description": "エージェントのルールファイルを格納するフォルダのパス。未設定の場合はsession-manager.jsonのruleFolderを使用します"
+					},
+					"claudeManager.preview.showThinkingBlocks": {
+						"type": "boolean",
+						"default": false,
+						"description": "Claudeが回答前に内部で考えた思考プロセスをセッションプレビューに表示します"
+					},
+					"claudeManager.trash.folder": {
+						"type": "string",
+						"default": "",
+						"description": "削除したセッションの移動先フォルダ。未設定の場合は ~/.claude/.trash/ を使用します"
+					}
 				}
 			}
-		}
+		]
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",

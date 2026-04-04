@@ -16,30 +16,63 @@ export interface SessionFileInfo {
 	agentHash?: string;        // agent-a{HASH} のHASH部分
 }
 
+// --- TTLキャッシュ（P1-9: getSessionFileInfos の頻繁な再帰走査を抑制） ---
+const FILE_INFO_CACHE_TTL_MS = 7000; // 7秒
+let cachedFileInfos: SessionFileInfo[] | null = null;
+let cachedFileInfosTimestamp = 0;
+
+// プロジェクトパスマップキャッシュ
+const PATH_MAP_CACHE_TTL_MS = 30000; // 30秒（変更頻度が低い）
+let cachedPathMap: Map<string, string> | null = null;
+let cachedPathMapTimestamp = 0;
+
 // プロジェクトディレクトリ内の全JSONLファイルを取得（subagents含む）
-export function getSessionFiles(): string[] {
-	return getSessionFileInfos().map((info) => info.filePath);
+export async function getSessionFiles(): Promise<string[]> {
+	const infos = await getSessionFileInfos();
+	return infos.map((info) => info.filePath);
 }
 
-// プロジェクトディレクトリ内の全セッションファイル情報を取得
-export function getSessionFileInfos(): SessionFileInfo[] {
+// プロジェクトディレクトリ内の全セッションファイル情報を取得（非同期+TTLキャッシュ）
+export async function getSessionFileInfos(): Promise<SessionFileInfo[]> {
+	const now = Date.now();
+	if (cachedFileInfos && (now - cachedFileInfosTimestamp) < FILE_INFO_CACHE_TTL_MS) {
+		return cachedFileInfos;
+	}
+
 	const claudeDir = getClaudeDir();
 	const projectsDir = path.join(claudeDir, 'projects');
 
-	if (!fs.existsSync(projectsDir)) {
+	try {
+		await fs.promises.access(projectsDir);
+	} catch {
+		cachedFileInfos = [];
+		cachedFileInfosTimestamp = now;
 		return [];
 	}
 
 	const files: SessionFileInfo[] = [];
-	const projects = fs.readdirSync(projectsDir);
+	let projects: string[];
+	try {
+		projects = await fs.promises.readdir(projectsDir);
+	} catch {
+		cachedFileInfos = [];
+		cachedFileInfosTimestamp = now;
+		return [];
+	}
 
-	for (const project of projects) {
+	// 並列でプロジェクトディレクトリを走査
+	await Promise.allSettled(projects.map(async (project) => {
 		const projectPath = path.join(projectsDir, project);
-		if (!fs.statSync(projectPath).isDirectory()) {
-			continue;
-		}
+		try {
+			const stat = await fs.promises.stat(projectPath);
+			if (!stat.isDirectory()) { return; }
+		} catch { return; }
 
-		const entries = fs.readdirSync(projectPath);
+		let entries: string[];
+		try {
+			entries = await fs.promises.readdir(projectPath);
+		} catch { return; }
+
 		for (const entry of entries) {
 			// 直下のJSONL = 親セッション
 			if (entry.endsWith('.jsonl')) {
@@ -47,47 +80,45 @@ export function getSessionFileInfos(): SessionFileInfo[] {
 			}
 
 			// セッションディレクトリ内の subagents/ を探索
-			const sessionDir = path.join(projectPath, entry);
-			const subagentsDir = path.join(sessionDir, 'subagents');
-			if (fs.existsSync(subagentsDir) && fs.statSync(subagentsDir).isDirectory()) {
-				const parentId = entry; // ディレクトリ名 = 親セッションUUID
-				try {
-					const subFiles = fs.readdirSync(subagentsDir);
-					for (const sf of subFiles) {
-						// compact-ファイルは除外、meta.jsonも除外
-						if (sf.endsWith('.jsonl') && !sf.includes('compact-')) {
-							const hashMatch = sf.match(/^agent-a(.+)\.jsonl$/);
-							files.push({
-								filePath: path.join(subagentsDir, sf),
-								isSubagent: true,
-								parentSessionId: parentId,
-								agentHash: hashMatch ? hashMatch[1] : undefined,
-							});
-						}
+			const subagentsDir = path.join(projectPath, entry, 'subagents');
+			try {
+				const subStat = await fs.promises.stat(subagentsDir);
+				if (!subStat.isDirectory()) { continue; }
+				const parentId = entry;
+				const subFiles = await fs.promises.readdir(subagentsDir);
+				for (const sf of subFiles) {
+					// compact-ファイルは除外、meta.jsonも除外
+					if (sf.endsWith('.jsonl') && !sf.includes('compact-')) {
+						const hashMatch = sf.match(/^agent-a(.+)\.jsonl$/);
+						files.push({
+							filePath: path.join(subagentsDir, sf),
+							isSubagent: true,
+							parentSessionId: parentId,
+							agentHash: hashMatch ? hashMatch[1] : undefined,
+						});
 					}
-				} catch {
-					// 読み取りエラーはスキップ
 				}
+			} catch {
+				// subagentsディレクトリがない場合はスキップ
 			}
 		}
-	}
+	}));
 
+	cachedFileInfos = files;
+	cachedFileInfosTimestamp = now;
 	return files;
 }
 
 // subagentのmeta.jsonを読み込み
-export function readSubagentMeta(jsonlPath: string): { agentType?: string; description?: string } {
+export async function readSubagentMeta(jsonlPath: string): Promise<{ agentType?: string; description?: string }> {
 	// agent-a{HASH}.jsonl → agent-a{HASH}.meta.json
 	const metaPath = jsonlPath.replace(/\.jsonl$/, '.meta.json');
 	try {
-		if (fs.existsSync(metaPath)) {
-			const content = fs.readFileSync(metaPath, 'utf-8');
-			return JSON.parse(content);
-		}
+		const content = await fs.promises.readFile(metaPath, 'utf-8');
+		return JSON.parse(content);
 	} catch {
-		// パースエラー
+		return {};
 	}
-	return {};
 }
 
 // システムタグを除去してユーザーの実際の発言を抽出
@@ -168,40 +199,57 @@ function extractText(content: string | ContentBlock[], includeThinking: boolean 
 
 // プロジェクト名をディレクトリ名からデコード（フォールバック用）
 function decodeProjectName(dirName: string): string {
-	// "c--Users-taro-OneDrive-------" のような形式
-	// 日本語等の非ASCII文字は '-' にエンコードされるため完全な復元は不可能
-	// → cwdFromJsonl があればそちらを優先する
+	// "c--xampp" のような形式
 	return dirName
 		.replace(/^([a-zA-Z])--/, '$1:\\')
 		.replace(/--/g, '\\')
 		.replace(/-/g, ' ');
 }
 
-// エンコードされたプロジェクトディレクトリ名→実パスのマッピングを構築
-// セッションJSONLのcwdフィールドから逆引きする
-export function buildProjectPathMap(): Map<string, string> {
+// エンコードされたプロジェクトディレクトリ名→実パスのマッピングを構築（非同期+キャッシュ）
+export async function buildProjectPathMap(): Promise<Map<string, string>> {
+	const now = Date.now();
+	if (cachedPathMap && (now - cachedPathMapTimestamp) < PATH_MAP_CACHE_TTL_MS) {
+		return cachedPathMap;
+	}
+
 	const claudeDir = getClaudeDir();
 	const projectsDir = path.join(claudeDir, 'projects');
 	const map = new Map<string, string>();
 
-	if (!fs.existsSync(projectsDir)) {
+	try {
+		await fs.promises.access(projectsDir);
+	} catch {
+		cachedPathMap = map;
+		cachedPathMapTimestamp = now;
 		return map;
 	}
 
-	const projects = fs.readdirSync(projectsDir);
+	let projects: string[];
+	try {
+		projects = await fs.promises.readdir(projectsDir);
+	} catch {
+		cachedPathMap = map;
+		cachedPathMapTimestamp = now;
+		return map;
+	}
+
 	for (const project of projects) {
 		const projectPath = path.join(projectsDir, project);
-		if (!fs.statSync(projectPath).isDirectory()) {
-			continue;
-		}
+		try {
+			const stat = await fs.promises.stat(projectPath);
+			if (!stat.isDirectory()) { continue; }
+		} catch { continue; }
 
 		// JSONLファイルから1つだけcwdを取得
-		const entries = fs.readdirSync(projectPath);
+		let entries: string[];
+		try {
+			entries = await fs.promises.readdir(projectPath);
+		} catch { continue; }
+
 		for (const entry of entries) {
-			if (!entry.endsWith('.jsonl')) {
-				continue;
-			}
-			const cwd = extractCwdFromJsonl(path.join(projectPath, entry));
+			if (!entry.endsWith('.jsonl')) { continue; }
+			const cwd = await extractCwdFromJsonl(path.join(projectPath, entry));
 			if (cwd) {
 				map.set(project, cwd);
 				break;
@@ -209,29 +257,33 @@ export function buildProjectPathMap(): Map<string, string> {
 		}
 	}
 
+	cachedPathMap = map;
+	cachedPathMapTimestamp = now;
 	return map;
 }
 
-// JSONLファイルの先頭数行からcwdを抽出（軽量）
-function extractCwdFromJsonl(filePath: string): string | undefined {
+// JSONLファイルの先頭数行からcwdを抽出（軽量・非同期）
+async function extractCwdFromJsonl(filePath: string): Promise<string | undefined> {
 	try {
-		const fd = fs.openSync(filePath, 'r');
-		const buf = Buffer.alloc(4096);
-		const bytesRead = fs.readSync(fd, buf, 0, 4096, 0);
-		fs.closeSync(fd);
-
-		const chunk = buf.toString('utf-8', 0, bytesRead);
-		const lines = chunk.split('\n');
-		for (const line of lines) {
-			if (!line.trim()) { continue; }
-			try {
-				const parsed = JSON.parse(line);
-				if (parsed.cwd) {
-					return parsed.cwd;
+		const handle = await fs.promises.open(filePath, 'r');
+		try {
+			const buf = Buffer.alloc(4096);
+			const { bytesRead } = await handle.read(buf, 0, 4096, 0);
+			const chunk = buf.toString('utf-8', 0, bytesRead);
+			const lines = chunk.split('\n');
+			for (const line of lines) {
+				if (!line.trim()) { continue; }
+				try {
+					const parsed = JSON.parse(line);
+					if (parsed.cwd) {
+						return parsed.cwd;
+					}
+				} catch {
+					// 不完全な行はスキップ
 				}
-			} catch {
-				// 不完全な行はスキップ
 			}
+		} finally {
+			await handle.close();
 		}
 	} catch {
 		// ファイル読み取り失敗
@@ -239,10 +291,10 @@ function extractCwdFromJsonl(filePath: string): string | undefined {
 	return undefined;
 }
 
-// JSONLファイルからセッションをパース
-export function parseSessionFile(filePath: string, includeThinking: boolean = false): ParsedSession | null {
+// JSONLファイルからセッションをパース（非同期版）
+export async function parseSessionFile(filePath: string, includeThinking: boolean = false): Promise<ParsedSession | null> {
 	try {
-		const content = fs.readFileSync(filePath, 'utf-8');
+		const content = await fs.promises.readFile(filePath, 'utf-8');
 		const lines = content.split('\n').filter((line) => line.trim());
 
 		const messages: SimpleMessage[] = [];
@@ -346,28 +398,34 @@ export function parseSessionFile(filePath: string, includeThinking: boolean = fa
 }
 
 // 全セッションを読み込み（軽量版：最初と最後のメッセージのみ）
-export function loadAllSessions(maxSessions: number = 500): ParsedSession[] {
-	const fileInfos = getSessionFileInfos();
+export async function loadAllSessions(maxSessions: number = 500): Promise<ParsedSession[]> {
+	const fileInfos = await getSessionFileInfos();
 	const sessions: ParsedSession[] = [];
 
-	for (const info of fileInfos) {
-		const session = parseSessionQuick(info.filePath);
-		if (session) {
+	// 並列処理（全ファイルを同時にパース）
+	const results = await Promise.allSettled(
+		fileInfos.map(async (info) => {
+			const session = await parseSessionQuick(info.filePath);
+			if (!session) { return null; }
 			// サブエージェント情報を付与
 			if (info.isSubagent) {
 				session.isSidechain = true;
 				session.parentSessionId = info.parentSessionId;
-				// meta.jsonからagentType/descriptionを読み込み
-				const meta = readSubagentMeta(info.filePath);
+				const meta = await readSubagentMeta(info.filePath);
 				session.agentType = meta.agentType;
 				session.agentDescription = meta.description;
-				// agentIdをファイル名から取得
 				const hashMatch = path.basename(info.filePath).match(/^agent-a(.+)\.jsonl$/);
 				if (hashMatch) {
 					session.agentId = hashMatch[1];
 				}
 			}
-			sessions.push(session);
+			return session;
+		})
+	);
+
+	for (const result of results) {
+		if (result.status === 'fulfilled' && result.value) {
+			sessions.push(result.value);
 		}
 	}
 
@@ -380,101 +438,237 @@ export function loadAllSessions(maxSessions: number = 500): ParsedSession[] {
 	return sessions;
 }
 
-// 軽量パース：最初と最後のメッセージだけ読む
-function parseSessionQuick(filePath: string): ParsedSession | null {
+// 1行分のJSON文字列を安全にパースする（失敗時はnullを返す）
+function tryParseLine(line: string): Record<string, unknown> | null {
 	try {
-		const content = fs.readFileSync(filePath, 'utf-8');
-		const lines = content.split('\n').filter((line) => line.trim());
+		return JSON.parse(line) as Record<string, unknown>;
+	} catch {
+		return null;
+	}
+}
 
-		let firstUserMessage = '';
-		let firstTimestamp: Date | null = null;
-		let lastTimestamp: Date | null = null;
-		let model: string | undefined;
-		let gitBranch: string | undefined;
-		let sessionId = '';
-		let messageCount = 0;
-		let claudeTitle: string | undefined;
-		let cwd: string | undefined;
-		let isSidechain: boolean | undefined;
-		let agentId: string | undefined;
+// 先頭・末尾の部分読み取りでフィールドを抽出するヘルパー
+// 先頭行群からセッション基本情報を収集する
+function extractFromHeadLines(lines: string[], state: {
+	cwd?: string;
+	sessionId?: string;
+	gitBranch?: string;
+	model?: string;
+	firstUserMessage?: string;
+	firstTimestamp?: Date;
+	claudeTitle?: string;
+	isSidechain?: boolean;
+	agentId?: string;
+}): void {
+	for (const line of lines) {
+		if (!line.trim()) { continue; }
+		const parsed = tryParseLine(line);
+		if (!parsed) { continue; }
 
-		for (const line of lines) {
-			try {
-				const parsed = JSON.parse(line);
-
-				// cwdを取得（最初に見つかったものを使用）
-				if (!cwd && parsed.cwd) {
-					cwd = parsed.cwd;
+		// cwd（最初に見つかったものを使用）
+		if (!state.cwd && parsed.cwd) {
+			state.cwd = String(parsed.cwd);
+		}
+		// サブエージェントフラグ
+		if (parsed.isSidechain) {
+			state.isSidechain = true;
+		}
+		if (parsed.agentId && !state.agentId) {
+			state.agentId = String(parsed.agentId);
+		}
+		// custom-title（/renameで設定されたタイトル）を優先
+		if (parsed.type === 'custom-title' && parsed.customTitle) {
+			state.claudeTitle = String(parsed.customTitle);
+		}
+		// ai-title（自動生成タイトル）はcustom-titleがない場合のみ
+		if (parsed.type === 'ai-title' && parsed.aiTitle && !state.claudeTitle) {
+			state.claudeTitle = String(parsed.aiTitle);
+		}
+		// ユーザーメッセージから基本情報を抽出
+		if (parsed.type === 'user' && parsed.message) {
+			const msg = parsed.message as Record<string, unknown>;
+			if (parsed.sessionId && !state.sessionId) {
+				state.sessionId = String(parsed.sessionId);
+			}
+			if (parsed.gitBranch && !state.gitBranch) {
+				state.gitBranch = String(parsed.gitBranch);
+			}
+			// 最初のユーザーメッセージを取得
+			if (!state.firstUserMessage) {
+				const text = extractText(msg.content as string | ContentBlock[]);
+				if (text) {
+					state.firstUserMessage = text.substring(0, 100);
 				}
-
-				// サブエージェントフラグ
-				if (parsed.isSidechain) {
-					isSidechain = true;
-				}
-				if (parsed.agentId && !agentId) {
-					agentId = parsed.agentId;
-				}
-
-				// Claude Codeの /rename で設定されたタイトル（custom-titleを優先）
-				if (parsed.type === 'custom-title' && parsed.customTitle) {
-					claudeTitle = parsed.customTitle;
-					continue;
-				}
-				// Claude Codeが自動生成したタイトル
-				if (parsed.type === 'ai-title' && parsed.aiTitle && !claudeTitle) {
-					claudeTitle = parsed.aiTitle;
-					continue;
-				}
-
-				if (parsed.type !== 'user' && parsed.type !== 'assistant') {
-					continue;
-				}
-				messageCount++;
-
-				const ts = new Date(parsed.timestamp);
-				if (!firstTimestamp || ts < firstTimestamp) {
-					firstTimestamp = ts;
-				}
-				if (!lastTimestamp || ts > lastTimestamp) {
-					lastTimestamp = ts;
-				}
-
-				if (parsed.type === 'user' && parsed.message) {
-					if (parsed.sessionId) { sessionId = parsed.sessionId; }
-					if (parsed.gitBranch) { gitBranch = parsed.gitBranch; }
-					if (!firstUserMessage) {
-						const text = extractText(parsed.message.content);
-						if (text) {
-							firstUserMessage = text.substring(0, 100);
-						}
-					}
-				}
-				if (parsed.type === 'assistant' && parsed.message?.model) {
-					model = parsed.message.model;
-				}
-			} catch {
-				// スキップ
+			}
+			// 最初のタイムスタンプ
+			if (!state.firstTimestamp && parsed.timestamp) {
+				state.firstTimestamp = new Date(String(parsed.timestamp));
 			}
 		}
+		// アシスタントメッセージからモデル名を取得
+		if (parsed.type === 'assistant' && parsed.message) {
+			const msg = parsed.message as Record<string, unknown>;
+			if (msg.model && !state.model) {
+				state.model = String(msg.model);
+			}
+			// 最初のタイムスタンプ（ユーザーメッセージがない場合のフォールバック）
+			if (!state.firstTimestamp && parsed.timestamp) {
+				state.firstTimestamp = new Date(String(parsed.timestamp));
+			}
+		}
+	}
+}
 
-		if (!firstTimestamp || !lastTimestamp || messageCount === 0) {
+// 末尾行群から最新情報（lastTimestamp、最新モデル、カスタムタイトル）を収集する
+function extractFromTailLines(lines: string[], state: {
+	lastTimestamp?: Date;
+	model?: string;
+	claudeTitle?: string;
+	isSidechain?: boolean;
+	agentId?: string;
+}): void {
+	// 末尾の最初の行は切れている可能性があるためスキップ
+	const tailLines = lines.slice(1);
+	for (const line of tailLines) {
+		if (!line.trim()) { continue; }
+		const parsed = tryParseLine(line);
+		if (!parsed) { continue; }
+
+		// サブエージェントフラグ（末尾にも出現することがある）
+		if (parsed.isSidechain) {
+			state.isSidechain = true;
+		}
+		if (parsed.agentId && !state.agentId) {
+			state.agentId = String(parsed.agentId);
+		}
+		// custom-title は末尾にも出現するため最新のものを優先
+		if (parsed.type === 'custom-title' && parsed.customTitle) {
+			state.claudeTitle = String(parsed.customTitle);
+		}
+		// ai-title は末尾にも出現するがcustom-titleがない場合のみ
+		if (parsed.type === 'ai-title' && parsed.aiTitle && !state.claudeTitle) {
+			state.claudeTitle = String(parsed.aiTitle);
+		}
+		// タイムスタンプを更新（末尾なので常に最新になる可能性が高い）
+		if (parsed.timestamp && (parsed.type === 'user' || parsed.type === 'assistant')) {
+			const ts = new Date(String(parsed.timestamp));
+			if (!state.lastTimestamp || ts > state.lastTimestamp) {
+				state.lastTimestamp = ts;
+			}
+		}
+		// 最新のモデル名（末尾にある方が新しい）
+		if (parsed.type === 'assistant' && parsed.message) {
+			const msg = parsed.message as Record<string, unknown>;
+			if (msg.model) {
+				state.model = String(msg.model);
+			}
+		}
+	}
+}
+
+// 軽量パース：先頭4KB + 末尾4KBのみ読み取り（非同期・fdリーク対策済み）
+async function parseSessionQuick(filePath: string): Promise<ParsedSession | null> {
+	try {
+		const HEAD_BYTES = 4096;
+		const TAIL_BYTES = 4096;
+
+		// ファイルハンドルを開いてサイズを確認（try/finallyで確実にclose）
+		const handle = await fs.promises.open(filePath, 'r');
+		let headStr: string;
+		let tailStr: string;
+		let fileSize: number;
+		try {
+			const stat = await handle.stat();
+			if (stat.size === 0) { return null; }
+			fileSize = stat.size;
+
+			// 先頭4KBを読み取り
+			const headSize = Math.min(HEAD_BYTES, fileSize);
+			const headBuf = Buffer.alloc(headSize);
+			await handle.read(headBuf, 0, headSize, 0);
+			headStr = headBuf.toString('utf-8');
+
+			// 末尾4KBを読み取り（先頭と重複しない範囲で）
+			tailStr = '';
+			if (fileSize > HEAD_BYTES) {
+				const tailSize = Math.min(TAIL_BYTES, fileSize - HEAD_BYTES);
+				const tailStart = fileSize - tailSize;
+				const tailBuf = Buffer.alloc(tailSize);
+				await handle.read(tailBuf, 0, tailSize, tailStart);
+				tailStr = tailBuf.toString('utf-8');
+			}
+		} finally {
+			await handle.close();
+		}
+
+		// 先頭行群をパース
+		const headLines = headStr.split('\n');
+		const headState: {
+			cwd?: string;
+			sessionId?: string;
+			gitBranch?: string;
+			model?: string;
+			firstUserMessage?: string;
+			firstTimestamp?: Date;
+			claudeTitle?: string;
+			isSidechain?: boolean;
+			agentId?: string;
+		} = {};
+		extractFromHeadLines(headLines, headState);
+
+		// 末尾行群をパース（末尾の最初の行は切れている可能性があるためスキップ済み）
+		const tailLines = tailStr ? tailStr.split('\n') : [];
+		const tailState: {
+			lastTimestamp?: Date;
+			model?: string;
+			claudeTitle?: string;
+			isSidechain?: boolean;
+			agentId?: string;
+		} = {};
+		if (tailLines.length > 0) {
+			extractFromTailLines(tailLines, tailState);
+		}
+
+		// 先頭から取得したlastTimestampの初期値（末尾読み取りがない場合のフォールバック）
+		let lastTimestamp = tailState.lastTimestamp || headState.firstTimestamp;
+		const firstTimestamp = headState.firstTimestamp;
+
+		if (!firstTimestamp || !lastTimestamp) {
 			return null;
 		}
 
+		// lastTimestamp が firstTimestamp より古い場合は firstTimestamp を使用
+		if (lastTimestamp < firstTimestamp) {
+			lastTimestamp = firstTimestamp;
+		}
+
+		// custom-titleは末尾にある方が優先（後から設定された可能性）
+		const claudeTitle = tailState.claudeTitle || headState.claudeTitle;
+
+		// 末尾の方が新しいモデル名を優先
+		const model = tailState.model || headState.model;
+
+		// サブエージェントフラグは先頭・末尾どちらで見つかってもOK
+		const isSidechain = headState.isSidechain || tailState.isSidechain;
+		const agentId = headState.agentId || tailState.agentId;
+
+		// messageCountはファイルサイズから概算（1行あたり平均1000バイトとして推定）
+		const messageCount = Math.max(1, Math.round(fileSize / 1000));
+
 		const projectDir = path.basename(path.dirname(filePath));
-		const project = cwd || decodeProjectName(projectDir);
-		const id = sessionId || path.basename(filePath, '.jsonl');
+		const project = headState.cwd || decodeProjectName(projectDir);
+		const id = headState.sessionId || path.basename(filePath, '.jsonl');
 
 		return {
 			id,
 			filePath,
 			project,
-			firstMessage: firstUserMessage || '(内容なし)',
+			firstMessage: headState.firstUserMessage || '(内容なし)',
 			firstTimestamp,
 			lastTimestamp,
 			messageCount,
 			model,
-			gitBranch,
+			gitBranch: headState.gitBranch,
 			claudeTitle,
 			messages: [], // 軽量版では空
 			isSidechain,
@@ -486,6 +680,6 @@ function parseSessionQuick(filePath: string): ParsedSession | null {
 }
 
 // セッション全メッセージを読み込み（プレビュー用）
-export function loadSessionFull(filePath: string, showThinking: boolean = false): ParsedSession | null {
+export async function loadSessionFull(filePath: string, showThinking: boolean = false): Promise<ParsedSession | null> {
 	return parseSessionFile(filePath, showThinking);
 }

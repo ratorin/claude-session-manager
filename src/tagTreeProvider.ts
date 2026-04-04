@@ -2,9 +2,13 @@ import * as vscode from 'vscode';
 import { ParsedSession } from './types';
 import * as dataStore from './dataStore';
 
-export class TagTreeProvider implements vscode.TreeDataProvider<TagItem | TagSessionItem> {
+export class TagTreeProvider implements vscode.TreeDataProvider<TagItem | TagSessionItem>, vscode.Disposable {
 	private _onDidChangeTreeData = new vscode.EventEmitter<TagItem | TagSessionItem | undefined>();
 	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
+	dispose(): void {
+		this._onDidChangeTreeData.dispose();
+	}
 
 	constructor(private getSessions: () => ParsedSession[]) {}
 
@@ -16,16 +20,16 @@ export class TagTreeProvider implements vscode.TreeDataProvider<TagItem | TagSes
 		return element;
 	}
 
-	getChildren(element?: TagItem | TagSessionItem): (TagItem | TagSessionItem)[] {
+	async getChildren(element?: TagItem | TagSessionItem): Promise<(TagItem | TagSessionItem)[]> {
 		if (!element) {
 			// タグ一覧
-			const tags = dataStore.getAllTags();
+			const tags = await dataStore.getAllTags();
 			return Object.keys(tags).sort().map((tag) => new TagItem(tag, tags[tag].length));
 		}
 
 		if (element instanceof TagItem) {
 			// タグ内のセッション一覧
-			const tags = dataStore.getAllTags();
+			const tags = await dataStore.getAllTags();
 			const sessionIds = tags[element.tagName] || [];
 			const sessions = this.getSessions();
 

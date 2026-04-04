@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Claude Session Manager v0.2.0 使い方ガイド</title>
+<title>Claude Session Manager v0.3.0 使い方ガイド</title>
 <style>
 	* { margin: 0; padding: 0; box-sizing: border-box; }
 	body {
@@ -453,7 +453,7 @@
 	<img src="images/icon.png" alt="CSM" style="width: 80px; height: 80px; border-radius: 16px; margin-bottom: 16px;">
 	<h1>Claude Session Manager</h1>
 	<p>Claude Codeの会話履歴・メモリ・エージェントを管理するVS Code拡張機能</p>
-	<div class="version">v0.2.0</div>
+	<div class="version">v0.3.0</div>
 </div>
 
 <div class="container">
@@ -1227,6 +1227,189 @@
 
 	<div class="tip">
 		<strong>ステータスバーで全体把握:</strong> 画面左下の「🟢 動作中エージェント数 👥 総数」をクリックすると組織図が開きます。どの部署が動いているかを一目で確認できます。
+	</div>
+</div>
+
+<!-- ============================================ -->
+<!-- セクション 12: タスク管理 -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">12</span>タスク管理</div>
+
+	<p>エージェントに割り当てたタスクの<strong>状態を自動追跡</strong>し、完了・エラー・応答停止をVS Code通知でお知らせします。</p>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">タスクの追加</h4>
+	<div class="flow">
+		<div class="flow-box">
+			<div class="flow-label">エージェント管理の上部</div>
+			<div class="flow-text">「＋」ボタン →<br>タスクを記録</div>
+		</div>
+		<div class="flow-arrow">→</div>
+		<div class="flow-box">
+			<div class="flow-label">エージェントを選択</div>
+			<div class="flow-text">タスク概要と<br>出力先ファイルを入力</div>
+		</div>
+		<div class="flow-arrow">→</div>
+		<div class="flow-box">
+			<div class="flow-label">自動追跡開始</div>
+			<div class="flow-text">エージェントの子ノード<br>として表示</div>
+		</div>
+	</div>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">ステータスアイコン</h4>
+	<div class="icon-legend">
+		<div class="icon-item">
+			<span class="big-icon" style="color: #4ade80;">⟳</span>
+			<div class="icon-desc"><strong>実行中（running）</strong>エージェントが作業中</div>
+		</div>
+		<div class="icon-item">
+			<span class="big-icon" style="color: #fbbf24;">⚠</span>
+			<div class="icon-desc"><strong>応答停止（stalled）</strong>60秒以上応答なし</div>
+		</div>
+		<div class="icon-item">
+			<span class="big-icon" style="color: #4ade80;">✓</span>
+			<div class="icon-desc"><strong>完了（completed）</strong>タスク正常終了</div>
+		</div>
+		<div class="icon-item">
+			<span class="big-icon" style="color: #ef4444;">✕</span>
+			<div class="icon-desc"><strong>エラー（error）</strong>タスク異常終了</div>
+		</div>
+		<div class="icon-item">
+			<span class="big-icon" style="color: #888;">🕐</span>
+			<div class="icon-desc"><strong>待機中（pending）</strong>開始待ち</div>
+		</div>
+	</div>
+
+	<div class="tip">
+		<strong>自動クリーンアップ：</strong>完了/エラーのタスクは72時間後、それ以外は168時間後に自動で削除されます。
+	</div>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">右クリック操作</h4>
+	<div class="diagram" style="display: flex; gap: 40px; align-items: flex-start; flex-wrap: wrap;">
+		<div class="ctx-menu-demo">
+			<div class="ctx-item">📄 出力ファイルを開く</div>
+			<div class="ctx-sep"></div>
+			<div class="ctx-item">✅ タスクを完了にする</div>
+			<div class="ctx-sep"></div>
+			<div class="ctx-item" style="color: #e94560;">🗑 タスクログを削除</div>
+		</div>
+		<div style="flex: 1; min-width: 250px;">
+			<div class="step-card" style="margin-bottom: 12px;">
+				<h4>📄 出力ファイルを開く</h4>
+				<p>タスクに設定した出力先ファイルをエディタで開く。結果を素早く確認。</p>
+			</div>
+			<div class="step-card">
+				<h4>✅ タスクを完了にする</h4>
+				<p>自動検知が追いつかない場合に手動で完了にする。</p>
+			</div>
+		</div>
+	</div>
+</div>
+
+<!-- ============================================ -->
+<!-- セクション 13: 利用制限モニター -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">13</span>Claude Code 利用制限モニター</div>
+
+	<p>Claude Codeの<strong>API利用率</strong>をステータスバーにリアルタイム表示します。使いすぎに気づかず制限にかかるリスクを防止。</p>
+
+	<div class="diagram">
+		<div style="color: #888; font-size: 13px; margin-bottom: 8px;">ステータスバーの表示例</div>
+		<div class="statusbar-demo" style="display: inline-flex;">
+			<span class="item">📊 15% 3.5h / 5% 3d25h</span>
+		</div>
+		<div style="margin-top: 12px; font-size: 13px; color: #aaa;">
+			<div>左: <strong>5時間利用率</strong> + リセットまでの残り時間</div>
+			<div>右: <strong>7日利用率</strong> + リセットまでの残り時間</div>
+		</div>
+	</div>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">色による警告</h4>
+	<div class="step-grid">
+		<div class="step-card">
+			<h4 style="color: #4ade80;">〜79%: 通常</h4>
+			<p>余裕あり。通常の色で表示。</p>
+		</div>
+		<div class="step-card">
+			<h4 style="color: #fbbf24;">80%〜94%: 警告</h4>
+			<p>黄色背景で注意喚起。90%でWarning通知。</p>
+		</div>
+		<div class="step-card">
+			<h4 style="color: #ef4444;">95%〜: 危険</h4>
+			<p>赤背景で危険表示。100%でError通知。</p>
+		</div>
+	</div>
+
+	<div class="warn">
+		<strong>有効化について：</strong>デフォルトOFFです。設定で <code>enableUsageMonitor</code> をONにすると有効化されます。軽量なAPIリクエストが定期的に発生しますが、コストは月額$0.01未満です。
+	</div>
+</div>
+
+<!-- ============================================ -->
+<!-- セクション 14: フォーム拡張（Effort/Thinking） -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">14</span>エージェント設定の拡張</div>
+
+	<p>v0.3.0でエージェント設定フォームに<strong>推論制御</strong>の項目が追加されました。</p>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">新しい設定項目</h4>
+	<div class="step-grid">
+		<div class="step-card">
+			<h4>推論努力レベル（Effort）</h4>
+			<p>Low / Medium / High / Max の4段階。<br>MaxはOpus専用（他モデルではグレーアウト）。</p>
+		</div>
+		<div class="step-card">
+			<h4>Extended Thinking</h4>
+			<p>AIの内部思考プロセスを有効化。<br>HaikuではONにできません。</p>
+		</div>
+		<div class="step-card">
+			<h4>Max Thinking Tokens</h4>
+			<p>思考に使えるトークン数の上限（1024〜128000）。<br>環境変数 <code>MAX_THINKING_TOKENS</code> で反映。</p>
+		</div>
+		<div class="step-card">
+			<h4>スコープ選択</h4>
+			<p>ルールファイルの保存先を選択。<br><strong>プロジェクト</strong>（ワークスペース内）/ <strong>グローバル</strong>（~/.claude/配下）。</p>
+		</div>
+	</div>
+
+	<div class="tip">
+		<strong>モデル別UI連動：</strong>モデルを変更すると、使えない項目が自動的にグレーアウトします。Opus: 全項目有効 / Sonnet: Maxのみ無効 / Haiku: Max+Thinking+MaxTokensが無効。
+	</div>
+</div>
+
+<!-- ============================================ -->
+<!-- セクション 15: セッションフィルター & CSM:AUTO -->
+<!-- ============================================ -->
+<div class="section">
+	<div class="section-title"><span class="num">15</span>セッションフィルター ＆ ルールファイル保護</div>
+
+	<h4 style="color: #d97757; margin: 0 0 12px;">セッションフィルター</h4>
+	<p>会話一覧のタイトルバーにあるフィルターアイコン（🔍）をクリックして、<strong>現在のプロジェクトのセッションのみ</strong>表示するか、<strong>全プロジェクトのセッション</strong>を表示するかを切り替えできます。</p>
+
+	<div class="flow" style="margin: 16px 0;">
+		<div class="flow-box">
+			<div class="flow-label">フィルターアイコン</div>
+			<div class="flow-text">🔍 クリック</div>
+		</div>
+		<div class="flow-arrow">→</div>
+		<div class="flow-box">
+			<div class="flow-label">プロジェクト内のみ</div>
+			<div class="flow-text">現在のワークスペースの<br>会話だけ表示</div>
+		</div>
+		<div class="flow-arrow">or</div>
+		<div class="flow-box">
+			<div class="flow-label">すべて表示</div>
+			<div class="flow-text">全プロジェクトの<br>会話を一覧表示</div>
+		</div>
+	</div>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">ルールファイルのカスタムセクション保持（CSM:AUTO）</h4>
+	<p>ルールファイルの自動生成部分には <code>&lt;!-- CSM:AUTO:START --&gt;</code> 〜 <code>&lt;!-- CSM:AUTO:END --&gt;</code> マーカーが付きます。エージェント設定を変更した際、<strong>マーカー内の自動生成部分のみ更新</strong>され、マーカー外に書いたカスタムルールは保持されます。</p>
+
+	<div class="tip">
+		<strong>安全に編集：</strong>ルールファイルのマーカーの下に自由にルールを追記してください。CSMが設定を更新しても、あなたが書いた部分は消えません。
 	</div>
 </div>
 

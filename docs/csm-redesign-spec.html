@@ -1,0 +1,1453 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSM 再設計仕様書 — エージェント監視・CLI組み立て・Phase 2〜4</title>
+<style>
+	:root {
+		--accent: #e27e4a;
+		--accent-bg: rgba(226, 126, 74, 0.08);
+		--bg: #1e1e1e;
+		--surface: #252526;
+		--surface2: #2d2d30;
+		--border: #3e3e42;
+		--text: #cccccc;
+		--text-dim: #888888;
+		--text-bright: #ffffff;
+		--green: #4ec9b0;
+		--blue: #569cd6;
+		--yellow: #dcdcaa;
+		--red: #f44747;
+		--purple: #c586c0;
+	}
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	body {
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+		background: var(--bg);
+		color: var(--text);
+		line-height: 1.7;
+		padding: 0;
+	}
+
+	/* ヘッダー */
+	.header {
+		background: linear-gradient(135deg, #2d1f14 0%, #1e1e1e 100%);
+		border-bottom: 2px solid var(--accent);
+		padding: 40px 32px;
+	}
+	.header h1 {
+		font-size: 28px;
+		color: var(--accent);
+		font-weight: 600;
+		margin-bottom: 8px;
+	}
+	.header .subtitle {
+		font-size: 14px;
+		color: var(--text-dim);
+	}
+	.header .version {
+		display: inline-block;
+		margin-top: 12px;
+		padding: 4px 12px;
+		background: var(--accent-bg);
+		border: 1px solid var(--accent);
+		border-radius: 12px;
+		font-size: 12px;
+		color: var(--accent);
+	}
+
+	.content {
+		max-width: 960px;
+		margin: 0 auto;
+		padding: 32px;
+	}
+
+	/* 目次 */
+	.toc {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 20px 24px;
+		margin-bottom: 40px;
+	}
+	.toc h2 {
+		font-size: 16px;
+		color: var(--accent);
+		margin-bottom: 12px;
+	}
+	.toc ol {
+		padding-left: 24px;
+	}
+	.toc li {
+		margin-bottom: 4px;
+	}
+	.toc a {
+		color: var(--blue);
+		text-decoration: none;
+		font-size: 13px;
+	}
+	.toc a:hover { text-decoration: underline; }
+	.toc .section-label {
+		font-size: 11px;
+		color: var(--text-dim);
+		margin-top: 8px;
+		margin-bottom: 2px;
+		font-weight: 600;
+		list-style: none;
+		margin-left: -24px;
+	}
+
+	/* セクション */
+	section {
+		margin-bottom: 48px;
+	}
+	section > h2 {
+		font-size: 20px;
+		color: var(--text-bright);
+		border-bottom: 1px solid var(--border);
+		padding-bottom: 8px;
+		margin-bottom: 20px;
+	}
+	section > h2 .num {
+		color: var(--accent);
+		margin-right: 8px;
+	}
+	section > h3 {
+		font-size: 16px;
+		color: var(--text-bright);
+		margin-top: 24px;
+		margin-bottom: 12px;
+	}
+
+	/* カード */
+	.card {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		margin-bottom: 24px;
+		overflow: hidden;
+	}
+	.card.deprecated {
+		border-color: var(--red);
+		border-style: dashed;
+	}
+	.card.new {
+		border-color: var(--green);
+	}
+	.card-header {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 16px 20px;
+		background: var(--surface2);
+		border-bottom: 1px solid var(--border);
+		flex-wrap: wrap;
+	}
+	.card-header h3 {
+		font-size: 16px;
+		color: var(--text-bright);
+		flex: 1;
+		min-width: 150px;
+		margin: 0;
+	}
+	.badge {
+		display: inline-block;
+		padding: 2px 8px;
+		border-radius: 4px;
+		font-size: 11px;
+		font-weight: 600;
+	}
+	.badge-remove { background: rgba(244, 71, 71, 0.15); color: var(--red); border: 1px solid var(--red); }
+	.badge-new { background: rgba(78, 201, 176, 0.15); color: var(--green); border: 1px solid var(--green); }
+	.badge-keep { background: rgba(136, 136, 136, 0.15); color: var(--text-dim); border: 1px solid var(--text-dim); }
+	.badge-phase { background: rgba(197, 134, 192, 0.15); color: var(--purple); border: 1px solid var(--purple); }
+	.badge-info { background: rgba(86, 156, 214, 0.15); color: var(--blue); border: 1px solid var(--blue); }
+	.badge-change { background: rgba(220, 220, 170, 0.15); color: var(--yellow); border: 1px solid var(--yellow); }
+
+	.card-body {
+		padding: 20px;
+	}
+
+	/* テーブル */
+	.props {
+		width: 100%;
+		border-collapse: collapse;
+		margin-bottom: 16px;
+		font-size: 13px;
+	}
+	.props th {
+		text-align: left;
+		padding: 8px 12px;
+		background: var(--surface2);
+		color: var(--text-dim);
+		font-weight: 500;
+		border: 1px solid var(--border);
+		white-space: nowrap;
+	}
+	.props td {
+		padding: 8px 12px;
+		border: 1px solid var(--border);
+	}
+	.props code {
+		background: var(--surface2);
+		padding: 2px 6px;
+		border-radius: 3px;
+		font-family: 'Consolas', 'Courier New', monospace;
+		font-size: 12px;
+		color: var(--green);
+	}
+	.props .del { text-decoration: line-through; color: var(--red); opacity: 0.6; }
+	.props .add { color: var(--green); font-weight: 600; }
+
+	/* 挙動ブロック */
+	.behavior {
+		background: var(--surface2);
+		border-radius: 6px;
+		padding: 16px;
+		margin-top: 12px;
+	}
+	.behavior h4 {
+		font-size: 13px;
+		color: var(--accent);
+		margin-bottom: 8px;
+	}
+	.behavior ul, .behavior ol {
+		padding-left: 20px;
+		font-size: 13px;
+	}
+	.behavior li {
+		margin-bottom: 4px;
+	}
+
+	/* 注意ボックス */
+	.note-box {
+		background: rgba(226, 126, 74, 0.06);
+		border: 1px solid rgba(226, 126, 74, 0.3);
+		border-radius: 6px;
+		padding: 12px 16px;
+		margin-top: 12px;
+		font-size: 13px;
+	}
+	.note-box strong {
+		color: var(--accent);
+	}
+	.warn-box {
+		background: rgba(244, 71, 71, 0.06);
+		border: 1px solid rgba(244, 71, 71, 0.3);
+		border-radius: 6px;
+		padding: 12px 16px;
+		margin-top: 12px;
+		font-size: 13px;
+	}
+	.warn-box strong {
+		color: var(--red);
+	}
+	.ok-box {
+		background: rgba(78, 201, 176, 0.06);
+		border: 1px solid rgba(78, 201, 176, 0.3);
+		border-radius: 6px;
+		padding: 12px 16px;
+		margin-top: 12px;
+		font-size: 13px;
+	}
+	.ok-box strong {
+		color: var(--green);
+	}
+
+	/* ダイアグラム */
+	.diagram {
+		background: var(--surface2);
+		border-radius: 6px;
+		padding: 20px;
+		margin: 16px 0;
+		text-align: center;
+	}
+	.diagram pre {
+		display: inline-block;
+		text-align: left;
+		font-size: 12px;
+		line-height: 1.6;
+		color: var(--text);
+	}
+	.diagram .label {
+		font-size: 11px;
+		color: var(--text-dim);
+		text-align: center;
+		margin-top: 8px;
+	}
+
+	/* フロー */
+	.flow {
+		background: var(--surface2);
+		border-radius: 6px;
+		padding: 16px;
+		margin-top: 12px;
+		font-family: 'Consolas', monospace;
+		font-size: 12px;
+		line-height: 1.8;
+		color: var(--text-dim);
+		overflow-x: auto;
+	}
+	.flow .step { color: var(--green); }
+	.flow .arrow { color: var(--accent); }
+	.flow .note { color: var(--yellow); font-style: italic; }
+	.flow .del { color: var(--red); text-decoration: line-through; }
+	.flow .new { color: var(--green); font-weight: bold; }
+
+	/* Phase計画 */
+	.phase-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 16px;
+		margin-top: 16px;
+	}
+	.phase-box {
+		background: var(--surface2);
+		border-radius: 6px;
+		padding: 16px;
+		border-left: 3px solid var(--purple);
+	}
+	.phase-box.active {
+		border-left-color: var(--green);
+		background: rgba(78, 201, 176, 0.04);
+	}
+	.phase-box h4 {
+		font-size: 13px;
+		color: var(--text-bright);
+		margin-bottom: 8px;
+	}
+	.phase-box ul {
+		padding-left: 18px;
+		font-size: 12px;
+	}
+	.phase-box li { margin-bottom: 3px; }
+
+	/* ファイル一覧 */
+	.file-list {
+		background: var(--surface2);
+		border-radius: 6px;
+		padding: 16px;
+		margin-top: 12px;
+		font-family: 'Consolas', monospace;
+		font-size: 12px;
+		line-height: 1.6;
+	}
+	.file-list .file-new { color: var(--green); }
+	.file-list .file-mod { color: var(--yellow); }
+	.file-list .file-del { color: var(--red); text-decoration: line-through; }
+
+	/* CLIコマンドブロック */
+	.cli-block {
+		background: #0d1117;
+		border: 1px solid #30363d;
+		border-radius: 6px;
+		padding: 16px 20px;
+		margin: 12px 0;
+		font-family: 'Consolas', 'Courier New', monospace;
+		font-size: 13px;
+		line-height: 1.8;
+		color: #c9d1d9;
+		overflow-x: auto;
+	}
+	.cli-block .flag { color: #79c0ff; }
+	.cli-block .value { color: #a5d6ff; }
+	.cli-block .comment { color: #8b949e; font-style: italic; }
+	.cli-block .opt { color: #ffa657; }
+
+	/* 区切り線 */
+	.divider {
+		border: none;
+		border-top: 1px dashed var(--border);
+		margin: 48px 0;
+	}
+</style>
+</head>
+<body>
+
+<div class="header">
+	<h1>CSM 再設計仕様書</h1>
+	<div class="subtitle">Claude Session Manager &mdash; エージェント監視・CLIコマンド自動組み立て・Phase 2〜4</div>
+	<span class="version">v0.2.8 現在 &rarr; v0.3.0 計画</span>
+</div>
+
+<div class="content">
+
+<!-- ================================================================ -->
+<!-- 目次                                                              -->
+<!-- ================================================================ -->
+<div class="toc">
+	<h2>目次</h2>
+	<ol>
+		<li class="section-label">現状分析</li>
+		<li><a href="#problems">現状の問題点と廃止する機能</a></li>
+		<li class="section-label">新アーキテクチャ</li>
+		<li><a href="#architecture">新アーキテクチャ（データフロー図）</a></li>
+		<li><a href="#components">各コンポーネントの責務</a></li>
+		<li><a href="#timer">タイマー統合設計</a></li>
+		<li><a href="#display">表示設計（点滅代替・フィルタ）</a></li>
+		<li class="section-label">CLIコマンド自動組み立て</li>
+		<li><a href="#cli-builder">CLIコマンドビルダー</a></li>
+		<li><a href="#cli-options">CLIオプション対応表</a></li>
+		<li><a href="#cli-rule">取締役ルールファイルへの反映</a></li>
+		<li class="section-label">Phase計画</li>
+		<li><a href="#phase1c">Phase 1c &mdash; 監視再設計 + CLIビルダー</a></li>
+		<li><a href="#phase2">Phase 2 &mdash; ローカル/グローバル分離</a></li>
+		<li><a href="#phase3">Phase 3 &mdash; メモリ管理拡張</a></li>
+		<li><a href="#phase4">Phase 4 &mdash; セットアップウィザード</a></li>
+		<li><a href="#phase-files">Phase別 変更ファイル一覧</a></li>
+	</ol>
+</div>
+
+<!-- ================================================================ -->
+<!-- 1. 現状の問題点と廃止する機能                                      -->
+<!-- ================================================================ -->
+<section id="problems">
+<h2><span class="num">1.</span> 現状の問題点と廃止する機能</h2>
+
+<div class="card deprecated">
+	<div class="card-header">
+		<h3>問題 1: 子エージェント検知不能</h3>
+		<span class="badge badge-remove">根本原因を解決</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>現状</th><td><code>~/.claude/sessions/*.json</code> のPID生存チェックのみ。<code>--resume --print</code> パイプ起動の子エージェントは sessions/ にJSONを作らないため検知できない</td></tr>
+			<tr><th>根本原因</th><td>sessions/*.json は対話的CLIのみが生成する。子エージェントの起動は親のJSONLに tool_use(Task/Agent) として記録される</td></tr>
+			<tr><th>解決方針</th><td><strong>親セッションのJSONL解析</strong>で子エージェント起動を検出する方式に変更。sessions/*.json のPID方式は補助として併用</td></tr>
+		</table>
+	</div>
+</div>
+
+<div class="card deprecated">
+	<div class="card-header">
+		<h3>問題 2: 取締役（自分自身）が表示される</h3>
+		<span class="badge badge-remove">フィルタ追加</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>現状</th><td><code>updateStatusBar()</code> が <code>dataStore.getAgents()</code> の全エージェントを走査。取締役も子エージェントも区別なくカウント</td></tr>
+			<tr><th>根本原因</th><td>フィルタリングが未実装</td></tr>
+			<tr><th>解決方針</th><td><code>parentAgent</code> フィールドで判定。<code>parentAgent</code> を持つエージェント（＝子エージェント）のみを監視対象にする。取締役名のハードコード（<code>if (a.name === '取締役')</code>）も廃止</td></tr>
+		</table>
+	</div>
+</div>
+
+<div class="card deprecated">
+	<div class="card-header">
+		<h3>問題 3: 点滅しない</h3>
+		<span class="badge badge-change">代替表現に変更</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>現状</th><td>VS Code TreeItem / StatusBarItem にアニメーション機能がない。静的アイコン切り替えのみ</td></tr>
+			<tr><th>解決方針</th><td>点滅は諦め、以下の代替表現で「稼働感」を伝える:<br>
+				(1) アイコン色変化: 🟢実行中 / ⬜停止 / 🟡応答待ち<br>
+				(2) ツールチップにタスク名・経過時間を表示<br>
+				(3) ステータスバーにスピナー文字を利用した擬似アニメーション（<code>&#x2800;&#x280B;&#x2819;&#x2839;&#x2838;&#x283C;&#x2834;&#x2826;&#x2827;&#x2807;&#x280F;</code> のローテーション）
+			</td></tr>
+		</table>
+	</div>
+</div>
+
+<div class="card deprecated">
+	<div class="card-header">
+		<h3>問題 4: agentMonitor.ts がデッドコード（109行）</h3>
+		<span class="badge badge-remove">廃止 &rarr; 新モジュールに置換</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>現状</th><td><code>agentMonitor.ts</code> は import もされていない完全なデッドコード。extension.ts L18 にコメント「将来利用」が残存</td></tr>
+			<tr><th>解決方針</th><td>旧 <code>agentMonitor.ts</code> を削除し、新モジュール <code>agentWatcher.ts</code> に置換。<br>旧モジュールの JSONL 解析ロジック（末尾読み取り + tool_use/tool_result ペア追跡）は新モジュールに発展的に引き継ぐ</td></tr>
+		</table>
+	</div>
+</div>
+
+<div class="card deprecated">
+	<div class="card-header">
+		<h3>問題 5: enableAgentMonitor OFF でも監視が動作する</h3>
+		<span class="badge badge-remove">完全停止を保証</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>現状</th><td><code>sessionTreeProvider.startWatching()</code> は <code>enableAgentMonitor</code> と無関係に常時稼働。OFFでもセッション一覧の緑丸が出る</td></tr>
+			<tr><th>根本原因</th><td>ライブセッション検出（fs.watch + ポーリング）と「エージェント監視」設定が分離されていない</td></tr>
+			<tr><th>解決方針</th><td><code>enableAgentMonitor = false</code> 時は一切のJSONL解析・PIDチェック・ポーリングを停止。<br>セッション一覧のライブ表示も無効化する（アイコンは通常表示に統一）</td></tr>
+		</table>
+	</div>
+</div>
+
+<div class="card deprecated">
+	<div class="card-header">
+		<h3>問題 6: 取締役名がハードコード</h3>
+		<span class="badge badge-remove">parentAgent判定に統一</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>現状</th><td><code>agentTreeProvider.ts L73-74: if (a.name === '取締役') return -1</code></td></tr>
+			<tr><th>解決方針</th><td>ハードコード廃止。ソート最上位の判定を <code>!agent.parentAgent</code>（トップレベル）で行う。<br>取締役は「parentAgentが未設定のエージェント」として自動判定される</td></tr>
+		</table>
+	</div>
+</div>
+
+<div class="card deprecated">
+	<div class="card-header">
+		<h3>問題 7: タイマーが2つ並走</h3>
+		<span class="badge badge-remove">1つに統合</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>現状</th><td>extension.ts の <code>agentPollTimer</code> と sessionTreeProvider.ts の <code>pollTimer</code> が同じ間隔で並走</td></tr>
+			<tr><th>解決方針</th><td>新モジュール <code>agentWatcher.ts</code> に統合。1つのタイマーで JSONL解析 + PIDチェック + UI更新をすべて処理</td></tr>
+		</table>
+	</div>
+</div>
+
+<h3>廃止するファイル・関数一覧</h3>
+<div class="file-list">
+<span class="file-del">src/agentMonitor.ts</span> &mdash; 旧JNOLモジュール（109行、完全未使用）&rarr; 削除<br>
+<span class="file-del">sessionTreeProvider.ts: startWatching()</span> &mdash; fs.watch + pollTimer &rarr; agentWatcher.ts に移管<br>
+<span class="file-del">sessionTreeProvider.ts: restartPolling()</span> &mdash; 同上<br>
+<span class="file-del">sessionTreeProvider.ts: stopWatching()</span> &mdash; 同上<br>
+<span class="file-del">sessionTreeProvider.ts: updateLiveSessions()</span> &mdash; 同上<br>
+<span class="file-del">sessionTreeProvider.ts: isProcessAlive()</span> &mdash; agentWatcher.ts に移管<br>
+<span class="file-del">extension.ts: agentPollTimer</span> &mdash; agentWatcher.ts に統合<br>
+<span class="file-del">extension.ts: updateStatusBar()内のfor-of</span> &mdash; agentWatcher のイベントに置換<br>
+<span class="file-del">agentTreeProvider.ts L73-74</span> &mdash; <code>if (a.name === '取締役')</code> ハードコード廃止
+</div>
+</section>
+
+<hr class="divider">
+
+<!-- ================================================================ -->
+<!-- 2. 新アーキテクチャ                                                -->
+<!-- ================================================================ -->
+<section id="architecture">
+<h2><span class="num">2.</span> 新アーキテクチャ（データフロー図）</h2>
+
+<div class="diagram">
+<pre>
+&#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+&#9474;  <strong style="color:var(--green)">agentWatcher.ts</strong> (&#26032;&#12514;&#12472;&#12517;&#12540;&#12523; &#8212; &#21807;&#19968;&#12398;&#30435;&#35222;&#12456;&#12531;&#12472;&#12531;)               &#9474;
+&#9474;                                                                     &#9474;
+&#9474;  &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;  &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;     &#9474;
+&#9474;  &#9474; <strong style="color:var(--blue)">PID&#26908;&#20986;</strong>                  &#9474;  &#9474; <strong style="color:var(--blue)">JSONL&#35299;&#26512;</strong>                    &#9474;     &#9474;
+&#9474;  &#9474;                          &#9474;  &#9474;                              &#9474;     &#9474;
+&#9474;  &#9474; ~/.claude/sessions/*.json&#9474;  &#9474; &#21462;&#32224;&#24441;&#12475;&#12483;&#12471;&#12519;&#12531;JSONL        &#9474;     &#9474;
+&#9474;  &#9474; &#8594; PID&#29983;&#23384;&#12481;&#12455;&#12483;&#12463;        &#9474;  &#9474; &#8594; tool_use(Task/Agent) &#26908;&#20986;  &#9474;     &#9474;
+&#9474;  &#9474; &#8594; &#12478;&#12531;&#12499;JSON&#21066;&#38500;         &#9474;  &#9474; &#8594; tool_result &#12391;&#23436;&#20102;&#26908;&#20986;     &#9474;     &#9474;
+&#9474;  &#9474;                          &#9474;  &#9474; &#8594; &#26411;&#23614;64KB + mtime/size cache&#9474;     &#9474;
+&#9474;  &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;  &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;     &#9474;
+&#9474;               &#9474;                                &#9474;                     &#9474;
+&#9474;               &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;                     &#9474;
+&#9474;                            &#9660;                                         &#9474;
+&#9474;  &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;                     &#9474;
+&#9474;  &#9474; <strong style="color:var(--blue)">&#32113;&#21512;&#21028;&#23450;</strong>                                     &#9474;                     &#9474;
+&#9474;  &#9474;                                             &#9474;                     &#9474;
+&#9474;  &#9474; PID&#29983;&#23384; &#8594; &#12300;&#21462;&#32224;&#24441;&#12475;&#12483;&#12471;&#12519;&#12531;&#31292;&#20685;&#20013;&#12301;        &#9474;                     &#9474;
+&#9474;  &#9474; JSONL tool_use&#26410;&#23436;&#20102; &#8594; &#12300;&#23376;&#12456;&#12540;&#12472;&#12455;&#12531;&#12488;&#31292;&#20685;&#12301;&#9474;                     &#9474;
+&#9474;  &#9474; &#20001;&#26041;&#12394;&#12375; &#8594; &#20572;&#27490;                             &#9474;                     &#9474;
+&#9474;  &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;                     &#9474;
+&#9474;                     &#9660;                                                &#9474;
+&#9474;  &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;                     &#9474;
+&#9474;  &#9474; <strong style="color:var(--accent)">AgentWatcherState</strong>                              &#9474;                     &#9474;
+&#9474;  &#9474;                                             &#9474;                     &#9474;
+&#9474;  &#9474; liveSessionIds: Set&lt;string&gt;                &#9474;                     &#9474;
+&#9474;  &#9474; activeSubagents: Map&lt;agentName, TaskInfo&gt;   &#9474;                     &#9474;
+&#9474;  &#9474; directorActive: boolean                     &#9474;                     &#9474;
+&#9474;  &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;                     &#9474;
+&#9474;                     &#9474; EventEmitter                                   &#9474;
+&#9474;                     &#9474; 'change' &#12452;&#12505;&#12531;&#12488;                              &#9474;
+&#9474;   &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;           &#9474;
+&#9474;   &#9660;            &#9660;            &#9660;                    &#9660;           &#9474;
+&#9474; StatusBar  AgentTree   SessionTree         CLIBuilder           &#9474;
+&#9474; &#26356;&#26032;       refresh()    refresh()           (&#21442;&#29031;&#12398;&#12415;)          &#9474;
+&#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+
+                           &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+                           &#9474; <strong style="color:var(--green)">cliBuilder.ts</strong> (&#26032;&#12514;&#12472;&#12517;&#12540;&#12523;)         &#9474;
+                           &#9474;                                      &#9474;
+                           &#9474; buildCommand(agentConfig) &#8594; string   &#9474;
+                           &#9474;                                      &#9474;
+                           &#9474; session-manager.json &#12398;&#35373;&#23450;&#20516;&#12434;&#35501;&#12415;&#12289;&#9474;
+                           &#9474; CLI&#12458;&#12503;&#12471;&#12519;&#12531;&#25991;&#23383;&#21015;&#12434;&#32068;&#12415;&#31435;&#12390;&#12427;      &#9474;
+                           &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+</pre>
+<div class="label">新アーキテクチャ: agentWatcher が唯一の監視エンジン、cliBuilder がコマンド組み立てを担当</div>
+</div>
+
+<h3>旧アーキテクチャとの比較</h3>
+<div class="diagram">
+<pre>
+<strong style="color:var(--red)">&#12304;&#26087;&#12305;&#12479;&#12452;&#12510;&#12540;2&#12388; + &#26908;&#20986;&#12525;&#12472;&#12483;&#12463;&#20998;&#25955;</strong>
+
+  extension.ts                     sessionTreeProvider.ts
+  &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;                 &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+  &#9474; agentPoll   &#9474;                 &#9474; pollTimer            &#9474;
+  &#9474; Timer       &#9474;                 &#9474; (&#24120;&#26178;&#31292;&#20685;)           &#9474;
+  &#9474;             &#9474;                 &#9474;                      &#9474;
+  &#9474; updateSB()  &#9474;&#8592;&#8212;&#8212; callback &#8212;&#8212;&#8212;&#9474; &#8594; updateLiveSess()   &#9474;
+  &#9474; &#8594; isLive()  &#9474;                 &#9474;   fs.watch + polling &#9474;
+  &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;                 &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+        &#8595;                                &#8595;
+  activeAgentNames              liveSessionIds
+  (PID&#32080;&#26524;&#12398;&#12467;&#12500;&#12540;)             (PID&#29983;&#23384;&#12481;&#12455;&#12483;&#12463;)
+        &#8595;                                &#8595;
+  StatusBar &#12398;&#12415;                 TreeView + StatusBar(&#38291;&#25509;)
+
+  <span style="color:var(--red)">&#21839;&#38988;: agentMonitor.ts(JSONL) &#12399;&#26410;&#25509;&#32154;&#12398;&#12487;&#12483;&#12489;&#12467;&#12540;&#12489;</span>
+
+
+<strong style="color:var(--green)">&#12304;&#26032;&#12305;&#21336;&#19968;&#12479;&#12452;&#12510;&#12540; + agentWatcher &#12395;&#38598;&#32004;</strong>
+
+  agentWatcher.ts (&#21807;&#19968;&#12398;&#12456;&#12531;&#12472;&#12531;)
+  &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+  &#9474; 1&#12388;&#12398;&#12479;&#12452;&#12510;&#12540; (interval&#31186;)                  &#9474;
+  &#9474;                                             &#9474;
+  &#9474; &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;  &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;              &#9474;
+  &#9474; &#9474; PID&#26908;&#20986;  &#9474;  &#9474; JSONL&#35299;&#26512;    &#9474;              &#9474;
+  &#9474; &#9492;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;  &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;              &#9474;
+  &#9474;      &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;                      &#9474;
+  &#9474;              &#9660;                              &#9474;
+  &#9474;   AgentWatcherState                         &#9474;
+  &#9474;              &#9474; 'change' event               &#9474;
+  &#9474;   &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;          &#9474;
+  &#9474;   &#9660;         &#9660;         &#9660;          &#9660;          &#9474;
+  &#9474; StatusBar AgentTree SessionTree cliBuilder  &#9474;
+  &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+</pre>
+</div>
+</section>
+
+<hr class="divider">
+
+<!-- ================================================================ -->
+<!-- 3. 各コンポーネントの責務                                          -->
+<!-- ================================================================ -->
+<section id="components">
+<h2><span class="num">3.</span> 各コンポーネントの責務</h2>
+
+<div class="card new">
+	<div class="card-header">
+		<h3>agentWatcher.ts</h3>
+		<span class="badge badge-new">新規作成</span>
+		<span class="badge badge-phase">Phase 1c</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>責務</th><td>エージェント監視の唯一のエンジン。PID検出 + JSONL解析 + 状態管理 + イベント発火</td></tr>
+			<tr><th>入力</th><td>
+				(1) <code>~/.claude/sessions/*.json</code> &mdash; PID生存チェック用<br>
+				(2) 取締役セッションJSONL &mdash; <code>tool_use(Task/Agent)</code> 検出用<br>
+				(3) <code>subagents/</code> フォルダ &mdash; 子エージェントJSONL（存在する場合）
+			</td></tr>
+			<tr><th>出力</th><td>
+				<code>AgentWatcherState</code> オブジェクト + <code>'change'</code> イベント
+			</td></tr>
+			<tr><th>タイマー</th><td>単一の <code>setInterval</code>。<code>enableAgentMonitor</code> 設定で ON/OFF。<code>agentMonitorInterval</code> で間隔制御</td></tr>
+			<tr><th>キャッシュ</th><td>mtime + size キャッシュ（旧 agentMonitor.ts から引き継ぎ）。変更なければ再解析しない</td></tr>
+		</table>
+
+		<div class="behavior">
+			<h4>公開API</h4>
+			<ul>
+				<li><code>start(): void</code> &mdash; 監視開始。enableAgentMonitor=false なら何もしない</li>
+				<li><code>stop(): void</code> &mdash; 監視停止。タイマー・watcher をすべてクリア</li>
+				<li><code>restart(): void</code> &mdash; 設定変更時に呼ぶ。stop() &rarr; start()</li>
+				<li><code>getState(): AgentWatcherState</code> &mdash; 現在の監視状態を取得</li>
+				<li><code>isLive(sessionId: string): boolean</code> &mdash; セッションがライブか</li>
+				<li><code>on('change', callback): void</code> &mdash; 状態変化イベント</li>
+				<li><code>dispose(): void</code> &mdash; リソース解放</li>
+			</ul>
+		</div>
+
+		<div class="behavior">
+			<h4>AgentWatcherState 型定義</h4>
+			<ul>
+				<li><code>liveSessionIds: Set&lt;string&gt;</code> &mdash; PID生存中のセッションID</li>
+				<li><code>activeSubagents: Map&lt;string, SubagentInfo&gt;</code> &mdash; 稼働中の子エージェント（agentName &rarr; タスク情報）</li>
+				<li><code>directorActive: boolean</code> &mdash; 取締役セッションが稼働中か</li>
+			</ul>
+		</div>
+
+		<div class="behavior">
+			<h4>SubagentInfo 型定義</h4>
+			<ul>
+				<li><code>toolUseId: string</code> &mdash; tool_use の ID</li>
+				<li><code>taskDescription?: string</code> &mdash; Agent ツールの description 引数（ツールチップ表示用）</li>
+				<li><code>startedAt: Date</code> &mdash; 検出時刻（経過時間表示用）</li>
+			</ul>
+		</div>
+	</div>
+</div>
+
+<div class="card new">
+	<div class="card-header">
+		<h3>cliBuilder.ts</h3>
+		<span class="badge badge-new">新規作成</span>
+		<span class="badge badge-phase">Phase 1c</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>責務</th><td>AgentConfig からCLIコマンド文字列を組み立てる。取締役のルールファイルにも使われる</td></tr>
+			<tr><th>入力</th><td><code>AgentConfig</code> オブジェクト</td></tr>
+			<tr><th>出力</th><td>CLIコマンド文字列（<code>claude --resume {id} --model {model} ...</code>）</td></tr>
+		</table>
+		<p style="margin-top:12px; font-size:13px;">詳細は <a href="#cli-builder">#6 CLIコマンドビルダー</a> を参照。</p>
+	</div>
+</div>
+
+<div class="card">
+	<div class="card-header">
+		<h3>sessionTreeProvider.ts</h3>
+		<span class="badge badge-change">変更</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>変更内容</th><td>
+				<span class="del">startWatching() / restartPolling() / stopWatching() / updateLiveSessions() / isProcessAlive()</span> を削除<br>
+				<span class="add">agentWatcher.isLive(sessionId)</span> を呼ぶように変更<br>
+				<span class="add">agentWatcher.on('change', () =&gt; refresh())</span> でイベント駆動に変更<br>
+				<code>liveSessionIds</code> / <code>pollTimer</code> / <code>watcher</code> フィールドを削除
+			</td></tr>
+			<tr><th>残る責務</th><td>セッション一覧のツリー構築・ソート・グループ化・フィルタ。監視ロジックは持たない</td></tr>
+		</table>
+	</div>
+</div>
+
+<div class="card">
+	<div class="card-header">
+		<h3>agentTreeProvider.ts</h3>
+		<span class="badge badge-change">変更</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>変更内容</th><td>
+				<span class="del"><code>activeAgentNamesFn</code> コンストラクタ引数</span>を廃止<br>
+				<span class="add">agentWatcher.getState()</span> から直接状態を取得<br>
+				<span class="del"><code>if (a.name === '取締役') return -1</code></span> &rarr; <span class="add"><code>!a.parentAgent</code></span> で判定<br>
+				checkLive() を <code>agentWatcher.isLive()</code> + <code>agentWatcher.getState().activeSubagents.has()</code> に置換
+			</td></tr>
+			<tr><th>残る責務</th><td>エージェント管理サイドバーのツリー構築・ソート・アイコン表示</td></tr>
+		</table>
+	</div>
+</div>
+
+<div class="card">
+	<div class="card-header">
+		<h3>extension.ts</h3>
+		<span class="badge badge-change">変更</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>変更内容</th><td>
+				<span class="del"><code>agentPollTimer</code> / <code>startAgentPolling()</code> / <code>updateStatusBar()</code>のfor-ofループ</span>を削除<br>
+				<span class="add">agentWatcher</span> をインスタンス化し、<code>'change'</code> イベントで StatusBar + TreeView を更新<br>
+				<span class="add">updateStatusBar()</span> は agentWatcher.getState() からデータ取得<br>
+				<span class="del"><code>let activeAgentNames</code></span> グローバル変数を廃止
+			</td></tr>
+			<tr><th>残る責務</th><td>コマンド登録、Webviewパネル管理、StatusBar更新（データ取得は agentWatcher に委譲）</td></tr>
+		</table>
+	</div>
+</div>
+</section>
+
+<hr class="divider">
+
+<!-- ================================================================ -->
+<!-- 4. タイマー統合設計                                                -->
+<!-- ================================================================ -->
+<section id="timer">
+<h2><span class="num">4.</span> タイマー統合設計</h2>
+
+<div class="card">
+	<div class="card-header">
+		<h3>統合タイマーの仕様</h3>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>タイマー数</th><td><strong>1つのみ</strong>（agentWatcher.ts 内の <code>setInterval</code>）</td></tr>
+			<tr><th>間隔</th><td><code>claudeManager.agentMonitorInterval</code> 秒（デフォルト: 5秒）</td></tr>
+			<tr><th>ON/OFF</th><td><code>claudeManager.enableAgentMonitor</code> で制御。false 時はタイマーを開始しない</td></tr>
+			<tr><th>リアルタイム監視</th><td><code>fs.watch(~/.claude/sessions/)</code> &mdash; PIDファイルの追加・削除を即座に検出。ポーリングの補完</td></tr>
+		</table>
+
+		<div class="flow">
+<span class="step">agentWatcher.start()</span><br>
+&nbsp;&nbsp;<span class="arrow">&#9500;&#9472;</span> enableAgentMonitor === false <span class="arrow">&rarr;</span> <span class="note">何もしない。return</span><br>
+&nbsp;&nbsp;<span class="arrow">&#9500;&#9472;</span> fs.watch(~/.claude/sessions/) <span class="arrow">&rarr;</span> <span class="note">PIDファイル変更時: tick()</span><br>
+&nbsp;&nbsp;<span class="arrow">&#9492;&#9472;</span> setInterval(tick, interval * 1000) <span class="arrow">&rarr;</span> <span class="note">定期実行</span><br>
+<br>
+<span class="step">tick()</span><br>
+&nbsp;&nbsp;<span class="arrow">&#9500;&#9472;</span> (1) updateLiveSessions() <span class="arrow">&rarr;</span> sessions/*.json のPIDチェック<br>
+&nbsp;&nbsp;<span class="arrow">&#9500;&#9472;</span> (2) analyzeDirectorJSONL() <span class="arrow">&rarr;</span> 取締役JNOLの tool_use/tool_result 解析<br>
+&nbsp;&nbsp;<span class="arrow">&#9500;&#9472;</span> (3) 状態が前回と異なるか比較<br>
+&nbsp;&nbsp;<span class="arrow">&#9492;&#9472;</span> (4) 変化あり <span class="arrow">&rarr;</span> emit('change') <span class="arrow">&rarr;</span> StatusBar + AgentTree + SessionTree 更新
+		</div>
+
+		<div class="note-box">
+			<strong>enableAgentMonitor OFF 時の保証:</strong><br>
+			<code>agentWatcher.start()</code> が何もしない &rarr; タイマーなし、fs.watch なし、JSONL読み取りなし。<br>
+			<code>agentWatcher.isLive()</code> は常に <code>false</code> を返す。<br>
+			セッション一覧のライブアイコン（緑丸）も表示されない。<br>
+			ステータスバーは <code>&#128101; N</code>（静的表示、tooltip: 「エージェント監視: OFF」）。
+		</div>
+	</div>
+</div>
+</section>
+
+<hr class="divider">
+
+<!-- ================================================================ -->
+<!-- 5. 表示設計                                                        -->
+<!-- ================================================================ -->
+<section id="display">
+<h2><span class="num">5.</span> 表示設計（点滅代替・フィルタ）</h2>
+
+<div class="card">
+	<div class="card-header">
+		<h3>ステータスバー</h3>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>監視 OFF</th><td><code>&#128101; N</code>（エージェント総数）/ tooltip: 「エージェント監視: OFF」/ 通常色</td></tr>
+			<tr><th>稼働ゼロ</th><td><code>&#128101; N</code> / tooltip: 「動作中のエージェントなし」/ 通常色</td></tr>
+			<tr><th>稼働あり</th><td><code>&#x280B; N/M</code> &larr; スピナー文字 + 稼働数/総数<br>
+				tooltip: 「動作中: N件\n&#9654; CSM開発部 (&#128269;探索 2:30経過)\n&#9654; テスト部 (&#128203;計画 0:45経過)」<br>
+				backgroundColor: warningBackground
+			</td></tr>
+		</table>
+
+		<div class="behavior">
+			<h4>スピナー擬似アニメーション</h4>
+			<ul>
+				<li>ブライユ点字パターン文字を使用: <code>&#x280B; &#x2819; &#x2839; &#x2838; &#x283C; &#x2834; &#x2826; &#x2827; &#x2807; &#x280F;</code></li>
+				<li>200ms間隔で文字を切り替え（ポーリングタイマーとは別のアニメーション用タイマー）</li>
+				<li>稼働中エージェントが 0 になったらアニメーション停止</li>
+				<li>VS Code StatusBarItem.text の更新のみで実現（API制約なし）</li>
+			</ul>
+		</div>
+
+		<div class="note-box">
+			<strong>表示対象の変更:</strong><br>
+			旧: 全エージェント（取締役含む）をカウント<br>
+			新: <strong>parentAgent を持つエージェント（子エージェント）のみ</strong>をカウント。<br>
+			取締役は「管理者」であり監視対象ではない。
+		</div>
+	</div>
+</div>
+
+<div class="card">
+	<div class="card-header">
+		<h3>エージェント管理サイドバー（AgentTree）</h3>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>running</th><td>&#x1F7E2; <code>circle-filled</code> + <code>terminal.ansiGreen</code>（変更なし）</td></tr>
+			<tr><th>pending</th><td>&#x1F7E1; <code>circle-filled</code> + <code>terminal.ansiYellow</code>（JSONL解析で tool_use 送信済み but 応答なし = 応答待ち）</td></tr>
+			<tr><th>idle</th><td>&#x2B1C; <code>circle-outline</code> + <code>foreground</code>（変更なし）</td></tr>
+			<tr><th>unlinked</th><td>&#x2B1C; <code>circle-outline</code> + <code>disabledForeground</code>（変更なし）</td></tr>
+		</table>
+
+		<div class="behavior">
+			<h4>ソート順の変更</h4>
+			<ul>
+				<li><span class="del"><code>if (a.name === '取締役') return -1</code></span> &rarr; <span class="add"><code>!a.parentAgent</code></span> でトップレベル判定</li>
+				<li>トップレベル（parentAgent 未設定） &rarr; 稼働中 &rarr; 停止中 &rarr; 名前順</li>
+			</ul>
+		</div>
+
+		<div class="behavior">
+			<h4>ツールチップの強化</h4>
+			<ul>
+				<li>稼働中の子エージェントのツールチップに <strong>現在実行中のタスク名</strong> を表示</li>
+				<li>タスク名は JSONL の <code>tool_use(Agent)</code> の <code>input.description</code> から取得</li>
+				<li>経過時間も表示（「&#128269;探索 CLIオプション調査 &mdash; 2分30秒経過」）</li>
+			</ul>
+		</div>
+	</div>
+</div>
+
+<div class="card">
+	<div class="card-header">
+		<h3>セッション一覧（SessionTree）</h3>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>変更内容</th><td>
+				<code>agentWatcher.isLive(sessionId)</code> を使用（ロジックは同じだが呼び出し先が変わる）<br>
+				enableAgentMonitor OFF 時は <code>isLive()</code> が常に false &rarr; 緑丸が出ない（修正）
+			</td></tr>
+			<tr><th>表示は変更なし</th><td>
+				isLive: <code>circle-filled</code> + green / description に &quot;&#x25CF; &quot;<br>
+				isPreviewing + isLive: <code>target</code> + green
+			</td></tr>
+		</table>
+	</div>
+</div>
+</section>
+
+<hr class="divider">
+
+<!-- ================================================================ -->
+<!-- 6. CLIコマンドビルダー                                             -->
+<!-- ================================================================ -->
+<section id="cli-builder">
+<h2><span class="num">6.</span> CLIコマンドビルダー</h2>
+
+<div class="card new">
+	<div class="card-header">
+		<h3>cliBuilder.ts &mdash; CLIコマンド自動組み立てモジュール</h3>
+		<span class="badge badge-new">新規作成</span>
+		<span class="badge badge-phase">Phase 1c</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>目的</th><td>CSMで設定した内容が実際のエージェント起動に確実に反映されるようにする。取締役が手動でオプションを覚える必要をなくす</td></tr>
+			<tr><th>関数</th><td><code>buildCommand(config: AgentConfig): string</code></td></tr>
+			<tr><th>入力</th><td><code>AgentConfig</code>（session-manager.json から読み取った設定）</td></tr>
+			<tr><th>出力</th><td>CLIコマンド文字列</td></tr>
+		</table>
+
+		<h3 style="margin-top: 20px;">生成されるコマンド例</h3>
+		<div class="cli-block">
+<span class="comment"># フル設定の例（opus / effort=max / thinking=ON / maxThinking=31999）</span><br>
+<span class="comment"># ※ maxThinkingTokens は環境変数で指定（CLIフラグは存在しない）</span><br>
+<span class="comment"># ※ --allowedTools はスペース区切りで複数指定</span><br>
+<span class="value">MAX_THINKING_TOKENS=31999</span> \<br>
+<span class="flag">claude</span> <span class="flag">--resume</span> <span class="value">55f63fbc-6d5d-44aa-a188-1b5c16bcffa5</span> \<br>
+&nbsp;&nbsp;<span class="flag">--model</span> <span class="value">opus</span> \<br>
+&nbsp;&nbsp;<span class="flag">--effort</span> <span class="value">max</span> \<br>
+&nbsp;&nbsp;<span class="flag">--append-system-prompt</span> <span class="value">"$(cat c:/xampp/Project/.agent-rules/CSM開発部.md)"</span> \<br>
+&nbsp;&nbsp;<span class="flag">--allowedTools</span> <span class="value">"Edit" "Write" "Bash" "Read" "Glob" "Grep"</span> \<br>
+&nbsp;&nbsp;<span class="flag">--print</span><br>
+<br>
+<span class="comment"># 作業ディレクトリ指定の例（--add-dir で追加ディレクトリを指定）</span><br>
+<span class="comment"># ※ --cwd は存在しない。--add-dir またはspawn時のcwdで対応</span><br>
+<span class="flag">claude</span> <span class="flag">--resume</span> <span class="value">55f63fbc-...</span> \<br>
+&nbsp;&nbsp;<span class="flag">--model</span> <span class="value">sonnet</span> \<br>
+&nbsp;&nbsp;<span class="flag">--effort</span> <span class="value">high</span> \<br>
+&nbsp;&nbsp;<span class="flag">--add-dir</span> <span class="value">c:/xampp/Project/claude-session-manager</span> \<br>
+&nbsp;&nbsp;<span class="flag">--append-system-prompt</span> <span class="value">"$(cat c:/xampp/Project/.agent-rules/CSM開発部.md)"</span> \<br>
+&nbsp;&nbsp;<span class="flag">--print</span><br>
+<br>
+<span class="comment"># 最小設定の例（haiku / effort未設定）</span><br>
+<span class="flag">claude</span> <span class="flag">--resume</span> <span class="value">abc12345-...</span> \<br>
+&nbsp;&nbsp;<span class="flag">--model</span> <span class="value">haiku</span> \<br>
+&nbsp;&nbsp;<span class="flag">--append-system-prompt</span> <span class="value">"$(cat ~/.claude/agent-rules/調査部.md)"</span> \<br>
+&nbsp;&nbsp;<span class="flag">--print</span>
+		</div>
+
+		<div class="behavior">
+			<h4>組み立てロジック（疑似コード）</h4>
+			<ol>
+				<li><code>env = {}</code> &mdash; 環境変数の収集用</li>
+				<li><code>parts = ['claude']</code></li>
+				<li><code>config.sessionId</code> がある場合: <code>parts.push('--resume', config.sessionId)</code></li>
+				<li><code>parts.push('--model', config.model)</code> &mdash; 必須</li>
+				<li><code>config.effort</code> が設定されている場合: <code>parts.push('--effort', config.effort)</code><br>
+					&nbsp;&nbsp;&nbsp;&nbsp;<strong>注意:</strong> <code>'max'</code> は Opus 4.6 のみ対応。他モデルでは <code>'high'</code> が上限</li>
+				<li><code>config.thinkingEnabled === false</code> の場合: <strong>CLIフラグは存在しない</strong>。<code>settings.json</code> の <code>alwaysThinkingEnabled: false</code> で制御するか、コメントで注記を出力</li>
+				<li><code>config.thinkingEnabled !== false &amp;&amp; config.maxThinkingTokens</code> の場合: <code>env.MAX_THINKING_TOKENS = String(config.maxThinkingTokens)</code><br>
+					&nbsp;&nbsp;&nbsp;&nbsp;（<strong><code>--max-thinking-tokens</code> フラグは存在しない</strong>。環境変数 <code>MAX_THINKING_TOKENS</code> で制御）</li>
+				<li><code>config.ruleFile</code> が設定されている場合: <code>parts.push('--append-system-prompt', `"$(cat ${config.ruleFile})"` )</code></li>
+				<li><code>config.allowedTools?.length &gt; 0</code> の場合: <code>config.allowedTools.forEach(t =&gt; parts.push('--allowedTools', `"${t}"`))</code><br>
+					&nbsp;&nbsp;&nbsp;&nbsp;（<strong>スペース区切り</strong>で複数指定。例: <code>--allowedTools "Edit" "Write" "Read"</code>）</li>
+				<li><code>config.workDir</code> が設定されている場合: <code>parts.push('--add-dir', config.workDir)</code><br>
+					&nbsp;&nbsp;&nbsp;&nbsp;（<strong><code>--cwd</code> は存在しない</strong>。<code>--add-dir</code> で追加ディレクトリを指定、またはspawn時の <code>cwd</code> オプションで対応）</li>
+				<li><code>parts.push('--print')</code> &mdash; 非対話モード</li>
+				<li>環境変数プレフィックスを組み立て: <code>envPrefix = Object.entries(env).map(([k,v]) =&gt; `${k}=${v}`).join(' ')</code></li>
+				<li><code>return envPrefix ? `${envPrefix} ${parts.join(' ')}` : parts.join(' ')</code></li>
+			</ol>
+		</div>
+
+		<div class="note-box" style="border-color: rgba(78, 201, 176, 0.5); background: rgba(78, 201, 176, 0.06);">
+			<strong style="color: var(--green);">CLI互換性 調査完了（2026-04-04）:</strong><br>
+			以下は公式ドキュメントおよび <code>claude --help</code> で確認済みの正確な情報:<br>
+			<ul style="margin-top:8px; padding-left: 20px; font-size: 12px;">
+				<li><code>--effort</code> &mdash; <strong style="color:var(--green)">存在する</strong>。有効値: <code>low</code> / <code>medium</code> / <code>high</code> / <code>max</code>（<code>max</code> は Opus 4.6 のみ）</li>
+				<li><code>--max-thinking-tokens</code> &mdash; <strong style="color:var(--red)">存在しない</strong>。環境変数 <code>MAX_THINKING_TOKENS</code> で制御</li>
+				<li>thinking 無効化 &mdash; <strong style="color:var(--red)">CLIフラグなし</strong>。<code>settings.json</code> の <code>alwaysThinkingEnabled</code> またはキー操作（Alt+T）で制御</li>
+				<li><code>--append-system-prompt</code> &mdash; <strong style="color:var(--green)">存在する</strong>。関連: <code>--append-system-prompt-file</code>（ファイル内容を追加）</li>
+				<li><code>--allowedTools</code> &mdash; <strong style="color:var(--green)">存在する</strong>。<strong>スペース区切り</strong>で複数指定（例: <code>--allowedTools "Edit" "Write" "Read"</code>）</li>
+				<li><code>--cwd</code> &mdash; <strong style="color:var(--red)">存在しない</strong>。代替: <code>--add-dir</code>（追加ディレクトリ指定）またはspawn時の <code>cwd</code> オプション</li>
+				<li><code>--resume</code> &mdash; <strong style="color:var(--green)">存在する</strong>。短縮形 <code>-r</code>。セッションID/名前で再開</li>
+				<li><code>--print</code> &mdash; <strong style="color:var(--green)">存在する</strong>。短縮形 <code>-p</code>。非対話モード</li>
+				<li><code>--verbose</code> &mdash; <strong style="color:var(--green)">存在する</strong>。デバッグ用: <code>--debug "api,mcp"</code></li>
+			</ul>
+		</div>
+	</div>
+</div>
+</section>
+
+<hr class="divider">
+
+<!-- ================================================================ -->
+<!-- 7. CLIオプション対応表                                             -->
+<!-- ================================================================ -->
+<section id="cli-options">
+<h2><span class="num">7.</span> CLIオプション対応表</h2>
+
+<div class="card">
+	<div class="card-header">
+		<h3>AgentConfig &rarr; CLIオプション マッピング</h3>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr>
+				<th style="width:150px">AgentConfig</th>
+				<th style="width:200px">CLIオプション</th>
+				<th>条件</th>
+				<th>備考</th>
+			</tr>
+			<tr>
+				<td><code>sessionId</code></td>
+				<td><code>--resume {value}</code></td>
+				<td>fixed モードのみ</td>
+				<td>disposable 時は省略（新規セッション）</td>
+			</tr>
+			<tr>
+				<td><code>model</code></td>
+				<td><code>--model {value}</code></td>
+				<td>必須</td>
+				<td>opus / sonnet / haiku</td>
+			</tr>
+			<tr>
+				<td><code>effort</code></td>
+				<td><code>--effort {value}</code></td>
+				<td>設定時のみ</td>
+				<td>low / medium / high / max の4段階。<strong><code>max</code> は Opus 4.6 のみ対応</strong></td>
+			</tr>
+			<tr>
+				<td><code>thinkingEnabled</code></td>
+				<td style="color:var(--red)"><strong>CLIフラグなし</strong></td>
+				<td>false の場合</td>
+				<td><code>settings.json</code> の <code>alwaysThinkingEnabled</code> で制御。CLIに <code>--no-thinking</code> 等のフラグは存在しない</td>
+			</tr>
+			<tr>
+				<td><code>maxThinkingTokens</code></td>
+				<td>環境変数<br><code>MAX_THINKING_TOKENS={value}</code></td>
+				<td>thinkingEnabled=true かつ設定時のみ</td>
+				<td><strong><code>--max-thinking-tokens</code> フラグは存在しない</strong>。環境変数をコマンドの先頭に付与</td>
+			</tr>
+			<tr>
+				<td><code>ruleFile</code></td>
+				<td><code>--append-system-prompt "$(cat {path})"</code></td>
+				<td>設定時のみ</td>
+				<td>ルールファイルの内容をシステムプロンプトに追加。代替: <code>--append-system-prompt-file {path}</code></td>
+			</tr>
+			<tr>
+				<td><code>allowedTools</code></td>
+				<td><code>--allowedTools "Tool1" "Tool2" ...</code></td>
+				<td>設定時のみ</td>
+				<td><strong>スペース区切り</strong>で複数指定。ワイルドカード対応（例: <code>"Bash(git *)"</code>）</td>
+			</tr>
+			<tr>
+				<td><code>workDir</code></td>
+				<td><code>--add-dir {workDir}</code><br>または spawn の <code>cwd</code></td>
+				<td>設定時のみ</td>
+				<td><strong><code>--cwd</code> は存在しない</strong>。<code>--add-dir</code> で追加ディレクトリ指定、またはプロセス起動時の cwd で対応</td>
+			</tr>
+			<tr>
+				<td>（固定）</td>
+				<td><code>--print</code></td>
+				<td>常時</td>
+				<td>非対話モード（パイプ起動）</td>
+			</tr>
+		</table>
+
+		<div class="note-box">
+			<strong>Effort の 4段階（agent-settings-spec.html からの変更）:</strong><br>
+			agent-settings-spec.html では 3段階（low / medium / high）だったが、<strong>max</strong> を追加して4段階にする。<br>
+			<code>effort?: 'low' | 'medium' | 'high' | 'max'</code><br>
+			<table class="props" style="margin-top:8px;">
+				<tr><th>low</th><td>高速・低コスト</td><td>簡単なタスク、ファイル検索</td></tr>
+				<tr><th>medium</th><td>バランス</td><td>一般的な開発タスク</td></tr>
+				<tr><th>high</th><td>精密・高品質</td><td>複雑な設計、コードレビュー</td></tr>
+				<tr><th>max</th><td>最大努力 <strong style="color:var(--red)">※ Opus 4.6 のみ</strong></td><td>アーキテクチャ判断、仕様策定、取締役タスク</td></tr>
+			</table>
+			<div style="margin-top:8px; font-size:12px; color:var(--yellow);">
+				<strong>モデル制限:</strong> <code>max</code> は Opus 4.6 でのみ使用可能。Sonnet / Haiku では <code>max</code> を選択しても無効。<br>
+				フォームUIでは、モデルが Opus 以外の場合に <code>max</code> カードをグレーアウトする。
+			</div>
+		</div>
+	</div>
+</div>
+</section>
+
+<hr class="divider">
+
+<!-- ================================================================ -->
+<!-- 8. 取締役ルールファイルへの反映                                     -->
+<!-- ================================================================ -->
+<section id="cli-rule">
+<h2><span class="num">8.</span> 取締役ルールファイルへの反映</h2>
+
+<div class="card">
+	<div class="card-header">
+		<h3>「エージェント操作」セクションの拡張</h3>
+		<span class="badge badge-phase">Phase 1c</span>
+	</div>
+	<div class="card-body">
+		<p style="font-size:13px; margin-bottom:16px;">
+			取締役のルールファイルに自動生成される「エージェント操作」セクションを拡張し、
+			<code>cliBuilder.buildCommand()</code> の出力をそのまま記載する。
+		</p>
+
+		<div class="behavior">
+			<h4>テンプレート例</h4>
+<pre style="font-size:12px; color: var(--text); background: var(--surface); padding: 16px; border-radius: 6px; overflow-x: auto; line-height: 1.8;">
+## エージェント操作
+
+子エージェントに指示を投げる際は、以下のコマンドを使用してください。
+設定値は session-manager.json から自動生成されています。
+
+### CSM開発部
+```
+MAX_THINKING_TOKENS=31999 \
+claude --resume 55f63fbc-6d5d-44aa-a188-1b5c16bcffa5 \
+  --model opus \
+  --effort max \
+  --append-system-prompt "$(cat c:/xampp/Project/.agent-rules/CSM開発部.md)" \
+  --allowedTools "Edit" "Write" "Bash" "Read" "Glob" "Grep" \
+  --print
+```
+
+### テスト部
+```
+claude --resume 9581b670-2d75-4320-be43-b44d657c6552 \
+  --model sonnet \
+  --effort medium \
+  --append-system-prompt "$(cat c:/xampp/Project/.agent-rules/テスト部.md)" \
+  --print
+```
+
+### 調査部（使い捨て）
+```
+claude --model haiku \
+  --append-system-prompt "$(cat ~/.claude/agent-rules/調査部.md)" \
+  --print
+```
+※ 使い捨てモードのためセッションIDなし。--resume を付けないことで新規セッション起動
+※ maxThinkingTokens は環境変数 MAX_THINKING_TOKENS で指定（CLIフラグなし）
+※ Thinking無効化はCLIフラグが存在しないため、settings.json の alwaysThinkingEnabled で制御
+</pre>
+		</div>
+
+		<div class="behavior">
+			<h4>自動更新のタイミング</h4>
+			<ul>
+				<li>エージェント設定の保存時（<code>onSave</code> コールバック内）</li>
+				<li>取締役のルールファイルが存在する場合のみ更新</li>
+				<li>「エージェント操作」セクション全体を再生成し、置換する</li>
+				<li>手動で書き加えた内容がセクション外にあれば保持される</li>
+			</ul>
+		</div>
+
+		<div class="behavior">
+			<h4>使い捨て（disposable）エージェントの扱い</h4>
+			<ul>
+				<li><code>sessionMode === 'disposable'</code> の場合、<code>--resume</code> を付けない</li>
+				<li>代わりにコメントで「※ 使い捨てモードのためセッションIDなし」を付記</li>
+				<li>プロンプトテキストは <code>--print "指示内容"</code> で渡す（取締役がメッセージを組み立てる）</li>
+			</ul>
+		</div>
+
+		<div class="note-box">
+			<strong>再現性の保証:</strong><br>
+			このルールファイルにより、取締役は常に session-manager.json の最新設定を反映したコマンドを使用する。<br>
+			設定変更 &rarr; ルールファイル自動更新 &rarr; 次回起動に即反映、というサイクルが回る。
+		</div>
+	</div>
+</div>
+</section>
+
+<hr class="divider">
+
+<!-- ================================================================ -->
+<!-- 9. Phase 1c                                                       -->
+<!-- ================================================================ -->
+<section id="phase1c">
+<h2><span class="num">9.</span> Phase 1c &mdash; 監視再設計 + CLIビルダー</h2>
+
+<div class="phase-grid">
+	<div class="phase-box active">
+		<h4>Step 1: agentWatcher.ts 新規作成</h4>
+		<ul>
+			<li>AgentWatcherState 型定義</li>
+			<li>SubagentInfo 型定義</li>
+			<li>PID検出（旧 sessionTreeProvider から移管）</li>
+			<li>JSONL解析（旧 agentMonitor から発展的引継ぎ）</li>
+			<li>統合判定ロジック</li>
+			<li>EventEmitter ('change' イベント)</li>
+			<li>start() / stop() / restart() / dispose()</li>
+		</ul>
+	</div>
+	<div class="phase-box active">
+		<h4>Step 2: cliBuilder.ts 新規作成</h4>
+		<ul>
+			<li>buildCommand(config) 関数</li>
+			<li>AgentConfig &rarr; CLIオプション変換ロジック</li>
+			<li>workDir のcwd処理</li>
+			<li>disposableモード（--resume なし）</li>
+		</ul>
+	</div>
+	<div class="phase-box active">
+		<h4>Step 3: 既存ファイルの接続変更</h4>
+		<ul>
+			<li>extension.ts: agentWatcher をインスタンス化、旧ロジック削除</li>
+			<li>sessionTreeProvider.ts: 監視ロジック削除、agentWatcher.isLive() に依存</li>
+			<li>agentTreeProvider.ts: ハードコード廃止、agentWatcher 参照に変更</li>
+		</ul>
+	</div>
+	<div class="phase-box active">
+		<h4>Step 4: デッドコード削除 + ルール更新</h4>
+		<ul>
+			<li>agentMonitor.ts 削除</li>
+			<li>extension.ts L18 のコメント削除</li>
+			<li>取締役ルールテンプレートに CLI コマンドセクション追加</li>
+			<li>AgentConfig に effort / thinkingEnabled / maxThinkingTokens フィールド追加（型のみ、UIは Phase 1b）</li>
+		</ul>
+	</div>
+</div>
+</section>
+
+<hr class="divider">
+
+<!-- ================================================================ -->
+<!-- 10. Phase 2                                                       -->
+<!-- ================================================================ -->
+<section id="phase2">
+<h2><span class="num">10.</span> Phase 2 &mdash; ローカル/グローバル分離</h2>
+
+<div class="card">
+	<div class="card-header">
+		<h3>session-manager.local.json の導入</h3>
+		<span class="badge badge-phase">Phase 2</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>目的</th><td>プロジェクト固有のエージェント設定とグローバル設定を分離する</td></tr>
+			<tr><th>グローバル</th><td><code>~/.claude/session-manager.json</code>（既存。グローバルエージェント + ブックマーク + タグ）</td></tr>
+			<tr><th>ローカル</th><td><code>{workspace}/.claude/session-manager.local.json</code>（新規。プロジェクト固有エージェント）</td></tr>
+			<tr><th>マージ戦略</th><td>ローカルの agents[] とグローバルの agents[] を結合表示。同名エージェントはローカルが優先</td></tr>
+		</table>
+
+		<div class="behavior">
+			<h4>データ分離ルール</h4>
+			<ul>
+				<li><strong>グローバル</strong>に残すもの: bookmarks, tags, customNames, notes, ruleFolder（レガシー）</li>
+				<li><strong>ローカル</strong>に移すもの: <code>scope === 'project'</code> のエージェント設定</li>
+				<li><strong>グローバル</strong>に残すエージェント: <code>scope === 'global'</code> のエージェント設定</li>
+				<li>マイグレーション: 初回ロード時に既存エージェントのscopeに基づいて自動振り分け</li>
+			</ul>
+		</div>
+
+		<div class="behavior">
+			<h4>dataStore.ts の変更</h4>
+			<ul>
+				<li><code>loadData()</code> をグローバル + ローカルの両方をロードしマージする方式に変更</li>
+				<li><code>saveData()</code> はエージェントのscopeに基づいてファイルを書き分ける</li>
+				<li><code>getAgents()</code> は統合された結果を返す（呼び出し側の変更不要）</li>
+			</ul>
+		</div>
+	</div>
+</div>
+</section>
+
+<hr class="divider">
+
+<!-- ================================================================ -->
+<!-- 11. Phase 3                                                       -->
+<!-- ================================================================ -->
+<section id="phase3">
+<h2><span class="num">11.</span> Phase 3 &mdash; メモリ管理拡張</h2>
+
+<div class="card">
+	<div class="card-header">
+		<h3>グローバルメモリ + settings.json 表示</h3>
+		<span class="badge badge-phase">Phase 3</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>グローバルメモリ</th><td>
+				<code>~/.claude/memory/</code> 以下のファイルをメモリツリーに表示<br>
+				プロジェクト別メモリと並列表示。グループ名: 「&#x1F310; グローバルメモリ」 / 「&#x1F4C1; プロジェクトメモリ」
+			</td></tr>
+			<tr><th>settings.json 表示</th><td>
+				<code>~/.claude/settings.json</code> の内容をメモリツリーの特別ノードとして表示<br>
+				クリックでプレビュー（読み取り専用）。「&#x2699; Claude Code 設定」としてトップに配置
+			</td></tr>
+			<tr><th>メモリプレビュー拡張</th><td>
+				frontmatter（type, name, description）を構造化表示<br>
+				MEMORY.md のポインタからリンク先メモリファイルへのジャンプ
+			</td></tr>
+		</table>
+	</div>
+</div>
+</section>
+
+<hr class="divider">
+
+<!-- ================================================================ -->
+<!-- 12. Phase 4                                                       -->
+<!-- ================================================================ -->
+<section id="phase4">
+<h2><span class="num">12.</span> Phase 4 &mdash; セットアップウィザード</h2>
+
+<div class="card">
+	<div class="card-header">
+		<h3>初回セットアップウィザード</h3>
+		<span class="badge badge-phase">Phase 4</span>
+	</div>
+	<div class="card-body">
+		<table class="props">
+			<tr><th>発火条件</th><td>エージェント数が 0 かつ CSM 初回起動時（ウェルカム画面から「セットアップを始める」）</td></tr>
+			<tr><th>UI</th><td>Webview ベースのステップウィザード（1画面ずつ遷移）</td></tr>
+		</table>
+
+		<div class="behavior">
+			<h4>ウィザードのステップ</h4>
+			<ol>
+				<li><strong>取締役の作成</strong> &mdash; 部署名（デフォルト:「取締役」）、モデル選択、Effort、Thinking設定</li>
+				<li><strong>ルールフォルダの設定</strong> &mdash; プロジェクトスコープのフォルダ自動検出 or 手動選択</li>
+				<li><strong>子エージェントの追加</strong> &mdash; 「&#xFF0B;追加」ボタンで1つずつ。推奨テンプレート（テスト部/開発部/調査部）を提示</li>
+				<li><strong>確認・完了</strong> &mdash; 組織図プレビューを表示。「完了」で session-manager.json + ルールファイル + MEMORY.md を一括生成</li>
+			</ol>
+		</div>
+	</div>
+</div>
+</section>
+
+<hr class="divider">
+
+<!-- ================================================================ -->
+<!-- 13. Phase別 変更ファイル一覧                                        -->
+<!-- ================================================================ -->
+<section id="phase-files">
+<h2><span class="num">13.</span> Phase別 変更ファイル一覧</h2>
+
+<div class="card">
+	<div class="card-header">
+		<h3>Phase 1b &mdash; モデル制御（agent-settings-spec.html に記載済み）</h3>
+		<span class="badge badge-phase">Phase 1b</span>
+	</div>
+	<div class="card-body">
+		<div class="file-list">
+<span class="file-mod">src/types.ts</span> &mdash; AgentConfig に effort, thinkingEnabled, maxThinkingTokens 追加<br>
+<span class="file-mod">src/agentFormPanel.ts</span> &mdash; フォームUI: Effort/Thinking/maxThinkingTokens 追加、グレーアウト連動<br>
+<span class="file-mod">src/extension.ts</span> &mdash; openSettings コマンド登録<br>
+<span class="file-mod">package.json</span> &mdash; commands, menus に openSettings 追加<br>
+<span class="file-mod">src/agentTreeProvider.ts</span> &mdash; description に Effort/Thinking 情報表示<br>
+<span class="file-mod">src/agentPreviewPanel.ts</span> &mdash; プレビューに Effort/Thinking 情報表示
+		</div>
+	</div>
+</div>
+
+<div class="card new">
+	<div class="card-header">
+		<h3>Phase 1c &mdash; 監視再設計 + CLIビルダー</h3>
+		<span class="badge badge-phase">Phase 1c</span>
+		<span class="badge badge-new">本仕様書の主題</span>
+	</div>
+	<div class="card-body">
+		<div class="file-list">
+<span class="file-new">src/agentWatcher.ts</span> &mdash; 新規: 統合監視エンジン（PID + JSONL + イベント発火）<br>
+<span class="file-new">src/cliBuilder.ts</span> &mdash; 新規: AgentConfig &rarr; CLIコマンド文字列組み立て<br>
+<span class="file-del">src/agentMonitor.ts</span> &mdash; 削除: 旧JNOLモジュール（109行デッドコード）<br>
+<span class="file-mod">src/extension.ts</span> &mdash; agentWatcher インスタンス化、旧ポーリング削除、updateStatusBar() 簡素化<br>
+<span class="file-mod">src/sessionTreeProvider.ts</span> &mdash; startWatching/restartPolling/stopWatching 削除、agentWatcher.isLive() に依存<br>
+<span class="file-mod">src/agentTreeProvider.ts</span> &mdash; ハードコード廃止、activeAgentNamesFn 廃止、agentWatcher 参照<br>
+<span class="file-mod">src/types.ts</span> &mdash; AgentWatcherState, SubagentInfo 型追加<br>
+<span class="file-mod">src/agentManager.ts</span> &mdash; generateDirectorRuleFile() に CLIコマンドセクション追加<br>
+<span class="file-mod">package.json</span> &mdash; enableAgentMonitor の説明文を更新<br>
+<span class="file-mod">SPEC.md</span> &mdash; 監視アーキテクチャ説明を更新<br>
+<span class="file-mod">CHANGELOG.md</span> &mdash; v0.3.0 エントリ追加<br>
+<span class="file-mod">README.md</span> &mdash; 監視機能の説明を更新
+		</div>
+	</div>
+</div>
+
+<div class="card">
+	<div class="card-header">
+		<h3>Phase 2 &mdash; ローカル/グローバル分離</h3>
+		<span class="badge badge-phase">Phase 2</span>
+	</div>
+	<div class="card-body">
+		<div class="file-list">
+<span class="file-mod">src/dataStore.ts</span> &mdash; loadData/saveData を dual-file 方式に変更。マージロジック追加<br>
+<span class="file-mod">src/types.ts</span> &mdash; ManagerData にローカル/グローバル区別フィールド追加<br>
+<span class="file-mod">src/extension.ts</span> &mdash; ローカルファイル監視（workspace 切り替え時のリロード）<br>
+<span class="file-mod">src/agentFormPanel.ts</span> &mdash; scope がエージェント自体のスコープに影響する旨の UI 更新<br>
+<span class="file-mod">src/agentTreeProvider.ts</span> &mdash; エージェントにスコープバッジ表示（&#x1F310;/&#x1F4C1;）<br>
+<span class="file-mod">SPEC.md</span> &mdash; Phase 2 仕様追記<br>
+<span class="file-mod">CHANGELOG.md</span> &mdash; エントリ追加
+		</div>
+	</div>
+</div>
+
+<div class="card">
+	<div class="card-header">
+		<h3>Phase 3 &mdash; メモリ管理拡張</h3>
+		<span class="badge badge-phase">Phase 3</span>
+	</div>
+	<div class="card-body">
+		<div class="file-list">
+<span class="file-mod">src/memoryTreeProvider.ts</span> &mdash; グローバルメモリ + settings.json ノード追加<br>
+<span class="file-mod">src/memoryManager.ts</span> &mdash; グローバルメモリフォルダのスキャン追加<br>
+<span class="file-mod">src/webviewPanel.ts</span> &mdash; settings.json プレビュー対応<br>
+<span class="file-mod">package.json</span> &mdash; 必要に応じてコマンド追加<br>
+<span class="file-mod">SPEC.md</span> &mdash; Phase 3 仕様追記<br>
+<span class="file-mod">CHANGELOG.md</span> &mdash; エントリ追加
+		</div>
+	</div>
+</div>
+
+<div class="card">
+	<div class="card-header">
+		<h3>Phase 4 &mdash; セットアップウィザード</h3>
+		<span class="badge badge-phase">Phase 4</span>
+	</div>
+	<div class="card-body">
+		<div class="file-list">
+<span class="file-new">src/setupWizardPanel.ts</span> &mdash; 新規: Webviewベースのステップウィザード<br>
+<span class="file-mod">src/extension.ts</span> &mdash; ウィザードコマンド登録、初回起動判定<br>
+<span class="file-mod">package.json</span> &mdash; viewsWelcome の更新、ウィザードコマンド追加<br>
+<span class="file-mod">SPEC.md</span> &mdash; Phase 4 仕様追記<br>
+<span class="file-mod">CHANGELOG.md</span> &mdash; エントリ追加
+		</div>
+	</div>
+</div>
+
+<h3 style="margin-top: 32px;">Phase 実装順序</h3>
+<div class="diagram">
+<pre>
+Phase 1  (v0.2.8 完了)   Phase 1b            Phase 1c            Phase 2            Phase 3            Phase 4
+ルール管理              モデル制御           <strong style="color:var(--green)">監視再設計+CLI</strong>      ローカル/グローバル メモリ拡張          ウィザード
+━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━
+scope追加              Effort追加          agentWatcher新規    session-manager     グローバルメモリ   setupWizardPanel
+ルールテンプレ         Thinking追加        cliBuilder新規        .local.json      settings.json表示  ステップUI
+MEMORY.mdポインタ      maxThinking追加     agentMonitor削除    dataStore dual     メモリプレビュー   テンプレート提示
+フォームUI             グレーアウト連動    タイマー統合        マージロジック     リンクジャンプ     組織図プレビュー
+                       設定歯車            ハードコード廃止    スコープバッジ
+                                           ルールCLIセクション
+                                           スピナーアニメ
+
+<span style="color:var(--green)">&#9632;&#9632;&#9632;&#9632;&#9632;&#9632; 完了</span>         <span style="color:var(--yellow)">&#9632;&#9632;&#9632;&#9632;&#9632;&#9632; 次期</span>          <span style="color:var(--accent)">&#9632;&#9632;&#9632;&#9632;&#9632;&#9632; 本仕様書</span>      <span style="color:var(--purple)">&#9632;&#9632;&#9632;&#9632;&#9632;&#9632; 将来</span>          <span style="color:var(--purple)">&#9632;&#9632;&#9632;&#9632;&#9632;&#9632; 将来</span>          <span style="color:var(--purple)">&#9632;&#9632;&#9632;&#9632;&#9632;&#9632; 将来</span>
+</pre>
+</div>
+
+<div class="note-box">
+	<strong>Phase 1b と 1c の実装順序:</strong><br>
+	Phase 1b（モデル制御）と Phase 1c（監視再設計 + CLIビルダー）は独立しており、どちらを先に実装しても問題ない。<br>
+	ただし、<strong>cliBuilder.ts が Effort/Thinking フィールドを参照する</strong>ため、
+	Phase 1c の cliBuilder は Phase 1b の型定義（effort / thinkingEnabled / maxThinkingTokens）に依存する。<br>
+	推奨順序: <strong>1b &rarr; 1c</strong>（フォームUIを先に追加し、CLIビルダーが参照できる状態にする）。<br>
+	ただし 1c を先行する場合は、型定義だけ先に追加すれば問題ない。
+</div>
+
+</section>
+
+</div><!-- content -->
+</body>
+</html>

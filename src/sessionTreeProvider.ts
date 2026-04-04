@@ -1,7 +1,5 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import { ParsedSession } from './types';
 import { loadAllSessions } from './sessionLoader';
 import * as dataStore from './dataStore';
@@ -17,24 +15,40 @@ export class DateGroupItem extends vscode.TreeItem {
 
 type TreeNode = DateGroupItem | SessionItem;
 
-export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
+export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode>, vscode.Disposable {
 	private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined>();
 	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
+	// セッションロード完了イベント（bookmark/tagプロバイダーのリフレッシュ用）
+	private _onDidRefresh = new vscode.EventEmitter<void>();
+	readonly onDidRefresh = this._onDidRefresh.event;
+
+	dispose(): void {
+		this._onDidChangeTreeData.dispose();
+		this._onDidRefresh.dispose();
+	}
+
 	private sessions: ParsedSession[] = [];
+	private allParentSessions: ParsedSession[] = []; // フィルター前の全親セッション
 	private filteredSessions: ParsedSession[] | null = null;
 	private groupedSessions: Map<string, ParsedSession[]> = new Map();
 	private previewSessionId: string | undefined;
-	private liveSessionIds: Set<string> = new Set();
-	private watcher: fs.FSWatcher | undefined;
-	private pollTimer: ReturnType<typeof setInterval> | undefined;
-	private onLiveChangeCallback: (() => void) | undefined;
+	// ライブセッションIDセット（外部の AgentMonitor から setLiveSessionIds() で受け取る）
+	private liveSessionIds = new Set<string>();
 	// 親セッションID → 子エージェントセッション[] のマップ
 	private subagentMap: Map<string, ParsedSession[]> = new Map();
 	// ソートモード
 	private sortMode: 'updated-desc' | 'updated-asc' | 'created-desc' | 'created-asc' | 'name' | 'count' | 'model' = 'updated-desc';
 	// グループモード
 	private groupMode: 'date' | 'tag' | 'agent' | 'flat' = 'date';
+	// プロジェクトフィルター: true なら現在のワークスペースに関連するセッションのみ表示
+	private projectFilterEnabled = true;
+
+	// プロジェクトフィルターの設定
+	setProjectFilter(enabled: boolean): void {
+		this.projectFilterEnabled = enabled;
+		this.refresh();
+	}
 
 	// プレビュー中のセッションを設定
 	setActiveSession(sessionId: string): void {
@@ -63,89 +77,28 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 		this._onDidChangeTreeData.fire(undefined);
 	}
 
-	// ライブセッション変化時のコールバック設定（ステータスバー更新用）
-	onLiveChange(callback: () => void): void {
-		this.onLiveChangeCallback = callback;
+	// 外部の AgentMonitor からライブセッションIDを受け取りツリーを更新する（H-3）
+	setLiveSessionIds(ids: Set<string>): void {
+		this.liveSessionIds = ids;
+		this._onDidChangeTreeData.fire(undefined);
 	}
 
-	// sessions/ ディレクトリを監視してライブセッションを自動検出
+	// sessions/ ディレクトリの監視（H-3: 監視ロジックは AgentMonitor に移譲済み）
 	startWatching(): void {
-		const sessionsDir = path.join(os.homedir(), '.claude', 'sessions');
-		if (!fs.existsSync(sessionsDir)) { return; }
-
-		this.updateLiveSessions(sessionsDir);
-
-		// fs.watch によるリアルタイム監視
-		try {
-			this.watcher = fs.watch(sessionsDir, () => {
-				this.updateLiveSessions(sessionsDir);
-				this._onDidChangeTreeData.fire(undefined);
-				this.onLiveChangeCallback?.();
-			});
-		} catch {
-			// watchが使えない環境もある
-		}
-
-		// フォールバック: 設定値に応じた間隔のポーリング（Windowsでfs.watchイベントが漏れる対策）
-		const intervalSec = vscode.workspace.getConfiguration('claudeManager').get<number>('agentMonitorInterval', 5);
-		this.pollTimer = setInterval(() => {
-			const prevSize = this.liveSessionIds.size;
-			const prevIds = new Set(this.liveSessionIds);
-			this.updateLiveSessions(sessionsDir);
-			// 変化があった場合のみツリーを更新
-			if (this.liveSessionIds.size !== prevSize ||
-				[...this.liveSessionIds].some((id) => !prevIds.has(id))) {
-				this._onDidChangeTreeData.fire(undefined);
-				this.onLiveChangeCallback?.();
-			}
-		}, intervalSec * 1000);
+		// エージェント監視が無効なら何もしない（H-2）
+		const enabled = vscode.workspace.getConfiguration('claudeManager').get<boolean>('enableAgentMonitor', false);
+		if (!enabled) { return; }
+		// 監視ロジックは AgentMonitor が担当するため、ここでは何もしない
 	}
 
+	// ポーリング間隔の再設定（H-3: AgentMonitor に移譲済みのため何もしない）
+	restartPolling(): void {
+		// AgentMonitor 側で管理するため何もしない
+	}
+
+	// 監視停止（H-3: AgentMonitor に移譲済みのため何もしない）
 	stopWatching(): void {
-		this.watcher?.close();
-		if (this.pollTimer) {
-			clearInterval(this.pollTimer);
-			this.pollTimer = undefined;
-		}
-	}
-
-	// PIDが生存しているか確認
-	private isProcessAlive(pid: number): boolean {
-		try {
-			process.kill(pid, 0); // シグナル0 = 存在確認のみ
-			return true;
-		} catch {
-			return false;
-		}
-	}
-
-	private updateLiveSessions(sessionsDir: string): void {
-		this.liveSessionIds.clear();
-		try {
-			const files = fs.readdirSync(sessionsDir);
-			for (const file of files) {
-				if (!file.endsWith('.json')) { continue; }
-				const filePath = path.join(sessionsDir, file);
-				try {
-					const content = fs.readFileSync(filePath, 'utf-8');
-					const data = JSON.parse(content);
-					if (!data.sessionId) { continue; }
-
-					// PIDが記録されている場合、プロセス生存を確認
-					if (data.pid && !this.isProcessAlive(data.pid)) {
-						// プロセス終了済み → ゾンビJSONを削除
-						try { fs.unlinkSync(filePath); } catch { /* 削除失敗は無視 */ }
-						continue;
-					}
-
-					this.liveSessionIds.add(data.sessionId);
-				} catch {
-					// 読み込み/パースエラーはスキップ
-				}
-			}
-		} catch {
-			// ディレクトリ読み込みエラー
-		}
+		// AgentMonitor 側で管理するため何もしない
 	}
 
 	isLiveSession(sessionId: string): boolean {
@@ -153,9 +106,21 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 	}
 
 	refresh(): void {
+		// 非同期でセッションをロードし、完了したらツリーを更新
 		const maxSessions = vscode.workspace.getConfiguration('claudeManager').get<number>('maxSessionsShown', 500);
-		const allSessions = loadAllSessions(maxSessions);
-		const customNames = dataStore.getAllCustomNames();
+		loadAllSessions(maxSessions).then((allSessions) => {
+			return this.applySessionData(allSessions);
+		}).catch(() => {
+			// ロードエラー時はツリーをクリア
+			this.sessions = [];
+			this.filteredSessions = null;
+			this.buildGroups([]);
+			this._onDidChangeTreeData.fire(undefined);
+		});
+	}
+
+	private async applySessionData(allSessions: ParsedSession[]): Promise<void> {
+		const customNames = await dataStore.getAllCustomNames();
 
 		// サブエージェントマップを構築
 		this.subagentMap.clear();
@@ -176,10 +141,28 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 			}
 		}
 
-		this.sessions = parentSessions;
+		// フィルター前の全親セッションを保持（ブックマーク等で使用）
+		this.allParentSessions = parentSessions;
+
+		// プロジェクトフィルター適用
+		if (this.projectFilterEnabled) {
+			const currentProject = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath?.toLowerCase() || '';
+			if (currentProject) {
+				this.sessions = parentSessions.filter((s) =>
+					s.project.toLowerCase().includes(path.basename(currentProject).toLowerCase()) ||
+					currentProject.includes(s.project.toLowerCase().replace(/\\/g, '/'))
+				);
+			} else {
+				this.sessions = parentSessions;
+			}
+		} else {
+			this.sessions = parentSessions;
+		}
 		this.filteredSessions = null;
 		this.buildGroups(this.sessions);
 		this._onDidChangeTreeData.fire(undefined);
+		// ロード完了を通知（bookmark/tagプロバイダーが最新データでリフレッシュできるように）
+		this._onDidRefresh.fire();
 	}
 
 	setFilter(keyword: string): void {
@@ -200,6 +183,11 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
 	getSessions(): ParsedSession[] {
 		return this.sessions;
+	}
+
+	// フィルター前の全親セッション（ブックマーク用）
+	getAllParentSessions(): ParsedSession[] {
+		return this.allParentSessions;
 	}
 
 	// 全セッション（子エージェント含む）を取得
@@ -238,9 +226,10 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 		return element;
 	}
 
-	getChildren(element?: TreeNode): TreeNode[] {
-		if (this.sessions.length === 0) {
-			this.refresh();
+	async getChildren(element?: TreeNode): Promise<TreeNode[]> {
+		// セッションが空かつトップレベル呼び出しの場合はウェルカム表示（M-2: refresh()呼び出しによる無限ループ防止）
+		if (this.sessions.length === 0 && !element) {
+			return [new DateGroupItem('セッションがありません', 0)];
 		}
 
 		if (!element) {
@@ -254,14 +243,17 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
 		if (element instanceof DateGroupItem) {
 			const sessions = this.groupedSessions.get(element.label) || [];
-			return sessions.map((session) => {
-				const isBookmarked = dataStore.isBookmarked(session.id);
-				const tags = dataStore.getTagsForSession(session.id);
+			const items: SessionItem[] = [];
+			for (const session of sessions) {
+				const isBookmarked = await dataStore.isBookmarked(session.id);
+				const tags = await dataStore.getTagsForSession(session.id);
 				const isPreviewing = session.id === this.previewSessionId;
 				const isLive = this.liveSessionIds.has(session.id);
 				const hasChildren = this.hasSubagents(session.id);
-				return new SessionItem(session, isBookmarked, tags, isPreviewing, isLive, false, hasChildren);
-			});
+				const agentConfig = await dataStore.getAgentBySessionId(session.id);
+				items.push(new SessionItem(session, isBookmarked, tags, isPreviewing, isLive, false, hasChildren, agentConfig));
+			}
+			return items;
 		}
 
 		// SessionItemの子 = サブエージェント
@@ -317,11 +309,17 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 				break;
 
 			case 'tag':
-				this.buildTagGroups(sessions);
+				// 非同期処理: Promiseを起動して完了後にツリーを再更新
+				this.buildTagGroupsAsync(sessions).then(() => {
+					this._onDidChangeTreeData.fire(undefined);
+				}).catch(() => {/* ignore */});
 				break;
 
 			case 'agent':
-				this.buildAgentGroups(sessions);
+				// 非同期処理: Promiseを起動して完了後にツリーを再更新
+				this.buildAgentGroupsAsync(sessions).then(() => {
+					this._onDidChangeTreeData.fire(undefined);
+				}).catch(() => {/* ignore */});
 				break;
 
 			case 'date':
@@ -363,8 +361,8 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 		}
 	}
 
-	private buildTagGroups(sessions: ParsedSession[]): void {
-		const allTags = dataStore.getAllTags();
+	private async buildTagGroupsAsync(sessions: ParsedSession[]): Promise<void> {
+		const allTags = await dataStore.getAllTags();
 		const taggedIds = new Set<string>();
 
 		for (const [tag, ids] of Object.entries(allTags)) {
@@ -382,12 +380,12 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 		}
 	}
 
-	private buildAgentGroups(sessions: ParsedSession[]): void {
+	private async buildAgentGroupsAsync(sessions: ParsedSession[]): Promise<void> {
 		const agentSessions = new Map<string, ParsedSession[]>();
 		const unlinked: ParsedSession[] = [];
 
 		for (const session of sessions) {
-			const agent = dataStore.getAgentBySessionId(session.id);
+			const agent = await dataStore.getAgentBySessionId(session.id);
 			if (agent) {
 				const key = `🤖 ${agent.name}`;
 				if (!agentSessions.has(key)) {
@@ -447,7 +445,8 @@ export class SessionItem extends vscode.TreeItem {
 		public readonly isPreviewing: boolean = false,
 		public readonly isLive: boolean = false,
 		public readonly inBookmarkView: boolean = false,
-		public readonly hasChildren: boolean = false
+		public readonly hasChildren: boolean = false,
+		agentConfigArg?: import('./types').AgentConfig
 	) {
 		const isSub = !!session.isSidechain;
 
@@ -484,7 +483,7 @@ export class SessionItem extends vscode.TreeItem {
 		const timeStr = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 
 		// エージェント登録状態（descriptionで使うので先に取得）
-		const agentConfig = !isSub ? dataStore.getAgentBySessionId(session.id) : undefined;
+		const agentConfig = !isSub ? agentConfigArg : undefined;
 
 		if (isSub) {
 			// サブエージェント用のdescription

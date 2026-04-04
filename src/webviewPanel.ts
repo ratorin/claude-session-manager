@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as crypto from 'crypto';
 import { ParsedSession, SimpleMessage, MemoryFile } from './types';
 import { loadSessionFull } from './sessionLoader';
 import * as dataStore from './dataStore';
@@ -81,20 +82,21 @@ export function updatePreviewTitle(title: string): void {
 }
 
 // 会話プレビューパネル
-export function showSessionPreview(session: ParsedSession, context: vscode.ExtensionContext, showThinking: boolean = false): void {
-	const fullSession = loadSessionFull(session.filePath, showThinking);
+export async function showSessionPreview(session: ParsedSession, context: vscode.ExtensionContext, showThinking: boolean = false): Promise<void> {
+	const fullSession = await loadSessionFull(session.filePath, showThinking);
 	if (!fullSession) {
 		vscode.window.showErrorMessage('会話の読み込みに失敗しました');
 		return;
 	}
 
-	const note = dataStore.getNote(session.id);
-	const tags = dataStore.getTagsForSession(session.id);
+	const note = await dataStore.getNote(session.id);
+	const tags = await dataStore.getTagsForSession(session.id);
 	const title = `💬 ${session.customName || session.claudeTitle || session.firstMessage.substring(0, 30)}`;
+	const agent = await dataStore.getAgentBySessionId(session.id);
 
 	if (previewPanel) {
 		previewPanel.title = title;
-		previewPanel.webview.html = getSessionHtml(fullSession, note, tags);
+		previewPanel.webview.html = getSessionHtml(fullSession, note, tags, agent);
 		previewPanel.reveal(vscode.ViewColumn.One);
 	} else {
 		previewPanel = vscode.window.createWebviewPanel(
@@ -103,17 +105,17 @@ export function showSessionPreview(session: ParsedSession, context: vscode.Exten
 			vscode.ViewColumn.One,
 			{ enableScripts: true }
 		);
-		previewPanel.webview.html = getSessionHtml(fullSession, note, tags);
+		previewPanel.webview.html = getSessionHtml(fullSession, note, tags, agent);
 		previewPanel.onDidDispose(() => { previewPanel = undefined; });
 	}
 
 	// Webviewからのメッセージを受信
 	previewPanel.webview.onDidReceiveMessage(async (message) => {
 		if (message.type === 'saveNote') {
-			dataStore.setNote(session.id, message.note);
+			await dataStore.setNote(session.id, message.note);
 		} else if (message.type === 'addTag') {
 			// 既存タグから選択 or 新規入力
-			const existingTags = Object.keys(dataStore.getAllTags());
+			const existingTags = Object.keys(await dataStore.getAllTags());
 			const NEW_TAG = '+ 新しいタグを作成...';
 			let tagName: string | undefined;
 			if (existingTags.length > 0) {
@@ -126,17 +128,19 @@ export function showSessionPreview(session: ParsedSession, context: vscode.Exten
 				tagName = await vscode.window.showInputBox({ prompt: 'タグ名を入力' });
 			}
 			if (tagName) {
-				dataStore.addTag(tagName, session.id);
+				await dataStore.addTag(tagName, session.id);
 				// HTMLを更新
-				const updatedTags = dataStore.getTagsForSession(session.id);
-				const updatedNote = dataStore.getNote(session.id);
-				previewPanel!.webview.html = getSessionHtml(fullSession!, updatedNote, updatedTags);
+				const updatedTags = await dataStore.getTagsForSession(session.id);
+				const updatedNote = await dataStore.getNote(session.id);
+				const updatedAgent = await dataStore.getAgentBySessionId(session.id);
+				previewPanel!.webview.html = getSessionHtml(fullSession!, updatedNote, updatedTags, updatedAgent);
 			}
 		} else if (message.type === 'removeTag') {
-			dataStore.removeTagFromSession(message.tag, session.id);
-			const updatedTags = dataStore.getTagsForSession(session.id);
-			const updatedNote = dataStore.getNote(session.id);
-			previewPanel!.webview.html = getSessionHtml(fullSession!, updatedNote, updatedTags);
+			await dataStore.removeTagFromSession(message.tag, session.id);
+			const updatedTags = await dataStore.getTagsForSession(session.id);
+			const updatedNote = await dataStore.getNote(session.id);
+			const updatedAgent = await dataStore.getAgentBySessionId(session.id);
+			previewPanel!.webview.html = getSessionHtml(fullSession!, updatedNote, updatedTags, updatedAgent);
 		} else if (message.type === 'editAgent') {
 			vscode.commands.executeCommand('claudeManager.editAgentBySessionId', session.id);
 		} else if (message.type === 'editRuleFile') {
@@ -166,9 +170,8 @@ export function showSessionPreview(session: ParsedSession, context: vscode.Exten
 	});
 }
 
-function getSessionHtml(session: ParsedSession, note: string, tags: string[]): string {
+function getSessionHtml(session: ParsedSession, note: string, tags: string[], agent?: import('./types').AgentConfig): string {
 	// エージェント情報をヘッダに表示
-	const agent = dataStore.getAgentBySessionId(session.id);
 	const agentHeaderHtml = agent
 		? `<div class="agent-badge">
 			<span class="agent-model badge-${agent.model}">${agent.model.toUpperCase()}</span>
@@ -212,13 +215,15 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[]): s
 	const displayName = session.customName || session.claudeTitle || session.firstMessage;
 	const tagsHtml = tags.map((t) => `<span class="tag">${escapeHtml(t)}<span class="tag-remove" onclick="removeTag('${escapeHtml(t)}')">×</span></span>`).join('');
 	const dateRange = `${session.firstTimestamp.toLocaleString('ja-JP')} 〜 ${session.lastTimestamp.toLocaleString('ja-JP')}`;
+	const nonce = crypto.randomBytes(16).toString('hex');
 
 	return `<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
+<style nonce="${nonce}">
 	* { margin: 0; padding: 0; box-sizing: border-box; }
 	body {
 		font-family: var(--vscode-font-family);
@@ -533,7 +538,7 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[]): s
 		</div>
 	</div>
 
-	<script>
+	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
 		let saveTimer;
 
@@ -631,12 +636,14 @@ function getMemoryHtml(file: MemoryFile): string {
 	};
 
 	const content = escapeHtml(file.content).replace(/\n/g, '<br>');
+	const memNonce = crypto.randomBytes(16).toString('hex');
 
 	return `<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<style>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${memNonce}';">
+<style nonce="${memNonce}">
 	body {
 		font-family: var(--vscode-font-family);
 		padding: 16px;

@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSM タスク管理・状態検知・通知 設計案</title>
+<style>
+	:root {
+		--accent: #e27e4a;
+		--accent-bg: rgba(226, 126, 74, 0.08);
+		--bg: #1e1e1e;
+		--surface: #252526;
+		--surface2: #2d2d30;
+		--border: #3e3e42;
+		--text: #cccccc;
+		--text-dim: #888888;
+		--text-bright: #ffffff;
+		--green: #4ec9b0;
+		--blue: #569cd6;
+		--yellow: #dcdcaa;
+		--red: #f44747;
+		--purple: #c586c0;
+	}
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	body {
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+		background: var(--bg);
+		color: var(--text);
+		line-height: 1.7;
+		padding: 0;
+	}
+	.header {
+		background: linear-gradient(135deg, #2d1f14 0%, #1e1e1e 100%);
+		border-bottom: 2px solid var(--accent);
+		padding: 40px 32px;
+	}
+	.header h1 {
+		font-size: 28px;
+		color: var(--accent);
+		font-weight: 600;
+		margin-bottom: 8px;
+	}
+	.header .subtitle { font-size: 14px; color: var(--text-dim); }
+	.header .version {
+		display: inline-block;
+		background: var(--accent);
+		color: #000;
+		padding: 2px 10px;
+		border-radius: 4px;
+		font-size: 13px;
+		font-weight: 600;
+		margin-right: 12px;
+	}
+	.header .status {
+		display: inline-block;
+		background: var(--green);
+		color: #000;
+		padding: 2px 10px;
+		border-radius: 4px;
+		font-size: 13px;
+		font-weight: 600;
+	}
+	.toc {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 24px 32px;
+		margin: 24px 32px;
+	}
+	.toc h2 { font-size: 16px; color: var(--accent); margin-bottom: 12px; }
+	.toc ol { padding-left: 20px; }
+	.toc li { margin-bottom: 4px; }
+	.toc a { color: var(--blue); text-decoration: none; }
+	.toc a:hover { text-decoration: underline; }
+	.content { max-width: 960px; margin: 0 auto; padding: 24px 32px; }
+	h2 {
+		font-size: 22px;
+		color: var(--accent);
+		border-bottom: 1px solid var(--border);
+		padding-bottom: 8px;
+		margin: 40px 0 16px;
+	}
+	h3 { font-size: 17px; color: var(--green); margin: 24px 0 8px; }
+	h4 { font-size: 15px; color: var(--yellow); margin: 16px 0 8px; }
+	p { margin-bottom: 12px; }
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		margin: 12px 0 20px;
+		font-size: 14px;
+	}
+	th, td {
+		border: 1px solid var(--border);
+		padding: 8px 12px;
+		text-align: left;
+	}
+	th { background: var(--surface2); color: var(--text-bright); font-weight: 600; }
+	td { background: var(--surface); }
+	code {
+		background: var(--surface2);
+		color: var(--green);
+		padding: 2px 6px;
+		border-radius: 3px;
+		font-size: 13px;
+	}
+	pre {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 16px;
+		overflow-x: auto;
+		font-size: 13px;
+		line-height: 1.5;
+		margin: 12px 0 20px;
+	}
+	pre code { background: none; padding: 0; }
+	.warn {
+		background: rgba(244, 71, 71, 0.1);
+		border-left: 3px solid var(--red);
+		padding: 12px 16px;
+		margin: 12px 0;
+		border-radius: 0 6px 6px 0;
+	}
+	.info {
+		background: rgba(86, 156, 214, 0.1);
+		border-left: 3px solid var(--blue);
+		padding: 12px 16px;
+		margin: 12px 0;
+		border-radius: 0 6px 6px 0;
+	}
+	.success {
+		background: rgba(78, 201, 176, 0.1);
+		border-left: 3px solid var(--green);
+		padding: 12px 16px;
+		margin: 12px 0;
+		border-radius: 0 6px 6px 0;
+	}
+	.diagram {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 24px;
+		margin: 16px 0;
+		font-family: 'Cascadia Code', 'Fira Code', monospace;
+		font-size: 13px;
+		line-height: 1.6;
+		white-space: pre;
+		overflow-x: auto;
+	}
+	.badge {
+		display: inline-block;
+		padding: 2px 8px;
+		border-radius: 3px;
+		font-size: 12px;
+		font-weight: 600;
+	}
+	.badge-new { background: var(--green); color: #000; }
+	.badge-mod { background: var(--yellow); color: #000; }
+	.badge-ext { background: var(--blue); color: #fff; }
+	ul { padding-left: 20px; margin-bottom: 12px; }
+	li { margin-bottom: 4px; }
+	.qa-section {
+		background: rgba(197, 134, 192, 0.08);
+		border: 1px solid var(--purple);
+		border-radius: 8px;
+		padding: 20px;
+		margin: 16px 0;
+	}
+	.qa-section h3 { color: var(--purple); }
+	.qa-resolved {
+		background: rgba(78, 201, 176, 0.08);
+		border: 1px solid var(--green);
+		border-radius: 8px;
+		padding: 20px;
+		margin: 16px 0;
+	}
+	.qa-resolved h3 { color: var(--green); }
+</style>
+</head>
+<body>
+
+<div class="header">
+	<h1>エージェントタスク管理・状態検知・通知</h1>
+	<p class="subtitle">Claude Session Manager 機能設計案</p>
+	<div style="margin-top: 12px;">
+		<span class="version">v0.4.0 候補</span>
+		<span class="status">品質管理部レビュー反映済み</span>
+	</div>
+	<p class="subtitle" style="margin-top: 8px;">作成: CSM開発部 / レビュー: 品質管理部 / 2026-04-04</p>
+</div>
+
+<nav class="toc">
+	<h2>目次</h2>
+	<ol>
+		<li><a href="#background">背景と課題</a></li>
+		<li><a href="#overview">機能概要</a></li>
+		<li><a href="#architecture">アーキテクチャ</a></li>
+		<li><a href="#task-log">機能1: タスクログ</a></li>
+		<li><a href="#state-detection">機能2: 状態検知</a></li>
+		<li><a href="#notification">機能3: 通知</a></li>
+		<li><a href="#data-model">データモデル</a></li>
+		<li><a href="#ui-design">UI設計</a></li>
+		<li><a href="#settings">設定項目</a></li>
+		<li><a href="#file-changes">ファイル変更一覧</a></li>
+		<li><a href="#performance">パフォーマンス設計</a></li>
+		<li><a href="#qa-review">品質管理部レビュー結果と対応</a></li>
+		<li><a href="#implementation-plan">実装計画</a></li>
+	</ol>
+</nav>
+
+<div class="content">
+
+<!-- ============================================================ -->
+<h2 id="background">1. 背景と課題</h2>
+
+<p>取締役がエージェントにタスクを委任した後、以下の運用上の問題が発生している：</p>
+
+<table>
+	<tr><th>課題</th><th>影響</th><th>頻度</th></tr>
+	<tr><td>完了を自分で確認しに行くしかない</td><td>取締役の時間を浪費、応答遅延</td><td>毎回</td></tr>
+	<tr><td>エラーや権限要求で止まっても気づけない</td><td>タスク停滞、デッドロック</td><td>週数回</td></tr>
+	<tr><td>VS Code再起動でプロセスが死んでも分からない</td><td>進行中タスクが消失</td><td>月数回</td></tr>
+	<tr><td>「何を投げてたっけ」が分からなくなる</td><td>コンテキスト消失で再着手困難</td><td>毎回（セッション切替時）</td></tr>
+</table>
+
+<div class="info">
+	<strong>設計方針:</strong> 既存の AgentWatcher のイベント駆動アーキテクチャを拡張し、
+	新たなポーリングループを追加しない。CPU負荷の増加を最小限に抑える。
+</div>
+
+<!-- ============================================================ -->
+<h2 id="overview">2. 機能概要</h2>
+
+<p>3つの機能を段階的に追加する：</p>
+
+<table>
+	<tr><th>#</th><th>機能</th><th>概要</th><th>依存</th></tr>
+	<tr>
+		<td>1</td>
+		<td><strong>タスクログ</strong></td>
+		<td>エージェントにタスクを投げた記録を永続化。誰に・何を・いつ・出力先を記録</td>
+		<td>dataStore.ts</td>
+	</tr>
+	<tr>
+		<td>2</td>
+		<td><strong>状態検知</strong></td>
+		<td>タスクの状態（実行中・完了・停止・エラー）を自動判定</td>
+		<td>AgentWatcher, subagentDetector</td>
+	</tr>
+	<tr>
+		<td>3</td>
+		<td><strong>通知</strong></td>
+		<td>状態変化時にVS Code通知 + ステータスバー更新</td>
+		<td>機能1 + 機能2</td>
+	</tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="architecture">3. アーキテクチャ</h2>
+
+<h3>3.1 全体構成図</h3>
+
+<div class="diagram">
++-------------------------------------------------------------+
+|                      extension.ts                            |
+|                                                              |
+|  agentWatcher.onDidChange --> taskTracker.evaluate()          |
+|                                     |                        |
+|                              +------+------+                 |
+|                              | TaskTracker  |                 |
+|                              |  (新規)      |                 |
+|                              +------+------+                 |
+|                                     |                        |
+|              +----------------------+------------------+     |
+|              |                      |                  |     |
+|              v                      v                  v     |
+|    +-------------+      +----------------+   +------------+  |
+|    |  dataStore   |      |  AgentWatcher  |   |  Notifier  |  |
+|    | (taskLogs[]) |      | (PID + mtime)  |   |  (VS Code) |  |
+|    +-------------+      +----------------+   +------------+  |
+|                                                              |
+|    +---------------------------------------------+           |
+|    |  agentTreeProvider (TaskLogItem 子要素追加)   |           |
+|    +---------------------------------------------+           |
++-------------------------------------------------------------+
+</div>
+
+<h3>3.2 設計原則</h3>
+
+<ul>
+	<li><strong>既存のAgentWatcherに乗る:</strong> 新たなポーリングループを作らない。AgentWatcher の <code>onDidChange</code> イベントをフックして状態を評価する</li>
+	<li><strong>enableAgentMonitor OFF でもタスクログは保持:</strong> ログの記録と閲覧は監視機能に依存しない。状態検知と通知のみ監視に依存する</li>
+	<li><strong>データは session-manager.json に格納:</strong> 新規ファイルを作らず、既存のManagerDataに <code>taskLogs[]</code> を追加</li>
+	<li><strong>上限付き:</strong> taskLogs は最大100件（古いものから自動削除）。メモリリーク防止</li>
+	<li><strong>バッチ保存:</strong> evaluate() 内で全タスク評価後、変更があった場合のみ1回だけ saveData() を呼ぶ（<span style="color:var(--purple)">品質管理部H-3対応</span>）</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="task-log">4. 機能1: タスクログ</h2>
+
+<h3>4.1 記録タイミング</h3>
+
+<p>タスクログは以下の2つの方法で記録される：</p>
+
+<table>
+	<tr><th>方法</th><th>トリガー</th><th>詳細</th></tr>
+	<tr>
+		<td><strong>A. 手動登録</strong></td>
+		<td>エージェントツリーのコンテキストメニュー「タスクを記録」</td>
+		<td>ユーザーがタスク概要・出力先ファイルを入力して登録</td>
+	</tr>
+	<tr>
+		<td><strong>B. 自動検出</strong></td>
+		<td>AgentWatcher が JSONL を解析した際</td>
+		<td>subagentDetector が新しい Task/Agent tool_use を検出したとき、自動でタスクログに追加</td>
+	</tr>
+</table>
+
+<h4>A. 手動登録フロー</h4>
+<pre><code>// コンテキストメニュー「タスクを記録」-> QuickInput
+1. タスク概要を入力（必須、最大200文字 — dataStore側で.slice(0,200)）
+2. 出力先ファイルを入力（任意 — ワークスペース配下のみ許可）
+3. TaskLog レコードを作成し dataStore に保存</code></pre>
+
+<h4>B. 自動検出フロー</h4>
+<pre><code>// AgentWatcher.update() -> subagentDetector.detectSubagents()
+// 新しい toolUseId が検出されたら自動でタスクログに追加
+1. agentWatcher.onDidChange が発火
+2. TaskTracker が前回の activeSubagentIds と比較
+3. 新規の toolUseId があれば TaskLog を自動生成
+   - agentName: 親エージェント名
+   - summary: SubagentInfo.description（tool_use の description/prompt）
+   - outputFile: undefined（手動で設定可能）
+4. toolUseId が消えたら（tool_result が来た）完了とマーク</code></pre>
+
+<h3>4.2 タスクログの操作</h3>
+
+<table>
+	<tr><th>操作</th><th>コマンド</th><th>説明</th></tr>
+	<tr><td>記録</td><td><code>claudeManager.addTaskLog</code></td><td>手動でタスクを記録</td></tr>
+	<tr><td>編集</td><td><code>claudeManager.editTaskLog</code></td><td>概要・出力先を編集</td></tr>
+	<tr><td>完了</td><td><code>claudeManager.completeTaskLog</code></td><td>手動で完了にマーク</td></tr>
+	<tr><td>削除</td><td><code>claudeManager.deleteTaskLog</code></td><td>ログを削除（確認ダイアログ付き）</td></tr>
+	<tr><td>出力確認</td><td><code>claudeManager.openTaskOutput</code></td><td>出力先ファイルをエディタで開く</td></tr>
+	<tr><td>全クリア</td><td><code>claudeManager.clearTaskLogs</code></td><td>全ログを削除（確認ダイアログ付き）</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="state-detection">5. 機能2: 状態検知</h2>
+
+<h3>5.1 状態遷移図</h3>
+
+<div class="diagram">
+                    +----------+
+        登録 ------>| pending  |
+                    | (待機中)  |
+                    +----+-----+
+                         | PIDがライブになった
+                         v
+                    +----------+
+                    | running  |<------+
+                    | (実行中)  |       | JSONL更新再開
+                    +--+---+---+       |
+                       |   |           |
+          PID消失 -----+   |    +------+-----+
+          or tool_result   |    |  stalled   |
+                           |    | (停止疑い)  |
+          +----------------+    +------------+
+          |  JSONL更新が                ^
+          |  60秒以上停止               |
+          |  かつPID生存 ---------------+
+          v
+    +----------+         +----------+
+    |completed |         |  error   |
+    | (完了)    |         | (エラー)  |
+    +----------+         +----------+
+          ^                    ^
+          |                    |
+    tool_result            PID異常終了
+    or PID正常終了
+</div>
+
+<h3>5.2 状態判定ロジック</h3>
+
+<p>TaskTracker は AgentWatcher の <code>onDidChange</code> イベント発火時に、各タスクログの状態を評価する。
+<strong>新しいポーリングループは作らない。</strong></p>
+
+<table>
+	<tr><th>状態</th><th>判定条件</th><th>アイコン</th></tr>
+	<tr>
+		<td><code>pending</code></td>
+		<td>タスクログ登録直後。対応するエージェントのPIDがまだ生存していない</td>
+		<td>$(circle-outline) グレー</td>
+	</tr>
+	<tr>
+		<td><code>running</code></td>
+		<td>対応エージェントのPIDが生存 AND JSONL mtime が60秒以内</td>
+		<td>$(sync~spin) 緑</td>
+	</tr>
+	<tr>
+		<td><code>stalled</code></td>
+		<td>PID生存 BUT JSONL mtime が60秒以上更新なし（権限待ち・入力待ち等）</td>
+		<td>$(warning) 黄</td>
+	</tr>
+	<tr>
+		<td><code>completed</code></td>
+		<td>tool_result を受信 OR PIDが正常終了 OR 手動完了マーク</td>
+		<td>$(check) 緑</td>
+	</tr>
+	<tr>
+		<td><code>error</code></td>
+		<td>PIDが異常終了</td>
+		<td>$(error) 赤</td>
+	</tr>
+</table>
+
+<h3>5.3 stalled 判定の詳細</h3>
+
+<div class="warn">
+	<strong>パフォーマンス注意:</strong> stalled 判定のためにJSONL末尾を毎回読むのはコストが高い。
+	AgentWatcher の update() 内で取得する JSONL ファイルの <code>mtime</code> を活用する。
+</div>
+
+<p>stalled 判定ロジック:</p>
+<pre><code>function evaluateStalled(taskLog: TaskLog, agentWatcher: AgentWatcher): boolean {
+  // AgentWatcher.update() で取得・キャッシュした mtime を参照（追加 I/O なし）
+  // ※ sessionMtimes Map は Phase B で agentWatcher.ts に追加実装する（H-1対応）
+  const mtime = agentWatcher.getSessionMtime(taskLog.sessionId);
+  if (mtime === undefined) { return false; }
+  const now = Date.now();
+  const threshold = config.get('taskStalledThreshold', 60) * 1000; // デフォルト60秒
+  return (now - mtime) > threshold;
+}</code></pre>
+
+<div class="warn">
+	<strong>品質管理部指摘 H-1 対応:</strong>
+	現在の <code>agentWatcher.ts</code> には <code>sessionMtimes</code> Map が<strong>存在しない</strong>。
+	Phase B の実装タスクとして「agentWatcher.ts に sessionMtimes Map を追加」を明示的に含める。
+	<code>update()</code> 内で <code>sessions/*.json</code> から sessionId を取得する際に、
+	対応する JSONL ファイルの <code>fs.statSync</code> の mtime も取得し Map にキャッシュする。
+</div>
+
+<div class="info">
+	<strong>品質管理部指摘 M-1 対応:</strong>
+	stalled 閾値を 30秒 -> <strong>60秒</strong> に変更。Extended Thinking（最大31,999トークン）使用時に
+	30秒以上の無応答が発生するため。設定 <code>taskStalledThreshold</code> の最小値は10秒。
+</div>
+
+<h3>5.4 エラー検出方式</h3>
+
+<div class="info">
+	<strong>品質管理部指摘 M-2 対応:</strong>
+	outputFile 末尾の内容解析によるエラー検出は<strong>廃止</strong>。偽陽性（<code>error handling</code>,
+	<code>class CustomError</code> 等の正常文字列の誤検出）リスクが高いため。
+	エラー判定は<strong>PIDの終了状態のみ</strong>に限定する。
+</div>
+
+<p>エラー検出はPID終了コードに一本化：</p>
+<ul>
+	<li><strong>PID消失 + completed でない:</strong> error と判定</li>
+	<li><strong>outputFile の内容解析は行わない</strong>（シンプルで安全）</li>
+	<li>出力先ファイルの mtime 監視のみ残す（完了判定の補助として）</li>
+</ul>
+
+<h3>5.5 outputFile パスバリデーション</h3>
+
+<div class="warn">
+	<strong>品質管理部指摘 H-2 対応（OWASP A01:2021 Broken Access Control）:</strong>
+	outputFile に任意パスを指定可能な場合、パストラバーサルやUNCパスのリスクがある。
+	以下のバリデーションを必須とする。
+</div>
+
+<pre><code>function validateOutputFile(filePath: string): boolean {
+  if (!filePath) { return false; }
+  if (filePath.length > 500) { return false; }
+
+  const resolved = path.resolve(filePath);
+
+  // UNCパス拒否
+  if (resolved.startsWith('\\\\')) { return false; }
+
+  // ワークスペース配下のみ許可
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot) { return false; }
+  return resolved.startsWith(path.resolve(workspaceRoot));
+}</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="notification">6. 機能3: 通知</h2>
+
+<h3>6.1 通知ルール</h3>
+
+<table>
+	<tr><th>状態遷移</th><th>通知種別</th><th>メッセージ例</th></tr>
+	<tr>
+		<td>* -> <code>completed</code></td>
+		<td><code>showInformationMessage</code></td>
+		<td>「CSM開発部: タスク完了 -- v0.3.0品質改善」</td>
+	</tr>
+	<tr>
+		<td>* -> <code>error</code></td>
+		<td><code>showWarningMessage</code></td>
+		<td>「テスト部: エラー検出 -- PID異常終了」</td>
+	</tr>
+	<tr>
+		<td>running -> <code>stalled</code></td>
+		<td><code>showWarningMessage</code></td>
+		<td>「CSM開発部: 応答停止（60秒以上）-- 権限待ちの可能性」</td>
+	</tr>
+	<tr>
+		<td>* -> <code>running</code></td>
+		<td>通知なし（ステータスバーのみ更新）</td>
+		<td>--</td>
+	</tr>
+</table>
+
+<h3>6.2 通知のアクションボタン</h3>
+
+<pre><code>// completed 通知
+vscode.window.showInformationMessage(
+  `${agentName}: タスク完了 -- ${summary}`,
+  '出力を開く',      // -> outputFile をエディタで開く
+  'セッションを開く'  // -> Claude Code でセッションを開く
+);
+
+// error 通知
+vscode.window.showWarningMessage(
+  `${agentName}: エラー検出 -- PID異常終了`,
+  'セッションを開く'  // -> Claude Code でセッションを開く
+);
+
+// stalled 通知
+vscode.window.showWarningMessage(
+  `${agentName}: 応答停止（${seconds}秒） -- ${summary}`,
+  'セッションを開く'  // -> Claude Code でセッションを開く
+);</code></pre>
+
+<h3>6.3 通知の重複防止</h3>
+
+<div class="info">
+	<strong>品質管理部指摘 L-2 対応:</strong>
+	<code>notifiedStatus</code> + <code>lastNotifiedAt</code> の2フィールドで重複防止。
+	同一状態への再通知は最低60秒間隔（stalled のフラッピング対策）。
+</div>
+
+<h3>6.4 ステータスバー拡張</h3>
+
+<p>既存のステータスバー表示を拡張し、タスク状態を含める：</p>
+
+<pre><code>// 現在: green-circle 2 people 5
+// 拡張: green-circle 2 people 5 | check 1 warn 1
+//                                  ^完了  ^stalled/error
+
+// tooltip も拡張
+// 動作中: 2件 / 全5件
+// > CSM開発部
+// > テスト部
+// -----
+// 最近のタスク:
+// [check] CSM開発部: v0.3.0品質改善 (2分前)
+// [warn] テスト部: E2Eテスト実行 (停止中)</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="data-model">7. データモデル</h2>
+
+<h3>7.1 TaskLog 型定義</h3>
+
+<pre><code>// types.ts に追加
+export interface TaskLog {
+  id: string;               // ユニークID（Date.now().toString(36) + Math.random()）
+  agentName: string;        // エージェント名（例: CSM開発部）
+  sessionId: string;        // エージェントのセッションID
+  summary: string;          // タスク概要（最大200文字、dataStore側で切り詰め）
+  outputFile?: string;      // 出力先ファイルパス（ワークスペース配下のみ許可）
+  status: TaskStatus;       // 現在の状態
+  createdAt: number;        // 作成タイムスタンプ（ms）
+  completedAt?: number;     // 完了タイムスタンプ（ms）
+  toolUseId?: string;       // 自動検出時の tool_use ID（手動登録時は undefined）
+  notifiedStatus?: TaskStatus; // 最後に通知した状態（重複通知防止）
+  lastNotifiedAt?: number;  // 最後に通知した時刻（フラッピング対策、60秒間隔制限）
+}
+
+export type TaskStatus = 'pending' | 'running' | 'stalled' | 'completed' | 'error';</code></pre>
+
+<div class="info">
+	<strong>品質管理部指摘 M-4 対応:</strong>
+	<code>crypto.randomUUID()</code> は Node.js バージョン依存のため、
+	<code>Date.now().toString(36) + Math.random().toString(36).slice(2)</code> で代替。
+</div>
+
+<div class="info">
+	<strong>品質管理部指摘 M-2 対応:</strong>
+	<code>errorHint</code> フィールドを廃止。エラー検出がPID終了コードのみに限定されたため不要。
+</div>
+
+<h3>7.2 ManagerData 拡張</h3>
+
+<pre><code>// types.ts の ManagerData を拡張
+export interface ManagerData {
+  bookmarks: string[];
+  tags: Record&lt;string, string[]&gt;;
+  customNames: Record&lt;string, string&gt;;
+  notes: Record&lt;string, string&gt;;
+  agents?: AgentConfig[];
+  ruleFolder?: string;
+  taskLogs?: TaskLog[];      // &lt;- 追加
+}</code></pre>
+
+<h3>7.3 データ制約</h3>
+
+<table>
+	<tr><th>制約</th><th>値</th><th>理由</th></tr>
+	<tr><td>taskLogs 最大件数</td><td>100</td><td>JSONファイルの肥大化防止</td></tr>
+	<tr><td>summary 最大長</td><td>200文字</td><td>dataStore.addTaskLog() で .slice(0, 200)</td></tr>
+	<tr><td>自動削除ルール</td><td>completed/error: 72時間<br>running/stalled/pending: 168時間</td><td>品質管理部H-4対応: 監視OFF後の残留タスク防止</td></tr>
+	<tr><td>outputFile パス長</td><td>最大500文字</td><td>ワークスペース配下のみ（H-2対応）</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="ui-design">8. UI設計</h2>
+
+<h3>8.1 サイドバーへの表示方式</h3>
+
+<p>新しいビューは追加しない。<strong>既存のエージェント管理ビューにインラインで表示する。</strong></p>
+
+<div class="info">
+	<strong>理由:</strong> サイドバーのビューが既に5つ（会話/ブックマーク/タグ/エージェント/メモリ）あり、
+	これ以上増やすと使いにくくなる。タスクはエージェントに紐づくため、エージェントツリーの子要素として表示する。
+</div>
+
+<h3>8.2 エージェントツリーの拡張</h3>
+
+<pre><code>claudeAgents (エージェント管理)
++-- [green] 取締役 [opus] -- 全体統括
+|   +-- [check] CSM開発部へ: v0.3.0品質改善 (完了 2分前)
+|   +-- [spin] テスト部へ: E2Eテスト実行 (実行中 5分)
++-- [green] CSM開発部 [sonnet] -- CSM開発
+|   +-- [warn] セルフレビュー実行 (停止 60秒)
++-- [grey] テスト部 [sonnet] -- テスト実行
+|   +-- [spin] E2Eテスト実行 (実行中 5分)
++-- [grey] 調査部 [haiku] -- 調査</code></pre>
+
+<h4>表示ルール</h4>
+<ul>
+	<li>各エージェントの子要素として、そのエージェントに関連するタスクログを表示</li>
+	<li>表示対象: <code>pending</code>, <code>running</code>, <code>stalled</code>, および直近の <code>completed</code>/<code>error</code>（1時間以内）</li>
+	<li>古い completed/error は非表示（ただしデータは保持）</li>
+	<li>タスクログの右クリックメニュー: 出力を開く / 完了にする / 削除</li>
+</ul>
+
+<div class="info">
+	<strong>品質管理部指摘 M-5 対応:</strong>
+	TaskTracker 内にエージェント名 -> TaskLog[] のインデックス（Map）を保持し、
+	<code>getChildren()</code> では <code>loadData()</code> を呼ばずインデックスを参照する。
+	evaluate() 実行時にインデックスを再構築する。
+</div>
+
+<h3>8.3 タスクログアイテムの表示</h3>
+
+<table>
+	<tr><th>状態</th><th>アイコン</th><th>ラベル例</th></tr>
+	<tr><td>pending</td><td>$(circle-outline)</td><td>v0.3.0品質改善 (待機中)</td></tr>
+	<tr><td>running</td><td>$(sync~spin)</td><td>v0.3.0品質改善 (実行中 3分)</td></tr>
+	<tr><td>stalled</td><td>$(warning)</td><td>v0.3.0品質改善 (停止 65秒)</td></tr>
+	<tr><td>completed</td><td>$(check)</td><td>v0.3.0品質改善 (完了 2分前)</td></tr>
+	<tr><td>error</td><td>$(error)</td><td>v0.3.0品質改善 (エラー)</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="settings">9. 設定項目</h2>
+
+<table>
+	<tr><th>設定キー</th><th>型</th><th>デフォルト</th><th>説明</th></tr>
+	<tr>
+		<td><code>claudeManager.taskNotification</code></td>
+		<td>boolean</td>
+		<td>true</td>
+		<td>タスク完了・エラー時のVS Code通知を有効にする</td>
+	</tr>
+	<tr>
+		<td><code>claudeManager.taskStalledThreshold</code></td>
+		<td>number</td>
+		<td>60</td>
+		<td>stalled 判定の閾値（秒、最小10）。Extended Thinking 対応で60秒推奨</td>
+	</tr>
+	<tr>
+		<td><code>claudeManager.taskAutoCleanupHours</code></td>
+		<td>number</td>
+		<td>72</td>
+		<td>完了/エラーのタスクログを自動削除するまでの時間（時間）。running/stalled/pending は168時間</td>
+	</tr>
+	<tr>
+		<td><code>claudeManager.taskMaxLogs</code></td>
+		<td>number</td>
+		<td>100</td>
+		<td>保持するタスクログの最大件数</td>
+	</tr>
+</table>
+
+<div class="info">
+	<strong>enableAgentMonitor との関係:</strong>
+	<ul>
+		<li><code>enableAgentMonitor: true</code> -> タスクログ OK / 状態検知 OK / 通知 OK</li>
+		<li><code>enableAgentMonitor: false</code> -> タスクログ OK / 状態検知 NG / 通知 NG</li>
+	</ul>
+	監視OFFでもタスクログの記録・閲覧は可能。ただし状態は自動更新されず <code>pending</code> のまま。
+	手動で「完了にする」操作のみ可能。
+</div>
+
+<div class="warn">
+	<strong>品質管理部指摘 H-4 対応:</strong>
+	<code>enableAgentMonitor</code> が ON -> OFF に切り替わったタイミングで、
+	<code>running</code>/<code>stalled</code> 状態のタスクを <code>pending</code> にリセットし、
+	ユーザーに「監視がOFFになりました。進行中のタスクは手動で完了にしてください」と通知する。
+	加えて、running/stalled/pending で168時間経過したタスクも自動クリーンアップ対象とする。
+</div>
+
+<!-- ============================================================ -->
+<h2 id="file-changes">10. ファイル変更一覧</h2>
+
+<table>
+	<tr><th>ファイル</th><th>種別</th><th>変更内容</th></tr>
+	<tr>
+		<td><code>src/taskTracker.ts</code></td>
+		<td><span class="badge badge-new">新規</span></td>
+		<td>TaskTracker クラス: タスクログの状態評価（バッチ処理）、通知、エージェント別インデックス</td>
+	</tr>
+	<tr>
+		<td><code>src/types.ts</code></td>
+		<td><span class="badge badge-mod">変更</span></td>
+		<td>TaskLog, TaskStatus 型追加。ManagerData に taskLogs 追加</td>
+	</tr>
+	<tr>
+		<td><code>src/dataStore.ts</code></td>
+		<td><span class="badge badge-mod">変更</span></td>
+		<td>taskLogs の CRUD: addTaskLog（summary切り詰め+outputFileバリデーション）, updateTaskLog, removeTaskLog, getTaskLogs, cleanupTaskLogs</td>
+	</tr>
+	<tr>
+		<td><code>src/agentTreeProvider.ts</code></td>
+		<td><span class="badge badge-mod">変更</span></td>
+		<td>getChildren() にタスクログ子要素を追加（TaskTracker のインデックスを参照）。TaskLogItem クラス追加</td>
+	</tr>
+	<tr>
+		<td><code>src/agentWatcher.ts</code></td>
+		<td><span class="badge badge-mod">変更</span></td>
+		<td>sessionMtimes Map 追加（update()冒頭でclear+再構築）。getSessionMtime() API追加</td>
+	</tr>
+	<tr>
+		<td><code>src/extension.ts</code></td>
+		<td><span class="badge badge-mod">変更</span></td>
+		<td>TaskTracker 初期化、コマンド登録（6コマンド）、ステータスバー拡張、enableAgentMonitor OFF時のリセット処理</td>
+	</tr>
+	<tr>
+		<td><code>package.json</code></td>
+		<td><span class="badge badge-mod">変更</span></td>
+		<td>コマンド6つ + 設定項目4つ + メニュー追加</td>
+	</tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="performance">11. パフォーマンス設計</h2>
+
+<h3>11.1 CPU負荷分析</h3>
+
+<table>
+	<tr><th>処理</th><th>頻度</th><th>コスト</th><th>対策</th></tr>
+	<tr>
+		<td>TaskTracker.evaluate()</td>
+		<td>AgentWatcher.onDidChange 時<br>(5秒間隔 + fs.watch)</td>
+		<td>低: O(taskLogs.length) の配列走査</td>
+		<td>taskLogs は最大100件なので問題なし</td>
+	</tr>
+	<tr>
+		<td>outputFile の mtime チェック</td>
+		<td>同上</td>
+		<td>低: fs.statSync 1回/ファイル</td>
+		<td>outputFile 設定済みタスクのみ（通常1~3件）</td>
+	</tr>
+	<tr>
+		<td>dataStore 保存</td>
+		<td>evaluate()で変更があった時のみ（バッチ）</td>
+		<td>低: 1回のみの JSON.stringify + writeFileSync</td>
+		<td>バッチ保存で連続I/Oを防止（H-3対応）</td>
+	</tr>
+</table>
+
+<h3>11.2 追加I/Oの最小化</h3>
+
+<div class="success">
+	<strong>設計の鍵:</strong> TaskTracker は自前でファイルI/Oを行わない。
+	AgentWatcher が既に取得している情報（PID状態、セッションファイルmtime）を受け取るだけ。
+</div>
+
+<pre><code>// AgentWatcher.update() の拡張（Phase B で実装）
+// sessions/*.json を読むループ内で JSONL ファイルの mtime も取得
+
+private sessionMtimes = new Map&lt;string, number&gt;();
+
+// update() 冒頭で clear、ループ内で再構築
+update(): void {
+  this.sessionMtimes.clear(); // M-3対応: 毎回クリアして再構築
+
+  // 既存の sessions/*.json 読み込みループ内:
+  // sessionId を取得した後、対応する JSONL ファイルの stat を取得
+  // this.sessionMtimes.set(sessionId, jsonlStat.mtimeMs);
+}
+
+// 外部API:
+getSessionMtime(sessionId: string): number | undefined {
+  return this.sessionMtimes.get(sessionId);
+}</code></pre>
+
+<h3>11.3 メモリ使用量</h3>
+
+<table>
+	<tr><th>データ</th><th>最大サイズ</th><th>根拠</th></tr>
+	<tr><td>taskLogs 配列（メモリ上）</td><td>~50KB</td><td>100件 x ~500バイト/件</td></tr>
+	<tr><td>sessionMtimes Map</td><td>~2KB</td><td>最大50セッション x 40バイト。update()冒頭でclear</td></tr>
+	<tr><td>agentTaskIndex Map</td><td>~5KB</td><td>エージェント名 -> TaskLog[]。evaluate()で再構築</td></tr>
+	<tr><td>通知キュー</td><td>なし</td><td>即時発火、キューを持たない</td></tr>
+</table>
+
+<h3>11.4 parseSessionQuick との整合性</h3>
+
+<div class="info">
+	<strong>整合性確認:</strong>
+	<ul>
+		<li>parseSessionQuick（H-1/H-5修正後）は先頭4KB+末尾4KBのみ読み取る設計</li>
+		<li>TaskTracker の stalled 判定は <code>fs.statSync</code> の mtime のみ使用 -> parseSessionQuick とは独立</li>
+		<li>outputFile の内容解析は廃止（M-2対応）-> 追加の全ファイル読み取りは一切行わない</li>
+	</ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="qa-review">12. 品質管理部レビュー結果と対応</h2>
+
+<div class="qa-resolved">
+	<h3>高重要度（全4件 -> 全件対応済み）</h3>
+
+	<table>
+		<tr><th>ID</th><th>指摘</th><th>対応</th></tr>
+		<tr>
+			<td>H-1</td>
+			<td><code>fs.statSync</code> が「キャッシュ済み」は誤り。現時点で agentWatcher に sessionMtimes は存在しない</td>
+			<td>コメントを修正。Phase B の実装タスクに sessionMtimes Map 追加を明記</td>
+		</tr>
+		<tr>
+			<td>H-2</td>
+			<td>outputFile のパストラバーサル（OWASP A01:2021）。UNCパス・ワークスペース外パスを拒否すべき</td>
+			<td>validateOutputFile() を追加。ワークスペース配下のみ許可、UNCパス拒否。Section 5.5 に明記</td>
+		</tr>
+		<tr>
+			<td>H-3</td>
+			<td>saveData() の連続呼び出しで同期I/O集中。10件同時変更時に10回 writeFileSync</td>
+			<td>evaluate() 内でバッチ処理。全タスク評価後、変更があった場合のみ1回だけ saveData() を呼ぶ</td>
+		</tr>
+		<tr>
+			<td>H-4</td>
+			<td>監視ON時のタスクが監視OFF後に永久残留（running/stalled が自動クリーンアップ対象外）</td>
+			<td>OFF切替時に running/stalled を pending にリセット + 通知。running/stalled/pending の168時間自動クリーンアップ追加</td>
+		</tr>
+	</table>
+</div>
+
+<div class="qa-section">
+	<h3>中重要度（全5件 -> 全件対応済み）</h3>
+
+	<table>
+		<tr><th>ID</th><th>指摘</th><th>対応</th></tr>
+		<tr>
+			<td>M-1</td>
+			<td>stalled 30秒閾値で Extended Thinking 時に偽陽性</td>
+			<td>デフォルト 60秒 に変更。最小値10秒のバリデーション追加</td>
+		</tr>
+		<tr>
+			<td>M-2</td>
+			<td>outputFile エラーパターン（error, Error）が汎用的すぎて偽陽性</td>
+			<td>outputFile 内容解析を廃止。エラー判定はPID終了コードのみに限定</td>
+		</tr>
+		<tr>
+			<td>M-3</td>
+			<td>sessionMtimes Map のクリーンアップ不在</td>
+			<td>update() 冒頭で sessionMtimes.clear() を行い毎回再構築する設計を明記</td>
+		</tr>
+		<tr>
+			<td>M-4</td>
+			<td>crypto.randomUUID() の Node.js バージョン依存</td>
+			<td>Date.now().toString(36) + Math.random() の軽量代替に変更</td>
+		</tr>
+		<tr>
+			<td>M-5</td>
+			<td>getChildren() の loadData() 呼び出し増加</td>
+			<td>TaskTracker 内にエージェント別インデックス（Map）を保持。getChildren() は loadData() を呼ばない</td>
+		</tr>
+	</table>
+</div>
+
+<div class="qa-section">
+	<h3>低重要度（全4件 -> 全件対応済み）</h3>
+
+	<table>
+		<tr><th>ID</th><th>指摘</th><th>対応</th></tr>
+		<tr>
+			<td>L-1</td>
+			<td>summary 200文字バリデーション位置が未定義</td>
+			<td>dataStore.addTaskLog() 内で .slice(0, 200) を明記</td>
+		</tr>
+		<tr>
+			<td>L-2</td>
+			<td>通知のフラッピング（stalled 境界での揺れ）対策不足</td>
+			<td>lastNotifiedAt フィールド追加。同一状態への再通知は60秒間隔制限</td>
+		</tr>
+		<tr>
+			<td>L-3</td>
+			<td>errorHint のサニタイズ不足</td>
+			<td>errorHint フィールド自体を廃止（M-2対応でエラー内容解析を廃止したため）</td>
+		</tr>
+		<tr>
+			<td>L-4</td>
+			<td>ステータスバーのアクセシビリティ</td>
+			<td>accessibilityInformation プロパティの設定を実装時に対応（設計書レベルでは省略）</td>
+		</tr>
+	</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="implementation-plan">13. 実装計画</h2>
+
+<h3>13.1 フェーズ分割</h3>
+
+<table>
+	<tr><th>フェーズ</th><th>内容</th><th>ファイル</th><th>備考</th></tr>
+	<tr>
+		<td>Phase A</td>
+		<td>データモデル + タスクログCRUD</td>
+		<td>types.ts, dataStore.ts</td>
+		<td>summary切り詰め、outputFileバリデーション、自動クリーンアップ含む</td>
+	</tr>
+	<tr>
+		<td>Phase B</td>
+		<td>TaskTracker コア + 状態検知</td>
+		<td>taskTracker.ts, agentWatcher.ts</td>
+		<td><strong>agentWatcher に sessionMtimes Map 追加（H-1）</strong>、バッチ保存（H-3）、エージェント別インデックス（M-5）</td>
+	</tr>
+	<tr>
+		<td>Phase C</td>
+		<td>UI（ツリー拡張 + コマンド）</td>
+		<td>agentTreeProvider.ts, extension.ts, package.json</td>
+		<td>6コマンド登録、メニュー追加</td>
+	</tr>
+	<tr>
+		<td>Phase D</td>
+		<td>通知 + ステータスバー拡張</td>
+		<td>taskTracker.ts, extension.ts</td>
+		<td>フラッピング対策（L-2）、enableAgentMonitor OFF時リセット（H-4）含む</td>
+	</tr>
+	<tr>
+		<td>Phase E</td>
+		<td>自動検出（subagentDetector連携）</td>
+		<td>taskTracker.ts</td>
+		<td>段階的に追加可能</td>
+	</tr>
+</table>
+
+<h3>13.2 見積もり</h3>
+
+<table>
+	<tr><th>フェーズ</th><th>新規コード量（概算）</th></tr>
+	<tr><td>Phase A</td><td>~80行（型定義 + CRUD + バリデーション）</td></tr>
+	<tr><td>Phase B</td><td>~180行（TaskTracker本体 + agentWatcher拡張 + インデックス）</td></tr>
+	<tr><td>Phase C</td><td>~120行（ツリー拡張 + コマンド）</td></tr>
+	<tr><td>Phase D</td><td>~100行（通知 + ステータスバー + フラッピング対策 + OFFリセット）</td></tr>
+	<tr><td>Phase E</td><td>~50行（自動検出連携）</td></tr>
+	<tr><td><strong>合計</strong></td><td><strong>~530行</strong></td></tr>
+</table>
+
+<div class="info">
+	<strong>既存コードへの影響:</strong> 変更行数は agentTreeProvider.ts (~30行追加), extension.ts (~60行追加),
+	agentWatcher.ts (~25行追加), dataStore.ts (~50行追加) 程度。
+	既存ロジックの書き換えは最小限。
+</div>
+
+</div>
+</body>
+</html>

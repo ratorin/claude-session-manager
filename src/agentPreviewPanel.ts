@@ -6,22 +6,25 @@ import { getRuleFileInfo } from './agentManager';
 
 // プレビューパネルの参照
 let previewPanel: vscode.WebviewPanel | undefined;
+// メッセージリスナーのDisposable（累積防止用）
+let messageListenerDisposable: vscode.Disposable | undefined;
 
-// エージェントプレビューを表示（読み取り専用）
-export function showAgentPreview(
+// エージェントプレビューを表示（読み取り専用・非同期）
+export async function showAgentPreview(
 	agent: AgentConfig,
 	isLive: boolean,
 	sessionTitle: string | undefined,
 	onEdit: (agent: AgentConfig) => void,
 	onEditRuleFile: (agent: AgentConfig) => void,
 	onOpenSession: (sessionId: string) => void
-): void {
+): Promise<void> {
 	const title = `🤖 ${agent.name}`;
+	const html = await getPreviewHtml(agent, isLive, sessionTitle);
 
 	if (previewPanel) {
 		previewPanel.reveal(vscode.ViewColumn.One);
 		previewPanel.title = title;
-		previewPanel.webview.html = getPreviewHtml(agent, isLive, sessionTitle);
+		previewPanel.webview.html = html;
 		rebindMessages(previewPanel, agent, onEdit, onEditRuleFile, onOpenSession);
 		return;
 	}
@@ -33,8 +36,14 @@ export function showAgentPreview(
 		{ enableScripts: true }
 	);
 
-	previewPanel.webview.html = getPreviewHtml(agent, isLive, sessionTitle);
-	previewPanel.onDidDispose(() => { previewPanel = undefined; });
+	previewPanel.webview.html = html;
+	previewPanel.onDidDispose(() => {
+		previewPanel = undefined;
+		if (messageListenerDisposable) {
+			messageListenerDisposable.dispose();
+			messageListenerDisposable = undefined;
+		}
+	});
 	rebindMessages(previewPanel, agent, onEdit, onEditRuleFile, onOpenSession);
 }
 
@@ -45,7 +54,12 @@ function rebindMessages(
 	onEditRuleFile: (agent: AgentConfig) => void,
 	onOpenSession: (sessionId: string) => void
 ): void {
-	panel.webview.onDidReceiveMessage((message) => {
+	// 古いリスナーを解除して累積を防止
+	if (messageListenerDisposable) {
+		messageListenerDisposable.dispose();
+		messageListenerDisposable = undefined;
+	}
+	messageListenerDisposable = panel.webview.onDidReceiveMessage((message) => {
 		if (message.type === 'edit') {
 			onEdit(agent);
 		} else if (message.type === 'editRuleFile') {
@@ -62,13 +76,13 @@ function escapeHtml(text: string): string {
 	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle: string | undefined): string {
+async function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle: string | undefined): Promise<string> {
 	const modelLabel = agent.model === 'opus' ? 'Opus' : agent.model === 'haiku' ? 'Haiku' : 'Sonnet';
 	const modeLabel = agent.sessionMode === 'disposable' ? '使い捨て' : '固定';
 	const statusLabel = isLive ? '🟢 動作中' : '⚪ 停止中';
 
 	// 子エージェント一覧
-	const allAgents = dataStore.getAgents();
+	const allAgents = await dataStore.getAgents();
 	const children = allAgents.filter((a) => a.parentAgent === agent.name);
 	const childrenHtml = children.length > 0
 		? children.map((c) => {
@@ -85,15 +99,15 @@ function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle: strin
 		? (sessionTitle ? escapeHtml(sessionTitle) : `${agent.sessionId.substring(0, 8)}...`)
 		: '未紐づけ';
 
-	// ルールファイル内容
+	// ルールファイル内容（非同期）
 	let ruleContent = '';
 	let ruleInfoStr = '';
 	if (agent.ruleFile) {
-		const info = getRuleFileInfo(agent.ruleFile);
+		const info = await getRuleFileInfo(agent.ruleFile);
 		if (info) {
 			ruleInfoStr = `📄 ${info.lines}行 (${info.sizeKb}KB)`;
 			try {
-				const raw = fs.readFileSync(agent.ruleFile, 'utf-8');
+				const raw = await fs.promises.readFile(agent.ruleFile, 'utf-8');
 				ruleContent = escapeHtml(raw);
 			} catch {
 				ruleContent = '（読み込みエラー）';

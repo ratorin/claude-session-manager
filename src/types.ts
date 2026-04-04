@@ -84,10 +84,54 @@ export interface AgentConfig {
 	parentAgent?: string;        // 親エージェント名（班の場合）
 	allowedTools?: string[];     // 許可ツール一覧
 	workDir?: string;            // 作業ディレクトリ
+	scope?: 'global' | 'project'; // ルールファイルのスコープ
 	status?: 'active' | 'idle' | 'archived';
+	// Phase 1b: モデル制御
+	effort?: 'low' | 'medium' | 'high' | 'max'; // 推論努力レベル（max は Opus 4.6 のみ）
+	thinkingEnabled?: boolean;   // Extended Thinking 有効/無効
+	maxThinkingTokens?: number;  // Thinking最大トークン数（環境変数 MAX_THINKING_TOKENS で反映）
 }
 
-// 拡張機能の永続データ
+// agentWatcher のイベントデータ
+export interface AgentWatcherState {
+	agentName: string;
+	sessionId: string;
+	isLive: boolean;
+	activeSubagentIds: string[];
+}
+
+// サブエージェント情報
+export interface SubagentInfo {
+	toolUseId: string;
+	name: string;           // Task or Agent
+	description?: string;
+	startedAt: number;      // タイムスタンプ
+}
+
+// ローカル（プロジェクト固有）永続データ
+export interface LocalManagerData {
+	agents?: AgentConfig[];  // プロジェクト固有エージェント
+}
+
+// タスク状態
+export type TaskStatus = 'pending' | 'running' | 'stalled' | 'completed' | 'error';
+
+// タスクログ
+export interface TaskLog {
+	id: string;               // ユニークID
+	agentName: string;        // エージェント名
+	sessionId: string;        // エージェントのセッションID
+	summary: string;          // タスク概要（最大200文字）
+	outputFile?: string;      // 出力先ファイルパス
+	status: TaskStatus;       // 現在の状態
+	createdAt: number;        // 作成タイムスタンプ（ms）
+	completedAt?: number;     // 完了タイムスタンプ（ms）
+	toolUseId?: string;       // 自動検出時の tool_use ID
+	notifiedStatus?: TaskStatus; // 最後に通知した状態
+	lastNotifiedAt?: number;  // 最後に通知した時刻
+}
+
+// 拡張機能の永続データ（グローバル）
 export interface ManagerData {
 	bookmarks: string[]; // セッションIDの配列
 	tags: Record<string, string[]>; // タグ名 → セッションIDの配列
@@ -95,4 +139,5 @@ export interface ManagerData {
 	notes: Record<string, string>; // セッションID → メモ
 	agents?: AgentConfig[]; // エージェント設定
 	ruleFolder?: string; // ルールフォルダパス（例: c:/xampp/Project/.agent-rules）
+	taskLogs?: TaskLog[]; // タスクログ
 }

@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSM エージェント設定フォーム 仕様書</title>
+<style>
+	:root {
+		--accent: #e27e4a;
+		--accent-bg: rgba(226, 126, 74, 0.08);
+		--bg: #1e1e1e;
+		--surface: #252526;
+		--surface2: #2d2d30;
+		--border: #3e3e42;
+		--text: #cccccc;
+		--text-dim: #888888;
+		--text-bright: #ffffff;
+		--green: #4ec9b0;
+		--blue: #569cd6;
+		--yellow: #dcdcaa;
+		--red: #f44747;
+		--purple: #c586c0;
+	}
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	body {
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+		background: var(--bg);
+		color: var(--text);
+		line-height: 1.7;
+		padding: 0;
+	}
+
+	/* ヘッダー */
+	.header {
+		background: linear-gradient(135deg, #2d1f14 0%, #1e1e1e 100%);
+		border-bottom: 2px solid var(--accent);
+		padding: 40px 32px;
+	}
+	.header h1 {
+		font-size: 28px;
+		color: var(--accent);
+		font-weight: 600;
+		margin-bottom: 8px;
+	}
+	.header .subtitle {
+		font-size: 14px;
+		color: var(--text-dim);
+	}
+	.header .version {
+		display: inline-block;
+		margin-top: 12px;
+		padding: 4px 12px;
+		background: var(--accent-bg);
+		border: 1px solid var(--accent);
+		border-radius: 12px;
+		font-size: 12px;
+		color: var(--accent);
+	}
+
+	/* メインコンテンツ */
+	.content {
+		max-width: 960px;
+		margin: 0 auto;
+		padding: 32px;
+	}
+
+	/* 目次 */
+	.toc {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 20px 24px;
+		margin-bottom: 40px;
+	}
+	.toc h2 {
+		font-size: 16px;
+		color: var(--accent);
+		margin-bottom: 12px;
+	}
+	.toc ol {
+		padding-left: 24px;
+	}
+	.toc li {
+		margin-bottom: 4px;
+	}
+	.toc a {
+		color: var(--blue);
+		text-decoration: none;
+		font-size: 13px;
+	}
+	.toc a:hover { text-decoration: underline; }
+	.toc .planned { color: var(--text-dim); font-style: italic; }
+	.toc .section-label {
+		font-size: 11px;
+		color: var(--text-dim);
+		margin-top: 8px;
+		margin-bottom: 2px;
+		font-weight: 600;
+		list-style: none;
+		margin-left: -24px;
+	}
+
+	/* セクション */
+	section {
+		margin-bottom: 48px;
+	}
+	section > h2 {
+		font-size: 20px;
+		color: var(--text-bright);
+		border-bottom: 1px solid var(--border);
+		padding-bottom: 8px;
+		margin-bottom: 20px;
+	}
+	section > h2 .num {
+		color: var(--accent);
+		margin-right: 8px;
+	}
+
+	/* 設定項目カード */
+	.setting-card {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		margin-bottom: 24px;
+		overflow: hidden;
+	}
+	.setting-card.planned {
+		border-style: dashed;
+		opacity: 0.85;
+	}
+	.setting-header {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 16px 20px;
+		background: var(--surface2);
+		border-bottom: 1px solid var(--border);
+		flex-wrap: wrap;
+	}
+	.setting-header h3 {
+		font-size: 16px;
+		color: var(--text-bright);
+		flex: 1;
+		min-width: 150px;
+	}
+	.badge {
+		display: inline-block;
+		padding: 2px 8px;
+		border-radius: 4px;
+		font-size: 11px;
+		font-weight: 600;
+	}
+	.badge-required { background: rgba(244, 71, 71, 0.15); color: var(--red); border: 1px solid var(--red); }
+	.badge-optional { background: rgba(136, 136, 136, 0.15); color: var(--text-dim); border: 1px solid var(--text-dim); }
+	.badge-ui { background: rgba(86, 156, 214, 0.15); color: var(--blue); border: 1px solid var(--blue); }
+	.badge-phase { background: rgba(197, 134, 192, 0.15); color: var(--purple); border: 1px solid var(--purple); }
+	.badge-new { background: rgba(78, 201, 176, 0.15); color: var(--green); border: 1px solid var(--green); }
+
+	.setting-body {
+		padding: 20px;
+	}
+
+	/* プロパティテーブル */
+	.props {
+		width: 100%;
+		border-collapse: collapse;
+		margin-bottom: 16px;
+		font-size: 13px;
+	}
+	.props th {
+		text-align: left;
+		padding: 8px 12px;
+		background: var(--surface2);
+		color: var(--text-dim);
+		font-weight: 500;
+		width: 160px;
+		border: 1px solid var(--border);
+		white-space: nowrap;
+	}
+	.props td {
+		padding: 8px 12px;
+		border: 1px solid var(--border);
+	}
+	.props code {
+		background: var(--surface2);
+		padding: 2px 6px;
+		border-radius: 3px;
+		font-family: 'Consolas', 'Courier New', monospace;
+		font-size: 12px;
+		color: var(--green);
+	}
+	.props .disabled-cell {
+		color: var(--text-dim);
+		opacity: 0.5;
+	}
+	.props .check { color: var(--green); }
+	.props .cross { color: var(--red); }
+
+	/* 挙動セクション */
+	.behavior {
+		background: var(--surface2);
+		border-radius: 6px;
+		padding: 16px;
+		margin-top: 12px;
+	}
+	.behavior h4 {
+		font-size: 13px;
+		color: var(--accent);
+		margin-bottom: 8px;
+	}
+	.behavior ul {
+		padding-left: 20px;
+		font-size: 13px;
+	}
+	.behavior li {
+		margin-bottom: 4px;
+	}
+
+	/* 注意ボックス */
+	.note-box {
+		background: rgba(226, 126, 74, 0.06);
+		border: 1px solid rgba(226, 126, 74, 0.3);
+		border-radius: 6px;
+		padding: 12px 16px;
+		margin-top: 12px;
+		font-size: 13px;
+	}
+	.note-box strong {
+		color: var(--accent);
+	}
+
+	/* Phase計画 */
+	.phase-section {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 24px;
+		margin-top: 16px;
+	}
+	.phase-section h3 {
+		font-size: 15px;
+		color: var(--purple);
+		margin-bottom: 12px;
+	}
+	.phase-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 16px;
+	}
+	.phase-box {
+		background: var(--surface2);
+		border-radius: 6px;
+		padding: 16px;
+		border-left: 3px solid var(--purple);
+	}
+	.phase-box h4 {
+		font-size: 13px;
+		color: var(--text-bright);
+		margin-bottom: 8px;
+	}
+	.phase-box ul {
+		padding-left: 18px;
+		font-size: 12px;
+	}
+	.phase-box li { margin-bottom: 3px; }
+
+	/* フローチャート風 */
+	.flow {
+		background: var(--surface2);
+		border-radius: 6px;
+		padding: 16px;
+		margin-top: 12px;
+		font-family: 'Consolas', monospace;
+		font-size: 12px;
+		line-height: 1.8;
+		color: var(--text-dim);
+		overflow-x: auto;
+	}
+	.flow .step { color: var(--green); }
+	.flow .arrow { color: var(--accent); }
+	.flow .note { color: var(--yellow); font-style: italic; }
+
+	/* データフロー図 */
+	.diagram {
+		background: var(--surface2);
+		border-radius: 6px;
+		padding: 20px;
+		margin: 16px 0;
+		text-align: center;
+	}
+	.diagram pre {
+		display: inline-block;
+		text-align: left;
+		font-size: 12px;
+		line-height: 1.6;
+		color: var(--text);
+	}
+
+	/* グレーアウト説明 */
+	.grayout-demo {
+		display: flex;
+		gap: 12px;
+		margin-top: 12px;
+		flex-wrap: wrap;
+	}
+	.grayout-demo .card {
+		flex: 1;
+		min-width: 140px;
+		padding: 10px 14px;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		text-align: center;
+		font-size: 12px;
+		background: var(--surface);
+	}
+	.grayout-demo .card.active {
+		border-color: var(--accent);
+		background: var(--accent-bg);
+		color: var(--accent);
+		font-weight: 600;
+	}
+	.grayout-demo .card.disabled {
+		opacity: 0.35;
+		pointer-events: none;
+	}
+	.grayout-demo .card .sub {
+		font-size: 10px;
+		color: var(--text-dim);
+		margin-top: 2px;
+	}
+
+	/* 区切り線 */
+	.divider {
+		border: none;
+		border-top: 1px dashed var(--border);
+		margin: 48px 0;
+	}
+</style>
+</head>
+<body>
+
+<div class="header">
+	<h1>エージェント設定フォーム 仕様書</h1>
+	<div class="subtitle">Claude Session Manager &mdash; agentFormPanel.ts 全項目詳細仕様</div>
+	<span class="version">v0.2.8 現在 + Phase 1b〜4 計画</span>
+</div>
+
+<div class="content">
+
+<!-- 目次 -->
+<div class="toc">
+	<h2>目次</h2>
+	<ol>
+		<li class="section-label">フォーム項目（既存）</li>
+		<li><a href="#name">部署名</a></li>
+		<li><a href="#role">役割の説明</a></li>
+		<li><a href="#model">モデル選択</a></li>
+		<li class="section-label">フォーム項目（Phase 1b 計画 &mdash; モデル選択の直後に配置）</li>
+		<li><a href="#effort" class="planned">Effort（推論努力レベル）</a></li>
+		<li><a href="#thinking" class="planned">Thinking ON/OFF</a></li>
+		<li><a href="#max-thinking" class="planned">maxThinkingTokens</a></li>
+		<li class="section-label">フォーム項目（既存 &mdash; 続き）</li>
+		<li><a href="#session-mode">セッション運用</a></li>
+		<li><a href="#parent">親エージェント</a></li>
+		<li><a href="#workdir">作業フォルダ</a></li>
+		<li><a href="#scope">ルールファイルのスコープ</a></li>
+		<li class="section-label">モデル別機能対応 / UI追加仕様</li>
+		<li><a href="#model-compat">モデル別機能対応表</a></li>
+		<li><a href="#settings-gear">会話一覧の設定歯車アイコン</a></li>
+		<li class="section-label">システム設計</li>
+		<li><a href="#data-flow">データフロー</a></li>
+		<li><a href="#phases">Phase計画との関連</a></li>
+	</ol>
+</div>
+
+<!-- ================================================================ -->
+<!-- 1. 部署名                                                        -->
+<!-- ================================================================ -->
+<section id="name">
+<h2><span class="num">1.</span> 部署名</h2>
+<div class="setting-card">
+	<div class="setting-header">
+		<h3>部署名</h3>
+		<span class="badge badge-required">必須</span>
+		<span class="badge badge-ui">テキスト入力</span>
+	</div>
+	<div class="setting-body">
+		<table class="props">
+			<tr><th>説明</th><td>エージェントの識別名。組織図・ツリー・ステータスバー等あらゆる箇所で使用される</td></tr>
+			<tr><th>AgentConfig</th><td><code>name: string</code></td></tr>
+			<tr><th>デフォルト</th><td>空文字（プレースホルダー: 「CSM開発部」）</td></tr>
+			<tr><th>バリデーション</th><td>空文字不可。保存ボタンは部署名が空の間は <code>disabled</code></td></tr>
+			<tr><th>一意性</th><td><code>dataStore.addAgent()</code> は name をキーとして upsert する。同名の場合は上書き</td></tr>
+			<tr><th>CLI反映</th><td>なし（CLIオプションには渡さない）。ルールファイル内に記述される</td></tr>
+		</table>
+		<div class="behavior">
+			<h4>挙動の詳細</h4>
+			<ul>
+				<li>入力するたびに <code>updateRuleFilePath()</code> が呼ばれ、ルールファイルパスのプレビューが更新される</li>
+				<li>保存時、ルールファイルのファイル名は <code>{name}.md</code> となる</li>
+				<li>編集時に名前を変更した場合、旧名の AgentConfig は <code>removeAgent(oldName)</code> で削除後、新名で追加</li>
+				<li>取締役プリセットでは <code>"取締役"</code> がデフォルト値として入る</li>
+			</ul>
+		</div>
+	</div>
+</div>
+</section>
+
+<!-- ================================================================ -->
+<!-- 2. 役割の説明                                                     -->
+<!-- ================================================================ -->
+<section id="role">
+<h2><span class="num">2.</span> 役割の説明</h2>
+<div class="setting-card">
+	<div class="setting-header">
+		<h3>役割の説明</h3>
+		<span class="badge badge-optional">任意</span>
+		<span class="badge badge-ui">テキスト入力</span>
+	</div>
+	<div class="setting-body">
+		<table class="props">
+			<tr><th>説明</th><td>エージェントが担当する業務内容の自由記述</td></tr>
+			<tr><th>AgentConfig</th><td><code>role: string</code></td></tr>
+			<tr><th>デフォルト</th><td>空文字（プレースホルダー: 「TypeScript開発・品質管理」）</td></tr>
+			<tr><th>バリデーション</th><td>なし（空でも保存可能）</td></tr>
+			<tr><th>CLI反映</th><td>なし。ルールファイル内のテンプレートに埋め込まれる</td></tr>
+		</table>
+		<div class="behavior">
+			<h4>挙動の詳細</h4>
+			<ul>
+				<li>自動生成されるルールファイルの冒頭に <code>- {role}を担当する</code> として記載</li>
+				<li>空の場合は <code>（役割未設定）</code> が代入される</li>
+				<li>エージェント一覧（agentTreeProvider）の description に表示</li>
+				<li>組織図（orgChartPanel）のカード内に表示</li>
+				<li>プレビュー（agentPreviewPanel）のバッジに表示</li>
+				<li>親エージェント選択肢のラベルにも <code>{name} — {role}</code> として表示</li>
+			</ul>
+		</div>
+	</div>
+</div>
+</section>
+
+<!-- ================================================================ -->
+<!-- 3. モデル選択                                                     -->
+<!-- ================================================================ -->
+<section id="model">
+<h2><span class="num">3.</span> モデル選択</h2>
+<div class="setting-card">
+	<div class="setting-header">
+		<h3>モデル選択</h3>
+		<span class="badge badge-required">必須</span>
+		<span class="badge badge-ui">カード型ラジオ</span>
+	</div>
+	<div class="setting-body">
+		<table class="props">
+			<tr><th>説明</th><td>エージェントが使用する Claude モデルを選択。後続の Effort / Thinking / maxThinkingTokens の有効/無効にも影響する</td></tr>
+			<tr><th>AgentConfig</th><td><code>model: 'opus' | 'sonnet' | 'haiku'</code></td></tr>
+			<tr><th>デフォルト</th><td><code>'opus'</code>（新規作成時・取締役プリセット共通）</td></tr>
+			<tr><th>バリデーション</th><td>3択のラジオのため常に1つ選択状態</td></tr>
+			<tr><th>CLI反映</th><td><code>claude --model {model}</code> &mdash; 取締役が子エージェントをCLI起動する際に使用</td></tr>
+		</table>
+		<table class="props" style="margin-top: 12px;">
+			<tr><th>選択肢</th><th>説明文</th><th>推奨用途</th></tr>
+			<tr><td><code>opus</code></td><td>高度な判断・複雑な開発</td><td>取締役、複雑な開発部署</td></tr>
+			<tr><td><code>sonnet</code></td><td>定型作業・補助（コスト効率◎）</td><td>日常的な開発作業</td></tr>
+			<tr><td><code>haiku</code></td><td>軽量タスク・高速応答</td><td>調査、軽量タスク</td></tr>
+		</table>
+		<div class="behavior">
+			<h4>挙動の詳細</h4>
+			<ul>
+				<li>エージェント一覧で <code>[opus]</code> のようにモデルバッジとして表示</li>
+				<li>セッション一覧では先頭にモデル頭文字（Ｏ/Ｓ/Ｈ）を表示</li>
+				<li>組織図のカード内にモデルバッジ表示</li>
+				<li><strong>モデル変更時、後続の Effort / Thinking / maxThinkingTokens の有効/無効状態を連動更新する</strong>（詳細は <a href="#model-compat">#11 モデル別機能対応表</a> を参照）</li>
+			</ul>
+		</div>
+	</div>
+</div>
+</section>
+
+<!-- ================================================================ -->
+<!-- 4. Effort（推論努力レベル）                                        -->
+<!-- ================================================================ -->
+<section id="effort">
+<h2><span class="num">4.</span> Effort（推論努力レベル）</h2>
+<div class="setting-card planned">
+	<div class="setting-header">
+		<h3>Effort</h3>
+		<span class="badge badge-optional">任意</span>
+		<span class="badge badge-ui">カード型ラジオ</span>
+		<span class="badge badge-phase">Phase 1b 計画</span>
+	</div>
+	<div class="setting-body">
+		<table class="props">
+			<tr><th>説明</th><td>モデルの推論にかける労力を制御する。低いほど高速・低コスト、高いほど精密・高コスト</td></tr>
+			<tr><th>AgentConfig</th><td><code>effort?: 'low' | 'medium' | 'high' | 'max'</code>（追加予定）</td></tr>
+			<tr><th>デフォルト</th><td><code>'high'</code></td></tr>
+			<tr><th>バリデーション</th><td>4択のラジオのため常に1つ選択状態。モデルが非対応の場合はグレーアウト。<strong><code>max</code> は Opus 4.6 のみ対応</strong> &mdash; 他モデルでは <code>max</code> カードをグレーアウト</td></tr>
+			<tr><th>CLI反映</th><td><code>claude --effort {value}</code></td></tr>
+			<tr><th>フォーム配置</th><td><strong>モデル選択（#3）の直後</strong></td></tr>
+		</table>
+		<table class="props" style="margin-top: 12px;">
+			<tr><th>選択肢</th><th>説明文</th><th>推奨用途</th></tr>
+			<tr><td><code>low</code></td><td>高速・低コスト</td><td>簡単なタスク、定型作業、ファイル検索・読み取り</td></tr>
+			<tr><td><code>medium</code></td><td>バランス</td><td>一般的な開発タスク、コードレビュー</td></tr>
+			<tr><td><code>high</code></td><td>精密・高品質</td><td>複雑な設計、アーキテクチャ判断</td></tr>
+			<tr><td><code>max</code></td><td>最大努力 <strong style="color:#f44747;">※ Opus 4.6 のみ</strong></td><td>仕様策定、取締役タスク、最高精度が必要な場面</td></tr>
+		</table>
+
+		<div class="grayout-demo">
+			<div class="card">Low<div class="sub">高速・低コスト</div></div>
+			<div class="card">Medium<div class="sub">バランス</div></div>
+			<div class="card active">High<div class="sub">精密・高品質</div></div>
+			<div class="card">Max<div class="sub">最大努力（Opus限定）</div></div>
+		</div>
+
+		<div class="behavior">
+			<h4>想定挙動</h4>
+			<ul>
+				<li>モデル選択と同じカード型ラジオUIを使用（統一感のあるデザイン）</li>
+				<li>モデルが Effort 非対応の場合、4枚とも <code>opacity: 0.35</code> + <code>pointer-events: none</code> でグレーアウト</li>
+				<li><strong><code>max</code> は Opus 4.6 のみ対応</strong>。Sonnet / Haiku 選択時は <code>max</code> カードのみグレーアウト（low/medium/high は有効）</li>
+				<li>グレーアウト時は「このモデルでは使用できません」のテキストを表示</li>
+				<li>Effort は Thinking とは独立した設定（Thinking OFF でも Effort は機能する）</li>
+				<li>取締役ルールファイルの「エージェント操作」セクションで <code>--effort {value}</code> を記載</li>
+			</ul>
+		</div>
+	</div>
+</div>
+</section>
+
+<!-- ================================================================ -->
+<!-- 5. Thinking ON/OFF                                                -->
+<!-- ================================================================ -->
+<section id="thinking">
+<h2><span class="num">5.</span> Thinking ON/OFF</h2>
+<div class="setting-card planned">
+	<div class="setting-header">
+		<h3>Thinking ON/OFF</h3>
+		<span class="badge badge-optional">任意</span>
+		<span class="badge badge-ui">トグルスイッチ</span>
+		<span class="badge badge-phase">Phase 1b 計画</span>
+	</div>
+	<div class="setting-body">
+		<table class="props">
+			<tr><th>説明</th><td>エージェントの Extended Thinking（拡張思考）を有効/無効にする</td></tr>
+			<tr><th>AgentConfig</th><td><code>thinkingEnabled?: boolean</code>（追加予定）</td></tr>
+			<tr><th>デフォルト</th><td><code>true</code>（Claude Code のデフォルト動作に合わせる）</td></tr>
+			<tr><th>バリデーション</th><td>boolean のトグル。モデルが非対応の場合はグレーアウト（OFF固定）</td></tr>
+			<tr><th>CLI反映</th><td>
+				<strong style="color:#f44747;">CLIフラグは存在しない</strong>（<code>--no-thinking</code> 等は非対応）。<br>
+				制御方法: <code>~/.claude/settings.json</code> の <code>alwaysThinkingEnabled</code> を変更、<br>
+				または対話モードで Alt+T（Windows/Linux）/ Option+T（macOS）で切り替え。<br>
+				ON の場合: 追加対応なし（デフォルト動作）
+			</td></tr>
+			<tr><th>フォーム配置</th><td><strong>Effort（#4）の直後</strong></td></tr>
+		</table>
+		<div class="behavior">
+			<h4>想定挙動</h4>
+			<ul>
+				<li>ON/OFFのトグルスイッチで直感的に切り替え</li>
+				<li>OFFにすると後続の maxThinkingTokens（#6）を自動的にグレーアウト</li>
+				<li>モデルが Thinking 非対応（例: Haiku）の場合、トグル自体がグレーアウト（OFF固定）し、maxThinkingTokens もグレーアウト</li>
+				<li>軽量タスク（調査、単純なコード生成）では OFF にしてコスト削減</li>
+				<li>取締役や複雑な判断が必要なエージェントは ON を推奨</li>
+				<li>取締役ルールファイルの「エージェント操作」セクションに thinking 制御方法（<code>settings.json</code> の <code>alwaysThinkingEnabled</code>）を注記</li>
+			</ul>
+		</div>
+
+		<div class="note-box">
+			<strong>グレーアウト条件:</strong> モデルが Thinking 非対応 → トグルは OFF 固定 + グレーアウト。
+			ユーザーが操作不能であることを明示するため、「Haiku は Extended Thinking に非対応です」等のテキストを表示する。
+		</div>
+	</div>
+</div>
+</section>
+
+<!-- ================================================================ -->
+<!-- 6. maxThinkingTokens                                              -->
+<!-- ================================================================ -->
+<section id="max-thinking">
+<h2><span class="num">6.</span> maxThinkingTokens</h2>
+<div class="setting-card planned">
+	<div class="setting-header">
+		<h3>maxThinkingTokens</h3>
+		<span class="badge badge-optional">任意</span>
+		<span class="badge badge-ui">数値入力</span>
+		<span class="badge badge-phase">Phase 1b 計画</span>
+	</div>
+	<div class="setting-body">
+		<table class="props">
+			<tr><th>説明</th><td>Extended Thinking に割り当てる最大トークン数。大きいほど深く考えるがコストが増加</td></tr>
+			<tr><th>AgentConfig</th><td><code>maxThinkingTokens?: number</code>（追加予定）</td></tr>
+			<tr><th>デフォルト</th><td><code>31999</code></td></tr>
+			<tr><th>バリデーション</th><td>最小: 1,024 / 最大: 128,000（モデルにより上限が異なる）</td></tr>
+			<tr><th>有効条件</th><td><code>thinkingEnabled === true</code> かつ モデルが Thinking 対応の場合のみ有効</td></tr>
+			<tr><th>CLI反映</th><td><strong style="color:#f44747;">CLIフラグは存在しない</strong>。環境変数 <code>MAX_THINKING_TOKENS={value}</code> をコマンドの先頭に付与して制御。<br>例: <code>MAX_THINKING_TOKENS=31999 claude --resume {id} --model opus --print</code></td></tr>
+			<tr><th>フォーム配置</th><td><strong>Thinking ON/OFF（#5）の直後</strong></td></tr>
+		</table>
+		<div class="behavior">
+			<h4>想定挙動</h4>
+			<ul>
+				<li>数値入力フィールド（テキストボックス、type=&quot;number&quot;）</li>
+				<li>Thinking OFF 時 または モデルが Thinking 非対応時は入力フィールド全体がグレーアウト</li>
+				<li>コスト目安の注釈を表示（「※ 値が大きいほど応答が遅く、コストが高くなります」）</li>
+				<li>取締役ルールファイルの「エージェント操作」セクションに環境変数 <code>MAX_THINKING_TOKENS</code> の使い方を追記</li>
+				<li>未入力（空欄）の場合は <code>undefined</code> として保存 → CLI側のデフォルトに従う</li>
+			</ul>
+		</div>
+	</div>
+</div>
+</section>
+
+<!-- ================================================================ -->
+<!-- 7. セッション運用                                                  -->
+<!-- ================================================================ -->
+<section id="session-mode">
+<h2><span class="num">7.</span> セッション運用</h2>
+<div class="setting-card">
+	<div class="setting-header">
+		<h3>セッション運用</h3>
+		<span class="badge badge-required">必須</span>
+		<span class="badge badge-ui">カード型ラジオ</span>
+	</div>
+	<div class="setting-body">
+		<table class="props">
+			<tr><th>説明</th><td>セッションの使い方を制御する。固定は同じセッションを継続、使い捨てはタスクごとに新規</td></tr>
+			<tr><th>AgentConfig</th><td><code>sessionMode?: 'fixed' | 'disposable'</code></td></tr>
+			<tr><th>デフォルト</th><td><code>'fixed'</code></td></tr>
+			<tr><th>バリデーション</th><td>2択のラジオのため常に1つ選択状態</td></tr>
+			<tr><th>CLI反映</th><td>なし（CSM内部でのセッション管理方針のみ）</td></tr>
+		</table>
+		<table class="props" style="margin-top: 12px;">
+			<tr><th>選択肢</th><th>説明文</th><th>動作</th></tr>
+			<tr><td><code>fixed</code></td><td>同じセッションを継続使用（推奨）</td><td>1つのセッションIDに紐づけ。コンテキストが蓄積される</td></tr>
+			<tr><td><code>disposable</code></td><td>タスクごとに新しいセッション</td><td>「使い捨て」ラベルがUI各所に表示</td></tr>
+		</table>
+		<div class="behavior">
+			<h4>挙動の詳細</h4>
+			<ul>
+				<li>エージェント一覧で <code>disposable</code> の場合「使い捨て」ラベルを表示</li>
+				<li>「セッションを新しくする」コマンドは運用モードに関係なく使用可能</li>
+				<li>使い捨てモードでもセッションの紐づけ自体は同じ仕組み</li>
+				<li>注意: セッション運用モードはガイドラインに過ぎず、CSMが自動でセッション作成・破棄を行うわけではない</li>
+			</ul>
+		</div>
+	</div>
+</div>
+</section>
+
+<!-- ================================================================ -->
+<!-- 8. 親エージェント                                                  -->
+<!-- ================================================================ -->
+<section id="parent">
+<h2><span class="num">8.</span> 親エージェント</h2>
+<div class="setting-card">
+	<div class="setting-header">
+		<h3>親エージェント</h3>
+		<span class="badge badge-optional">任意</span>
+		<span class="badge badge-ui">セレクトボックス</span>
+	</div>
+	<div class="setting-body">
+		<table class="props">
+			<tr><th>説明</th><td>階層構造を構築するための上位エージェント指定</td></tr>
+			<tr><th>AgentConfig</th><td><code>parentAgent?: string</code>（親エージェントの部署名）</td></tr>
+			<tr><th>デフォルト</th><td><code>undefined</code>（「なし（トップレベル）」が選択状態）</td></tr>
+			<tr><th>バリデーション</th><td>自分自身は選択肢から除外（<code>filter(a =&gt; a.name !== existing?.name)</code>）</td></tr>
+			<tr><th>CLI反映</th><td>なし。ルールファイルに <code>- 報告先: {parentAgent}（親エージェント）</code> として記載</td></tr>
+		</table>
+		<div class="behavior">
+			<h4>挙動の詳細</h4>
+			<ul>
+				<li>選択肢は <code>dataStore.getAgents()</code> から動的に生成。表示形式: <code>{name} — {role}</code></li>
+				<li>親を設定すると、エージェント一覧ツリーで親ノード配下に子として表示される</li>
+				<li>組織図でも親子関係に基づいて階層レイアウトされる</li>
+				<li>ルールファイル自動生成時に <code>- 報告先: {parentAgent}（親エージェント）。作業完了時は結果を報告すること</code> が追記される</li>
+				<li>循環参照のチェックは現在未実装（A→B→A のような設定が可能）</li>
+			</ul>
+		</div>
+	</div>
+</div>
+</section>
+
+<!-- ================================================================ -->
+<!-- 9. 作業フォルダ                                                    -->
+<!-- ================================================================ -->
+<section id="workdir">
+<h2><span class="num">9.</span> 作業フォルダ</h2>
+<div class="setting-card">
+	<div class="setting-header">
+		<h3>作業フォルダ</h3>
+		<span class="badge badge-optional">任意</span>
+		<span class="badge badge-ui">テキスト + フォルダ選択</span>
+	</div>
+	<div class="setting-body">
+		<table class="props">
+			<tr><th>説明</th><td>エージェントの作業ディレクトリ（cwd）。ルールファイルにフォルダ制限としても反映</td></tr>
+			<tr><th>AgentConfig</th><td><code>workDir?: string</code></td></tr>
+			<tr><th>デフォルト</th><td><code>undefined</code>（空文字）</td></tr>
+			<tr><th>バリデーション</th><td>なし（パスの存在チェックは行わない）</td></tr>
+			<tr><th>CLI反映</th><td><strong style="color:#f44747;"><code>--cwd</code> は存在しない</strong>。代替: <code>--add-dir {workDir}</code> で追加ディレクトリを指定、またはプロセス起動時の <code>cwd</code> オプションで対応（ルールファイルに記載）</td></tr>
+		</table>
+		<div class="behavior">
+			<h4>挙動の詳細</h4>
+			<ul>
+				<li>「選択」ボタンで <code>vscode.window.showOpenDialog</code>（フォルダ選択）が開く</li>
+				<li>選択結果は <code>postMessage({ type: 'folderSelected' })</code> でフォームに反映</li>
+				<li>手動入力も可能（パスのバリデーションなし）</li>
+				<li>自動生成ルールファイルに <code>- 編集対象は `{workDir}` 内のみ。それ以外のフォルダは絶対に変更しない</code> が追記される（v0.2.8〜）</li>
+				<li>注意書き: 「※ エージェントのcwd（作業ディレクトリ）になります。ルールファイルの編集対象フォルダ制限にも使用されます。」</li>
+			</ul>
+		</div>
+	</div>
+</div>
+</section>
+
+<!-- ================================================================ -->
+<!-- 10. ルールファイルのスコープ                                        -->
+<!-- ================================================================ -->
+<section id="scope">
+<h2><span class="num">10.</span> ルールファイルのスコープ</h2>
+<div class="setting-card">
+	<div class="setting-header">
+		<h3>ルールファイルのスコープ</h3>
+		<span class="badge badge-required">必須</span>
+		<span class="badge badge-ui">カード型ラジオ</span>
+		<span class="badge badge-new">v0.2.8 新規</span>
+	</div>
+	<div class="setting-body">
+		<table class="props">
+			<tr><th>説明</th><td>ルールファイルの保存先を制御する。プロジェクト固有かグローバル共通かを選択</td></tr>
+			<tr><th>AgentConfig</th><td><code>scope?: 'global' | 'project'</code></td></tr>
+			<tr><th>デフォルト</th><td><code>'project'</code></td></tr>
+			<tr><th>バリデーション</th><td>2択のラジオのため常に1つ選択状態</td></tr>
+			<tr><th>CLI反映</th><td>なし（ルールファイルの配置先のみに影響）</td></tr>
+		</table>
+		<table class="props" style="margin-top: 12px;">
+			<tr><th>選択肢</th><th>フォルダ</th><th>用途</th></tr>
+			<tr><td><code>project</code></td><td><code>{workspace}/.agent-rules/</code></td><td>プロジェクト固有のルール</td></tr>
+			<tr><td><code>global</code></td><td><code>~/.claude/agent-rules/</code></td><td>全プロジェクト共通のルール</td></tr>
+		</table>
+		<div class="behavior">
+			<h4>挙動の詳細</h4>
+			<ul>
+				<li>部署名・スコープ変更のたびに <code>updateRuleFilePath()</code> が呼ばれ、生成先パスをリアルタイムプレビュー</li>
+				<li>ラジオのサブテキストに実際のフォルダパスを表示</li>
+				<li>保存時、<code>ruleFile</code> が未設定の場合に <code>autoGenerateRuleFile(config)</code> が呼ばれ、scope に基づくフォルダにファイルを生成</li>
+				<li>既にルールファイルが設定済みの場合（編集時）、スコープ変更してもルールファイルパスは変わらない</li>
+				<li>他スコープに同名ファイルが存在する場合、警告ダイアログを表示</li>
+			</ul>
+		</div>
+
+		<div class="flow">
+			<span class="step">フォーム入力</span> <span class="arrow">&rarr;</span> scope + name を決定<br>
+			<span class="arrow">&darr;</span><br>
+			<span class="step">保存ボタン</span> <span class="arrow">&rarr;</span> getFormData() で scope を含む config を送信<br>
+			<span class="arrow">&darr;</span><br>
+			<span class="step">extension.ts</span> <span class="arrow">&rarr;</span> autoGenerateRuleFile(config)<br>
+			&nbsp;&nbsp;&nbsp;&nbsp;<span class="arrow">&#9500;</span> ruleFile あり &rarr; <span class="note">スキップ（既存を維持）</span><br>
+			&nbsp;&nbsp;&nbsp;&nbsp;<span class="arrow">&#9500;</span> ファイル存在 &rarr; <span class="note">紐づけのみ（上書きしない）</span><br>
+			&nbsp;&nbsp;&nbsp;&nbsp;<span class="arrow">&#9492;</span> ファイルなし &rarr; <span class="note">テンプレートから自動生成</span><br>
+			<span class="arrow">&darr;</span><br>
+			<span class="step">dataStore.addAgent()</span> <span class="arrow">&rarr;</span> session-manager.json に保存
+		</div>
+	</div>
+</div>
+</section>
+
+<hr class="divider">
+
+<!-- ================================================================ -->
+<!-- 11. モデル別機能対応表                                              -->
+<!-- ================================================================ -->
+<section id="model-compat">
+<h2><span class="num">11.</span> モデル別機能対応表</h2>
+<div class="setting-card">
+	<div class="setting-header">
+		<h3>モデル × 設定項目の対応マトリクス</h3>
+		<span class="badge badge-phase">Phase 1b 計画</span>
+	</div>
+	<div class="setting-body">
+		<table class="props">
+			<tr>
+				<th>モデル</th>
+				<th>Effort<br><code>--effort</code></th>
+				<th>Effort max</th>
+				<th>Thinking ON/OFF<br><small>（settings.json制御）</small></th>
+				<th>maxThinkingTokens<br><small>（環境変数 <code>MAX_THINKING_TOKENS</code>）</small></th>
+			</tr>
+			<tr>
+				<td><strong>Opus</strong></td>
+				<td class="check">&#10003; 有効（low/medium/high/max）</td>
+				<td class="check">&#10003; 有効</td>
+				<td class="check">&#10003; 有効</td>
+				<td class="check">&#10003; 有効</td>
+			</tr>
+			<tr>
+				<td><strong>Sonnet</strong></td>
+				<td class="check">&#10003; 有効（low/medium/high）</td>
+				<td class="cross disabled-cell">&#10007; グレーアウト（Opus限定）</td>
+				<td class="check">&#10003; 有効</td>
+				<td class="check">&#10003; 有効</td>
+			</tr>
+			<tr>
+				<td><strong>Haiku</strong></td>
+				<td class="check">&#10003; 有効（low/medium/high）</td>
+				<td class="cross disabled-cell">&#10007; グレーアウト（Opus限定）</td>
+				<td class="cross disabled-cell">&#10007; グレーアウト（非対応）</td>
+				<td class="cross disabled-cell">&#10007; グレーアウト（非対応）</td>
+			</tr>
+		</table>
+
+		<div class="behavior">
+			<h4>グレーアウトの実装仕様</h4>
+			<ul>
+				<li>モデル変更時に <code>onModelChange()</code> を呼び出し、各項目の有効/無効を動的に切り替える</li>
+				<li>グレーアウト表現: <code>opacity: 0.35</code> + <code>pointer-events: none</code> を適用</li>
+				<li>グレーアウト中の項目には「このモデルでは使用できません」のテキストを表示</li>
+				<li>グレーアウト中の値は <code>undefined</code> として保存（CLIオプションを付与しない）</li>
+				<li>モデルを変更して再度有効になった場合、前回の値を復元する（localStorageやhidden fieldで保持）</li>
+			</ul>
+		</div>
+
+		<div class="note-box">
+			<strong>連動ルール:</strong><br>
+			1. モデル変更 → Effort（max制限） / Thinking / maxThinkingTokens の有効/無効を更新<br>
+			2. モデルが Opus 以外 → Effort の <code>max</code> カードをグレーアウト（low/medium/high は有効）<br>
+			3. Thinking OFF → maxThinkingTokens をグレーアウト<br>
+			4. モデルが Thinking 非対応 → Thinking を OFF 固定 + グレーアウト → maxThinkingTokens もグレーアウト<br>
+			<br>
+			つまり maxThinkingTokens が有効になる条件は: <strong>モデルが Thinking 対応 AND Thinking が ON</strong><br>
+			<br>
+			<strong>CLI反映の注意:</strong><br>
+			&bull; Thinking ON/OFF: <code>--no-thinking</code> 等のCLIフラグは<strong>存在しない</strong>。<code>settings.json</code> で制御<br>
+			&bull; maxThinkingTokens: <code>--max-thinking-tokens</code> フラグは<strong>存在しない</strong>。環境変数 <code>MAX_THINKING_TOKENS</code> で制御
+		</div>
+
+		<h4 style="margin-top: 20px; color: var(--text-bright); font-size: 14px;">UIの状態遷移</h4>
+		<div class="flow">
+<span class="step">Opus 選択時:</span><br>
+&nbsp;&nbsp;Effort &rarr; <span class="note">全4択有効（low/medium/high/<strong>max</strong> 選択可）</span><br>
+&nbsp;&nbsp;Thinking &rarr; <span class="note">有効（ON/OFF 切替可）※制御は settings.json 経由</span><br>
+&nbsp;&nbsp;maxThinkingTokens &rarr; <span class="note">Thinking ON なら有効、OFF ならグレー ※環境変数 MAX_THINKING_TOKENS</span><br>
+<br>
+<span class="step">Sonnet 選択時:</span><br>
+&nbsp;&nbsp;Effort &rarr; <span class="note">low/medium/high 有効、<strong>max はグレーアウト</strong>（Opus限定）</span><br>
+&nbsp;&nbsp;Thinking &rarr; <span class="note">有効（ON/OFF 切替可）※制御は settings.json 経由</span><br>
+&nbsp;&nbsp;maxThinkingTokens &rarr; <span class="note">Thinking ON なら有効、OFF ならグレー</span><br>
+<br>
+<span class="step">Haiku 選択時:</span><br>
+&nbsp;&nbsp;Effort &rarr; <span class="note">low/medium/high 有効、<strong>max はグレーアウト</strong>（Opus限定）</span><br>
+&nbsp;&nbsp;Thinking &rarr; <span class="note">グレーアウト（OFF固定）「Haiku は Extended Thinking に非対応です」</span><br>
+&nbsp;&nbsp;maxThinkingTokens &rarr; <span class="note">グレーアウト</span>
+		</div>
+	</div>
+</div>
+</section>
+
+<!-- ================================================================ -->
+<!-- 12. 会話一覧の設定歯車アイコン                                      -->
+<!-- ================================================================ -->
+<section id="settings-gear">
+<h2><span class="num">12.</span> 会話一覧の設定歯車アイコン</h2>
+<div class="setting-card planned">
+	<div class="setting-header">
+		<h3>設定歯車アイコン（会話一覧ヘッダー）</h3>
+		<span class="badge badge-phase">Phase 1b 計画</span>
+		<span class="badge badge-ui">ビューヘッダーアイコン</span>
+	</div>
+	<div class="setting-body">
+		<table class="props">
+			<tr><th>説明</th><td>会話一覧（claudeSessions）ビューのタイトルバーに設定（歯車）アイコンを追加し、クリックで VS Code 設定画面を開く</td></tr>
+			<tr><th>配置場所</th><td><code>view/title</code> メニュー &mdash; <code>claudeSessions</code> ビューの <code>navigation</code> グループ</td></tr>
+			<tr><th>アイコン</th><td><code>$(gear)</code>（VS Code 標準の歯車アイコン）</td></tr>
+			<tr><th>コマンドID</th><td><code>claudeManager.openSettings</code>（新規追加）</td></tr>
+			<tr><th>動作</th><td><code>vscode.commands.executeCommand('workbench.action.openSettings', 'claudeManager')</code><br>→ VS Code 設定画面が <code>claudeManager</code> でフィルタされた状態で開く</td></tr>
+		</table>
+
+		<div class="behavior">
+			<h4>実装詳細</h4>
+			<ul>
+				<li><strong>package.json</strong>: <code>commands</code> に <code>claudeManager.openSettings</code> を追加（title: 「設定を開く」、icon: <code>$(gear)</code>）</li>
+				<li><strong>package.json</strong>: <code>menus.view/title</code> に <code>{ "command": "claudeManager.openSettings", "when": "view == claudeSessions", "group": "navigation" }</code> を追加</li>
+				<li><strong>extension.ts</strong>: <code>registerCommand('claudeManager.openSettings', () =&gt; { vscode.commands.executeCommand('workbench.action.openSettings', 'claudeManager'); })</code></li>
+				<li>歯車アイコンは更新・検索・ソート・グループ・組織図・ガイドの並びの末尾に配置</li>
+			</ul>
+		</div>
+
+		<div class="note-box">
+			<strong>開かれる設定項目:</strong> <code>claudeManager.*</code> に一致するすべての設定<br>
+			<code>enableAgentMonitor</code>, <code>agentMonitorInterval</code>, <code>defaultSortMode</code>, <code>defaultGroupMode</code>,
+			<code>maxSessionsShown</code>, <code>defaultRuleFolder</code>, <code>preview.showThinkingBlocks</code>, <code>trash.folder</code>
+		</div>
+	</div>
+</div>
+</section>
+
+<hr class="divider">
+
+<!-- ================================================================ -->
+<!-- 13. データフロー                                                   -->
+<!-- ================================================================ -->
+<section id="data-flow">
+<h2><span class="num">13.</span> データフロー</h2>
+
+<div class="diagram">
+<pre>
+&#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+&#9474;                    agentFormPanel.ts (Webview)                 &#9474;
+&#9474;                                                               &#9474;
+&#9474;  &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488; &#9484;&#9472;&#9472;&#9472;&#9472;&#9488; &#9484;&#9472;&#9472;&#9472;&#9472;&#9488; &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488; &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488; &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;&#9474;
+&#9474;  &#9474;&#37096;&#32626;&#21517;&#9474; &#9474;&#24441;&#21106;  &#9474; &#9474;&#12514;&#12487;&#12523;&#9474; &#9474;Effort &#9474; &#9474;Thinking&#9474; &#9474;maxToken &#9474;&#9474;
+&#9474;  &#9492;&#9472;&#9472;&#9516;&#9472;&#9472;&#9496; &#9492;&#9472;&#9516;&#9472;&#9472;&#9496; &#9492;&#9472;&#9516;&#9472;&#9472;&#9496; &#9492;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9496; &#9492;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9496; &#9492;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9496;&#9474;
+&#9474;       &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9496;    &#9474;
+&#9474;                            &#9474; getFormData()                    &#9474;
+&#9474;                            &#9660;                                  &#9474;
+&#9474;              postMessage({ type: 'save', config })            &#9474;
+&#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+                               &#9474;
+                               &#9660;
+&#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+&#9474;                      extension.ts                             &#9474;
+&#9474;                                                               &#9474;
+&#9474;  onSave(config) &#9472;&#9472;&#8594; autoGenerateRuleFile(config)              &#9474;
+&#9474;                     &#9474;                                         &#9474;
+&#9474;                     &#9500;&#9472; getRuleFolderForScope(config.scope)     &#9474;
+&#9474;                     &#9500;&#9472; &#12486;&#12531;&#12503;&#12524;&#12540;&#12488;&#12363;&#12425;&#12523;&#12540;&#12523;&#12501;&#12449;&#12452;&#12523;&#29983;&#25104;        &#9474;
+&#9474;                     &#9492;&#9472; config.ruleFile &#12395;&#12497;&#12473;&#12434;&#35373;&#23450;            &#9474;
+&#9474;                                                               &#9474;
+&#9474;                 &#9472;&#9472;&#8594; dataStore.addAgent(finalConfig)            &#9474;
+&#9474;                 &#9472;&#9472;&#8594; refreshAll()                               &#9474;
+&#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+                               &#9474;
+                               &#9660;
+&#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+&#9474;              ~/.claude/session-manager.json                    &#9474;
+&#9474;                                                               &#9474;
+&#9474;  { "agents": [                                                &#9474;
+&#9474;      { "name": "CSM&#38283;&#30330;&#37096;",                                   &#9474;
+&#9474;        "model": "opus",                                       &#9474;
+&#9474;        "effort": "high",                                      &#9474;
+&#9474;        "thinkingEnabled": true,                                &#9474;
+&#9474;        "maxThinkingTokens": 31999,                             &#9474;
+&#9474;        "scope": "project",                                    &#9474;
+&#9474;        ... }                                                  &#9474;
+&#9474;  ] }                                                          &#9474;
+&#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+</pre>
+</div>
+
+<div class="setting-card">
+	<div class="setting-header"><h3>保存時の処理フロー（extension.ts）</h3></div>
+	<div class="setting-body">
+		<table class="props">
+			<tr><th>呼び出し元</th><th>処理</th><th>関数</th></tr>
+			<tr>
+				<td>registerAgent</td>
+				<td>セッション一覧から右クリック &rarr;「エージェントとして登録」</td>
+				<td><code>showAgentFormPanel(undefined, session.id, onSave)</code></td>
+			</tr>
+			<tr>
+				<td>addAgent</td>
+				<td>エージェント管理の＋ボタン（セッション未紐づけ）</td>
+				<td><code>showAgentFormPanel(undefined, '', onSave)</code></td>
+			</tr>
+			<tr>
+				<td>editAgent</td>
+				<td>エージェント設定を編集</td>
+				<td><code>showAgentFormPanel(existing, sessionId, onSave)</code></td>
+			</tr>
+			<tr>
+				<td>registerDirector</td>
+				<td>ウェルカム画面「取締役を登録」（プリセット付き）</td>
+				<td><code>showAgentFormPanel(preset, '', onSave)</code><br>onSave 内で <code>generateDirectorRuleFile()</code> + <code>writeOrgInfoToMemory()</code> を追加実行</td>
+			</tr>
+		</table>
+	</div>
+</div>
+</section>
+
+<!-- ================================================================ -->
+<!-- 14. Phase計画との関連                                               -->
+<!-- ================================================================ -->
+<section id="phases">
+<h2><span class="num">14.</span> Phase計画との関連</h2>
+
+<div class="phase-grid">
+	<div class="phase-box">
+		<h4>Phase 1 &mdash; ルール管理 <span style="color: var(--green);">&#10003; v0.2.8 完了</span></h4>
+		<ul>
+			<li><code>scope</code> フィールド追加（#10）</li>
+			<li>スコープ別ルールフォルダ切り替え</li>
+			<li>ルールファイル自動生成テンプレート強化</li>
+			<li>取締役ルールに「エージェント操作」セクション</li>
+			<li>MEMORY.md書き込みのポインタ方式化</li>
+			<li>フォームのスコープ選択UI</li>
+		</ul>
+	</div>
+	<div class="phase-box">
+		<h4>Phase 1b &mdash; モデル制御（次期予定）</h4>
+		<ul>
+			<li><code>effort</code> フィールド追加（#4）</li>
+			<li><code>thinkingEnabled</code> フィールド追加（#5）</li>
+			<li><code>maxThinkingTokens</code> フィールド追加（#6）</li>
+			<li>モデル別グレーアウト連動（#11）</li>
+			<li>会話一覧に設定歯車アイコン（#12）</li>
+			<li>ルールファイルテンプレートにCLIオプション記載</li>
+			<li>取締役の「エージェント操作」セクション拡充</li>
+		</ul>
+	</div>
+	<div class="phase-box">
+		<h4>Phase 2 &mdash; ローカル/グローバル分離</h4>
+		<ul>
+			<li>session-manager.json 自体をスコープ分離</li>
+			<li><code>session-manager.local.json</code> の導入</li>
+			<li>プロジェクト固有エージェントとグローバルエージェントの統合表示</li>
+			<li><code>scope</code> フィールドがエージェント自体のスコープを制御</li>
+		</ul>
+	</div>
+	<div class="phase-box">
+		<h4>Phase 3 &mdash; メモリ管理拡張</h4>
+		<ul>
+			<li>エージェント別メモリの自動管理</li>
+			<li>MEMORY.mdセクションの自動同期</li>
+			<li>取締役/子エージェントのメモリ分離強化</li>
+		</ul>
+	</div>
+</div>
+
+<div class="phase-section" style="margin-top: 24px;">
+	<h3>各フォーム項目のPhase関連マップ</h3>
+	<table class="props">
+		<tr><th>項目</th><th>現在</th><th>Phase 1b</th><th>Phase 2</th><th>Phase 3</th><th>Phase 4</th></tr>
+		<tr><td>#1 部署名</td><td>実装済</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td>ウィザードで入力</td></tr>
+		<tr><td>#2 役割</td><td>実装済</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td>ウィザードで入力</td></tr>
+		<tr><td>#3 モデル</td><td>実装済</td><td>グレーアウト連動追加</td><td>&mdash;</td><td>&mdash;</td><td>ウィザードで選択</td></tr>
+		<tr><td>#4 Effort</td><td>&mdash;</td><td style="color:var(--green)">追加</td><td>&mdash;</td><td>&mdash;</td><td>ウィザードで設定</td></tr>
+		<tr><td>#5 Thinking</td><td>&mdash;</td><td style="color:var(--green)">追加</td><td>&mdash;</td><td>&mdash;</td><td>ウィザードで設定</td></tr>
+		<tr><td>#6 maxThinkingTokens</td><td>&mdash;</td><td style="color:var(--green)">追加</td><td>&mdash;</td><td>&mdash;</td><td>ウィザードで設定</td></tr>
+		<tr><td>#7 セッション運用</td><td>実装済</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td></tr>
+		<tr><td>#8 親エージェント</td><td>実装済</td><td>&mdash;</td><td>スコープ跨ぎ対応</td><td>&mdash;</td><td>ウィザードで選択</td></tr>
+		<tr><td>#9 作業フォルダ</td><td>実装済</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td>自動推定</td></tr>
+		<tr><td>#10 スコープ</td><td>v0.2.8〜</td><td>&mdash;</td><td>エージェント自体のスコープに拡張</td><td>&mdash;</td><td>ウィザードで選択</td></tr>
+		<tr><td>#11 モデル対応表</td><td>&mdash;</td><td style="color:var(--green)">追加</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td></tr>
+		<tr><td>#12 設定歯車</td><td>&mdash;</td><td style="color:var(--green)">追加</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td></tr>
+	</table>
+</div>
+
+<div class="phase-section" style="margin-top: 24px;">
+	<h3>フォームのUI配置順序（Phase 1b 完了後）</h3>
+	<div class="flow">
+<span class="step">1. 部署名</span> &mdash; テキスト入力<br>
+<span class="step">2. 役割の説明</span> &mdash; テキスト入力<br>
+<span class="step">3. モデル選択</span> &mdash; カード型ラジオ [opus / sonnet / haiku]<br>
+<span class="step">4. Effort</span> &mdash; カード型ラジオ [low / medium / high / max] <span class="note">(max は Opus のみ。他モデルでは max グレーアウト)</span><br>
+<span class="step">5. Thinking ON/OFF</span> &mdash; トグルスイッチ <span class="note">(Haiku: グレーアウト)</span><br>
+<span class="step">6. maxThinkingTokens</span> &mdash; 数値入力 <span class="note">(Thinking OFF / Haiku: グレーアウト)</span><br>
+<span class="step">7. セッション運用</span> &mdash; カード型ラジオ [固定 / 使い捨て]<br>
+<span class="step">8. 親エージェント</span> &mdash; セレクトボックス<br>
+<span class="step">9. 作業フォルダ</span> &mdash; テキスト + フォルダ選択<br>
+<span class="step">10. スコープ</span> &mdash; カード型ラジオ [プロジェクト / グローバル]<br>
+<br>
+<span class="step">[保存] [キャンセル]</span>
+	</div>
+</div>
+
+</section>
+
+</div><!-- content -->
+</body>
+</html>
