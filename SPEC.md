@@ -38,7 +38,7 @@ v0.2.0 でエージェント管理の基盤を再設計し、v0.3.0 で監視ア
 | グループ | コマンド |
 |---|---|
 | inline | 会話をプレビュー / ブックマークに追加 |
-| 0_open | Claude Codeで開く / セッションIDをコピー |
+| 0_open | Claude Codeで開く / セッションIDをコピー / セッションパスをコピー |
 | 1_edit | 会話をリネーム / タグを追加 |
 
 **未登録セッション（`viewItem == session` or `sessionBookmarked`）:**
@@ -76,6 +76,9 @@ v0.2.0 でエージェント管理の基盤を再設計し、v0.3.0 で監視ア
 | セッション運用 | QuickPick | ✅ | 固定 / 使い捨て |
 | 親エージェント | QuickPick | | 既存エージェントから選択 / なし |
 | 作業フォルダ | FolderPicker | | フォルダ選択ダイアログ / なし |
+| 推論努力（Effort） | カードラジオ | | Low / Medium / High / Max（v0.3.0追加） |
+| Extended Thinking | トグル | | ON/OFF（v0.3.0追加） |
+| Max Thinking Tokens | 数値入力 | | 1024〜128000（v0.3.0追加） |
 
 ### 共通フォーム関数
 `showAgentForm(existing?: AgentConfig): Promise<AgentConfig | undefined>`
@@ -215,9 +218,7 @@ export interface AgentConfig {
 
 ## 13. 親エージェント（parentAgent）フィールドの名称統一
 
-### 変更内容
-- 「親エージェント」→「親エージェント」に用語変更
-- 対象: エージェント設定フォーム、ツールチップ、プレビュー
+> 完了済み: UI上の表記を「親エージェント」に統一。現在は全箇所で統一されている。
 
 ---
 
@@ -229,7 +230,7 @@ export interface AgentConfig {
 - カーソルホバーで動作中エージェント名のリストをツールチップ表示
 - 登録済みエージェント → エージェント名で表示
 - 未登録（使い捨て） → 「使い捨て (セッションID先頭8桁)」で表示
-- 動作中は 800ms ブリンク
+- ~~動作中は 800ms ブリンク~~ → v0.3.0 で廃止（セクション21参照）
 
 ---
 
@@ -265,13 +266,15 @@ export interface AgentConfig {
 
 ## ファイル変更一覧
 
+> この一覧はv0.2.0時点のもの。v0.3.0での変更はセクション45を参照。
+
 | ファイル | 操作 |
 |---|---|
 | `src/types.ts` | AgentConfig に sessionMode 追加、未使用フィールド削除 |
 | `src/agentManager.ts` | MD パース削除、getAgents/enrichAgentsWithSessions のみ |
 | `src/agentTreeProvider.ts` | ツリー構造 + 取締役トップソート + contextValue 拡張 |
 | `src/agentPreviewPanel.ts` | **新規作成** — エージェントプレビュー（読み取り専用Webview） |
-| `src/agentFormPanel.ts` | 「親エージェント」→「親エージェント」名称変更 |
+| `src/agentFormPanel.ts` | 名称統一 |
 | `src/extension.ts` | previewAgent/openAgentSession/renewAgentSession 追加、ステータスバー改善 |
 | `src/sessionTreeProvider.ts` | contextValue を4種に拡張 |
 | `src/orgChartPanel.ts` | loadAgents → dataStore.getAgents に変更 |
@@ -347,11 +350,13 @@ export interface AgentConfig {
 ## 11. ステータスバー改善
 
 ### 変更内容
-- アイコンを `👥` に変更
-- 通常時: `👥 10`（登録エージェント総数）
-- 稼働中あり: `👥 2/10`（稼働数/総数）
 
-> **廃止（v0.3.0）**: 800ms ブリンク（setInterval トグル方式）は v0.3.0 で廃止。静的表示に統一済み。
+> **v0.3.0で更新**: 表示形式はセクション21で `🟢 N 👥 M` 形式に変更済み。ブリンクもv0.3.0で廃止。以下は旧仕様。
+
+- ~~アイコンを `👥` に変更~~
+- ~~通常時: `👥 10`（登録エージェント総数）~~
+- ~~稼働中あり: `👥 2/10`（稼働数/総数）~~
+- 現行: `🟢 N 👥 M`（🟢=動作中数、👥=登録総数）。動作中0なら `👥 M` のみ表示
 
 ---
 
@@ -441,7 +446,7 @@ export interface AgentConfig {
 
 ### 変更内容
 - `ManagerData`に`ruleFolder`フィールドを追加
-- デフォルト値: `c:/xampp/Project/.agent-rules`
+- デフォルト値: `""`（空文字。VS Code設定またはsession-manager.jsonのruleFolderを参照）
 - `agentManager.resolveRuleFilePath()`: ファイル名のみの場合はルールフォルダと結合
 - エージェント登録フォームでルールフォルダ設定済みの場合はプレースホルダーを「例: CSM開発部.md」に変更
 - ルールファイル編集・表示で`resolveRuleFilePath()`を経由
@@ -550,10 +555,13 @@ VS Code標準の設定UIからCSMの動作をカスタマイズ可能に。
 ### ソート機能拡張
 - ソート基準を5種→7種に拡張（「日付」を「作成日」と「更新日」に分割）
 
-### ステータスバー改善
-- `/c/tmp/agent_{エージェント名}_{タスク}.txt` ファイル監視でエージェント名を特定
-- 直近の監視間隔×2（最低5秒）以内に更新されたファイルを「動作中」と判定
-- ファイルベースの検出がない場合はPID表示にフォールバック
+### ステータスバー改善（v0.3.0で廃止）
+
+> **廃止済み**: このファイル監視方式はv0.2.3以降順次置換され、v0.3.0でAgentWatcherに完全移行。現行はセクション45参照。
+
+- ~~`/c/tmp/agent_{エージェント名}_{タスク}.txt` ファイル監視でエージェント名を特定~~
+- ~~直近の監視間隔×2（最低5秒）以内に更新されたファイルを「動作中」と判定~~
+- ~~ファイルベースの検出がない場合はPID表示にフォールバック~~
 
 ---
 
