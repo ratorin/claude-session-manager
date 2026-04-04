@@ -349,13 +349,9 @@ export interface AgentConfig {
 ### 変更内容
 - アイコンを `👥` に変更
 - 通常時: `👥 10`（登録エージェント総数）
-- 稼働中あり: `👥 2/10`（稼働数/総数）800ms 間隔でブリンク
-- ブリンク: `👥` とスペースを交互に表示
+- 稼働中あり: `👥 2/10`（稼働数/総数）
 
-### 実装
-- `setInterval` で 800ms ごとに `statusBarItem.text` をトグル
-- `blinkTimer` を管理し、更新時に `clearInterval` でクリーンアップ
-- dispose 時にもタイマー解放
+> **廃止（v0.3.0）**: 800ms ブリンク（setInterval トグル方式）は v0.3.0 で廃止。静的表示に統一済み。
 
 ---
 
@@ -597,18 +593,20 @@ VS Code標準の設定UIからCSMの動作をカスタマイズ可能に。
 
 ## 34. v0.2.3 変更内容
 
-### ステータスバー: PIDマッピングファイル方式に移行
+> **廃止（v0.3.0）**: PIDマッピングファイル方式は v0.2.3 で導入、v0.2.6 で JSONL mtime 方式に置換、v0.3.0 で AgentWatcher に完全移行し廃止。以下は履歴として残す。
+
+### ステータスバー: PIDマッピングファイル方式に移行（廃止済み）
 
 #### 背景
 - 旧方式（`/c/tmp/agent_*.txt` の更新時刻監視）は、ファイルが完了時に一括書き込みされるため実行中に検出できない問題があった
 - `/c/tmp` を散らかす問題もあった
 
-#### 新方式
+#### 新方式（v0.3.0で廃止）
 - 取締役が子エージェントを起動するとき、`.agent-rules/tmp/.agent_pid_{PID}_{エージェント名}` ファイルを作成
 - 完了時にファイルを削除する（取締役側の責任）
 - CSMは `.agent-rules/tmp/` を監視し、PIDマッピングファイルを検出
 
-#### 実装詳細
+#### 実装詳細（v0.3.0で廃止）
 
 | 関数 | 変更 |
 |------|------|
@@ -618,7 +616,7 @@ VS Code標準の設定UIからCSMの動作をカスタマイズ可能に。
 | `getSessionPids()` | **削除** — 不要化 |
 | `updateStatusBar()` | PIDマッピング方式のみ使用するよう簡素化 |
 
-#### PIDマッピングファイル仕様
+#### PIDマッピングファイル仕様（v0.3.0で廃止）
 - パス: `{ルールフォルダ}/tmp/.agent_pid_{PID}_{エージェント名}`
 - 例: `c:/xampp/Project/.agent-rules/tmp/.agent_pid_12345_CSM開発部`
 - PID生存チェック: `getClaudeProcessPids()` で `tasklist` の結果と照合
@@ -718,12 +716,14 @@ VS Code標準の設定UIからCSMの動作をカスタマイズ可能に。
 
 ## 41. エージェント監視方式をJSONL解析に置換（v0.2.6）
 
-### 目的
+> **廃止（v0.3.0）**: agentMonitor.ts（JSONL mtime 方式）は v0.2.6 で導入、v0.3.0 で AgentWatcher（fs.watch + デバウンス方式）に完全置換し削除済み。以下は履歴として残す。
+
+### 目的（v0.3.0で廃止）
 tasklist + PIDマッピングファイル方式を廃止し、セッションJSONLファイルのmtimeベースで稼働判定する方式に移行。
 Windows固有のtasklist依存を排除し、PC負荷を軽減する。
 
-### 変更内容
-- **`agentMonitor.ts`** を新規作成
+### 変更内容（v0.3.0で廃止）
+- **`agentMonitor.ts`** を新規作成（v0.3.0で削除済み）
   - ファイル末尾64KBを `fs.openSync` + `fs.readSync` で効率的に読み取り
   - mtime + size でキャッシュし、変更時のみ再解析
   - tool_use(name==="Task"/"Agent") → サブエージェント開始検出
@@ -740,7 +740,7 @@ Windows固有のtasklist依存を排除し、PC負荷を軽減する。
 ### 影響範囲
 | ファイル | 変更 |
 |---|---|
-| `agentMonitor.ts` | 新規作成 |
+| `agentMonitor.ts` | 新規作成（v0.3.0で削除済み） |
 | `extension.ts` | tasklist関連削除、JSONL解析に置換 |
 
 ---
@@ -1049,7 +1049,7 @@ Anthropic APIのレスポンスヘッダから5時間/7日の利用率・リセ�
 ## 49. v0.3.0 パフォーマンス改善（Extension Host ブロッキング解消）
 
 ### 原則
-- **readFileSync は全廃止**。dataStore.ts の TTL キャッシュ付き `loadData()` のみ同期I/Oの例外
+- **readFileSync は全廃止**。例外なし、dataStore.ts を含む全ファイルで async 化済み
 - すべてのファイル操作を `fs.promises` API に置換
 
 ### 変更ファイルと内容
