@@ -102,17 +102,22 @@ function fetchUsageHeaders(accessToken: string): Promise<FetchResult> {
 				const reset5h = parseFloat(headers['anthropic-ratelimit-unified-5h-reset'] as string);
 				const reset7d = parseFloat(headers['anthropic-ratelimit-unified-7d-reset'] as string);
 
-				log.appendLine(`  5h: ${usage5h}%, 7d: ${usage7d}%`);
+				log.appendLine(`  5h raw: ${usage5h}, 7d raw: ${usage7d}`);
 
 				if (isNaN(usage5h) && isNaN(usage7d)) {
 					resolve({ data: null, statusCode, errorDetail: 'レスポンスヘッダーに利用率情報なし' });
 					return;
 				}
 
+				// APIは0〜1の小数を返す（例: 0.91 = 91%）→ 100倍してパーセントに変換
+				const pct5h = isNaN(usage5h) ? 0 : Math.round(usage5h * 1000) / 10;
+				const pct7d = isNaN(usage7d) ? 0 : Math.round(usage7d * 1000) / 10;
+				log.appendLine(`  5h: ${pct5h}%, 7d: ${pct7d}%`);
+
 				resolve({
 					data: {
-						usage5h: isNaN(usage5h) ? 0 : usage5h,
-						usage7d: isNaN(usage7d) ? 0 : usage7d,
+						usage5h: pct5h,
+						usage7d: pct7d,
 						reset5h: isNaN(reset5h) ? 0 : reset5h,
 						reset7d: isNaN(reset7d) ? 0 : reset7d,
 						fetchedAt: Date.now(),
@@ -155,11 +160,16 @@ function formatTimeRemaining(resetUnixSec: number): string {
 	return `${minutes}m`;
 }
 
+// パーセント値をフォーマット（整数なら小数点なし、小数なら1桁）
+function fmtPct(v: number): string {
+	return v % 1 === 0 ? `${v}` : v.toFixed(1);
+}
+
 // 利用率の表示テキストを生成
 export function formatUsageText(data: UsageData): string {
 	const r5h = formatTimeRemaining(data.reset5h);
 	const r7d = formatTimeRemaining(data.reset7d);
-	return `${data.usage5h}% ${r5h} / ${data.usage7d}% ${r7d}`;
+	return `${fmtPct(data.usage5h)}% ${r5h} / ${fmtPct(data.usage7d)}% ${r7d}`;
 }
 
 // 利用率監視クラス
@@ -261,8 +271,8 @@ export class UsageMonitor implements vscode.Disposable {
 			this.statusBarItem.tooltip = [
 				'Claude Code 利用制限（クリックで更新）',
 				'',
-				`5時間: ${data.usage5h}%（リセットまで ${r5h}）`,
-				`7日間: ${data.usage7d}%（リセットまで ${r7d}）`,
+				`5時間: ${fmtPct(data.usage5h)}%（リセットまで ${r5h}）`,
+				`7日間: ${fmtPct(data.usage7d)}%（リセットまで ${r7d}）`,
 			].join('\n');
 
 			// 閾値通知（90% / 100%）
@@ -288,12 +298,12 @@ export class UsageMonitor implements vscode.Disposable {
 		if (usage >= 100) {
 			if (!get100()) {
 				set100(true);
-				vscode.window.showErrorMessage(`利用制限に達しました（${label}: ${usage}%）。リセットまで ${resetStr}`);
+				vscode.window.showErrorMessage(`利用制限に達しました（${label}: ${fmtPct(usage)}%）。リセットまで ${resetStr}`);
 			}
 		} else if (usage >= 90) {
 			if (!get90()) {
 				set90(true);
-				vscode.window.showWarningMessage(`利用制限90%に達しました（${label}: ${usage}%）。リセットまで ${resetStr}`);
+				vscode.window.showWarningMessage(`利用制限90%に達しました（${label}: ${fmtPct(usage)}%）。リセットまで ${resetStr}`);
 			}
 		} else {
 			// 90%未満に下がったらフラグをリセット（次回の90%到達で再通知可能に）

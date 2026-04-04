@@ -1126,6 +1126,58 @@ Anthropic APIのレスポンスヘッダから5時間/7日の利用率・リセ�
 
 ---
 
+## 52. v0.3.0 セッション引き継ぎ改善（遺言2モード・ルールファイル蓄積・旧ID保持）
+
+### 遺言生成の2モード
+
+| モード | 説明 | コスト |
+|--------|------|--------|
+| 簡易（即時） | JSONL末尾50行から直近2往復を抽出 | ゼロ |
+| 詳細（AI要約） | Claude CLIでJSONL末尾を要約生成（モデル選択可: opus/sonnet/haiku、デフォルト推奨opus） | トークンコストあり |
+
+- QuickPickでモード選択後、詳細モードではモデル選択QuickPick表示
+- 生成結果をInputBoxで編集可能
+- 両モードとも長さ上限300文字
+- 詳細モード失敗時は簡易モードにフォールバック
+- JSONL読み取りはFileHandle APIによる末尾読み取り（簡易: 128KB、詳細: 256KB）
+- ルールファイル書き込みエラーはOutputChannel「CSM Session Manager」にログ出力
+
+### ルールファイルへの歴代セッション記録
+
+遺言をルールファイルのカスタム部分（CSM:AUTOマーカー外）に蓄積:
+
+```markdown
+## 歴代セッションの記録
+
+### 2026-04-05 (旧ID: abc-123)
+前セッションでの作業内容サマリー...
+
+### 2026-04-04 (旧ID: xyz-789)
+その前のセッションサマリー...
+```
+
+- CSM:AUTO:END マーカーの直後に「歴代セッションの記録」セクションを配置
+- 直近3世代まで保持、4世代目以降は古いものから削除
+- 新セッションは `--append-system-prompt-file` でルールファイルを読むため自動的に経緯を把握
+
+### AgentConfig.previousSessionIds
+
+```typescript
+previousSessionIds?: string[];  // 過去のセッションID（直近5件）
+```
+
+- セッション更新時に旧IDを配列末尾に追加
+- 5件を超えたら古いものから削除
+- 将来的に過去セッションの履歴参照に利用
+
+### 影響範囲
+| ファイル | 変更 |
+|---|---|
+| `types.ts` | AgentConfig に `previousSessionIds` フィールド追加 |
+| `extension.ts` | `renewAgentSession` 全面改修、ヘルパー3関数追加（generateSimpleTestament / generateDetailedTestament / appendSessionHistoryToRuleFile） |
+
+---
+
 ## バージョン
 - **0.3.0** — 監視アーキテクチャ刷新 + メモリ拡張 + フォーム拡張 + CLI Builder + タスク管理 + パフォーマンス改善
 - **0.2.8** — ルールファイル管理改善（スコープ分離・自動生成強化・MEMORY.mdポインタ方式）

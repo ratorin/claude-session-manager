@@ -1,0 +1,108 @@
+// JSONL解析ベースのエージェント監視モジュール
+// claude-hud (MIT) の transcript.ts を参考に、mtime+sizeキャッシュ＋末尾読み取り方式で実装
+import * as fs from 'fs';
+
+// ファイルキャッシュ: mtime+sizeが変わらなければ再解析しない
+interface FileCache {
+	mtimeMs: number;
+	size: number;
+	isActive: boolean;
+	activeSubagentIds: string[];  // tool_resultが来ていないtool_use IDリスト
+}
+
+const fileCacheMap = new Map<string, FileCache>();
+
+// 末尾から読むバイト数（巨大JSONLでもこれだけ読めば十分）
+const TAIL_BYTES = 64 * 1024; // 64KB
+
+// ファイル末尾だけ読み取る（巨大ファイル対策）
+function readFileTail(filePath: string, bytes: number): string {
+	const fd = fs.openSync(filePath, 'r');
+	try {
+		const stat = fs.fstatSync(fd);
+		if (stat.size === 0) { return ''; }
+		const readSize = Math.min(bytes, stat.size);
+		const startPos = Math.max(0, stat.size - readSize);
+		const buffer = Buffer.alloc(readSize);
+		fs.readSync(fd, buffer, 0, readSize, startPos);
+		return buffer.toString('utf-8');
+	} finally {
+		fs.closeSync(fd);
+	}
+}
+
+// JSONL末尾を解析してtool_use(Task/Agent) → tool_result ペアを追跡
+function parseTailForSubagents(tail: string): string[] {
+	const lines = tail.split('\n');
+	// 先頭行は途中で切れている可能性があるのでスキップ
+	if (lines.length > 1) { lines.shift(); }
+
+	const runningTaskIds = new Set<string>();
+
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed) { continue; }
+		try {
+			const entry = JSON.parse(trimmed);
+			const content = entry?.message?.content;
+			if (!Array.isArray(content)) { continue; }
+
+			for (const block of content) {
+				// tool_use で name === "Task" or "Agent" → サブエージェント開始
+				if (block.type === 'tool_use' && block.id && (block.name === 'Task' || block.name === 'Agent')) {
+					runningTaskIds.add(block.id);
+				}
+				// tool_result → 対応するtool_useの完了
+				if (block.type === 'tool_result' && block.tool_use_id) {
+					runningTaskIds.delete(block.tool_use_id);
+				}
+			}
+		} catch { /* パース失敗行はスキップ */ }
+	}
+
+	return [...runningTaskIds];
+}
+
+// セッションJSONLファイルの稼働状態を解析
+// thresholdMs: この時間内にmtimeがあれば「稼働中」と判定
+export function analyzeSession(filePath: string, thresholdMs: number): { isActive: boolean; activeSubagentIds: string[] } {
+	try {
+		const stat = fs.statSync(filePath);
+		const now = Date.now();
+
+		// キャッシュチェック: mtime+sizeが同じなら再解析不要
+		const cached = fileCacheMap.get(filePath);
+		if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+			// ファイル自体は変わっていないが、時間経過でisActiveが変わる可能性
+			const isActive = (now - stat.mtimeMs) < thresholdMs;
+			return { isActive, activeSubagentIds: cached.activeSubagentIds };
+		}
+
+		// ファイルが変更されたので再解析
+		const isActive = (now - stat.mtimeMs) < thresholdMs;
+		const tail = readFileTail(filePath, TAIL_BYTES);
+		const activeSubagentIds = parseTailForSubagents(tail);
+
+		// キャッシュ更新
+		fileCacheMap.set(filePath, {
+			mtimeMs: stat.mtimeMs,
+			size: stat.size,
+			isActive,
+			activeSubagentIds,
+		});
+
+		return { isActive, activeSubagentIds };
+	} catch {
+		return { isActive: false, activeSubagentIds: [] };
+	}
+}
+
+// 古いキャッシュエントリを削除
+export function clearCache(): void {
+	fileCacheMap.clear();
+}
+
+// 特定ファイルのキャッシュのみ削除
+export function invalidateCache(filePath: string): void {
+	fileCacheMap.delete(filePath);
+}

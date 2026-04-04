@@ -304,6 +304,169 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}
 
+	// ファイル末尾だけ読み取る（巨大JSONL対策・非同期・fdリーク対策済み）
+	async function readFileTail(filePath: string, bytes: number): Promise<string> {
+		const handle = await fs.promises.open(filePath, 'r');
+		try {
+			const stat = await handle.stat();
+			if (stat.size === 0) { return ''; }
+			const readSize = Math.min(bytes, stat.size);
+			const startPos = Math.max(0, stat.size - readSize);
+			const buffer = Buffer.alloc(readSize);
+			await handle.read(buffer, 0, readSize, startPos);
+			return buffer.toString('utf-8');
+		} finally {
+			await handle.close();
+		}
+	}
+
+	// OutputChannel（エラーログ出力用）
+	let extensionOutputChannel: vscode.OutputChannel | undefined;
+	function getExtensionOutputChannel(): vscode.OutputChannel {
+		if (!extensionOutputChannel) {
+			extensionOutputChannel = vscode.window.createOutputChannel('CSM Session Manager');
+		}
+		return extensionOutputChannel;
+	}
+
+	// 簡易遺言生成: JSONL末尾から直近のやり取りを抽出（コストゼロ・即時）
+	async function generateSimpleTestament(agent: AgentConfig, oldSession: { filePath: string } | undefined): Promise<string> {
+		let testament = `${agent.name}の前セッションから引き継ぎ。`;
+		if (!oldSession) { return testament; }
+		try {
+			const tail = await readFileTail(oldSession.filePath, 128 * 1024); // 128KB
+			const lines = tail.split('\n').filter((l: string) => l.trim());
+			// 先頭行は途中で切れている可能性があるのでスキップ
+			if (lines.length > 1) { lines.shift(); }
+			const summaryParts: string[] = [];
+			const recentLines = lines.slice(-50);
+			for (const line of recentLines) {
+				try {
+					const entry = JSON.parse(line);
+					if (entry.type === 'user' && entry.message?.role === 'user' && typeof entry.message.content === 'string') {
+						summaryParts.push(`[User] ${entry.message.content.substring(0, 200)}`);
+					} else if (entry.type === 'assistant' && entry.message?.role === 'assistant') {
+						const text = typeof entry.message.content === 'string'
+							? entry.message.content
+							: Array.isArray(entry.message.content)
+								? entry.message.content.filter((b: { type: string }) => b.type === 'text').map((b: { text: string }) => b.text).join('')
+								: '';
+						if (text) {
+							summaryParts.push(`[Assistant] ${text.substring(0, 300)}`);
+						}
+					}
+				} catch { /* パース失敗は無視 */ }
+			}
+			if (summaryParts.length > 0) {
+				const lastParts = summaryParts.slice(-4);
+				testament = `${agent.name}の前セッション引き継ぎ:\n${lastParts.join('\n')}`;
+			}
+		} catch {
+			// 読み込み失敗時はデフォルトメッセージのまま
+		}
+		return testament;
+	}
+
+	// 詳細遺言生成: Claude CLIでAI要約を生成（トークンコストあり）
+	async function generateDetailedTestament(agent: AgentConfig, oldSession: { filePath: string } | undefined, model: string): Promise<string> {
+		if (!oldSession) { return `${agent.name}の前セッションから引き継ぎ。`; }
+		try {
+			// JSONL末尾から直近の内容を取得（末尾256KBのみ読み取り）
+			const tail = await readFileTail(oldSession.filePath, 256 * 1024); // 256KB
+			const lines = tail.split('\n').filter((l: string) => l.trim());
+			// 先頭行は途中で切れている可能性があるのでスキップ
+			if (lines.length > 1) { lines.shift(); }
+			const recentLines = lines.slice(-100);
+			const recentContent = recentLines.join('\n').substring(0, 8000);
+
+			// Claude CLIで要約生成
+			const { execFile } = require('child_process') as typeof import('child_process');
+			const prompt = `以下はClaude Codeのセッションログ（JSONL形式）の末尾です。このセッションで何をしたか・何が未完了かを300文字以内で簡潔に要約してください。次のセッションへの引き継ぎ情報として使います。\n\n${recentContent}`;
+
+			const result = await new Promise<string>((resolve, reject) => {
+				const child = execFile('claude', ['-p', prompt, '--model', model, '--max-tokens', '600'], {
+					timeout: 60000,
+					maxBuffer: 1024 * 64,
+				}, (err: Error | null, stdout: string) => {
+					if (err) { reject(err); return; }
+					resolve(stdout.trim());
+				});
+				child.stdin?.end();
+			});
+			return result || `${agent.name}の前セッションから引き継ぎ。`;
+		} catch (err) {
+			vscode.window.showWarningMessage(`AI要約の生成に失敗しました。簡易モードにフォールバックします。`);
+			return generateSimpleTestament(agent, oldSession);
+		}
+	}
+
+	// ルールファイルの「歴代セッションの記録」セクションに遺言を追記（直近3世代保持）
+	async function appendSessionHistoryToRuleFile(ruleFilePath: string, oldSessionId: string, testament: string): Promise<void> {
+		const HISTORY_HEADER = '## 歴代セッションの記録';
+		const MAX_GENERATIONS = 3;
+		const END_MARKER = '<!-- CSM:AUTO:END -->';
+
+		try {
+			let content = await fs.promises.readFile(ruleFilePath, 'utf-8');
+
+			// 日付文字列
+			const dateStr = new Date().toISOString().split('T')[0];
+			const newEntry = `### ${dateStr} (旧ID: ${oldSessionId})\n${testament}`;
+
+			const historyIdx = content.indexOf(HISTORY_HEADER);
+			if (historyIdx >= 0) {
+				// 既存の歴代セクションを解析
+				const sectionStart = historyIdx;
+				const afterHeader = content.substring(sectionStart + HISTORY_HEADER.length);
+				// 「## 」で始まる次のセクション（同レベル以上のヘッダ）を探す
+				const nextSectionMatch = afterHeader.match(/\n## [^#]/);
+				const sectionEnd = nextSectionMatch
+					? sectionStart + HISTORY_HEADER.length + (nextSectionMatch.index ?? afterHeader.length)
+					: content.length;
+				const sectionBody = content.substring(sectionStart + HISTORY_HEADER.length, sectionEnd);
+
+				// ### で始まるエントリを抽出
+				const entries: string[] = [];
+				const entryRegex = /### .+/g;
+				let match;
+				const entryStarts: number[] = [];
+				while ((match = entryRegex.exec(sectionBody)) !== null) {
+					entryStarts.push(match.index);
+				}
+				for (let i = 0; i < entryStarts.length; i++) {
+					const start = entryStarts[i];
+					const end = i + 1 < entryStarts.length ? entryStarts[i + 1] : sectionBody.length;
+					entries.push(sectionBody.substring(start, end).trim());
+				}
+
+				// 新エントリを追加し、直近3世代に制限
+				entries.push(newEntry);
+				while (entries.length > MAX_GENERATIONS) { entries.shift(); }
+
+				// セクションを再構築
+				const newSection = HISTORY_HEADER + '\n\n' + entries.join('\n\n') + '\n';
+				content = content.substring(0, sectionStart) + newSection + content.substring(sectionEnd);
+			} else {
+				// 歴代セクションが存在しない → CSM:AUTO:END マーカーの後に追加
+				const endMarkerIdx = content.indexOf(END_MARKER);
+				if (endMarkerIdx >= 0) {
+					const insertPos = endMarkerIdx + END_MARKER.length;
+					const newSection = '\n\n' + HISTORY_HEADER + '\n\n' + newEntry + '\n';
+					content = content.substring(0, insertPos) + newSection + content.substring(insertPos);
+				} else {
+					// マーカーもない → ファイル末尾に追加
+					content += '\n\n' + HISTORY_HEADER + '\n\n' + newEntry + '\n';
+				}
+			}
+
+			await fs.promises.writeFile(ruleFilePath, content, 'utf-8');
+		} catch (err) {
+			// ルールファイル書き込みエラーをOutputChannelにログ出力
+			const ch = getExtensionOutputChannel();
+			ch.appendLine(`[${new Date().toISOString()}] appendSessionHistoryToRuleFile エラー: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
 	// 全ビューをリフレッシュするヘルパー
 	function refreshAll(): void {
 		sessionProvider.refresh();
@@ -801,50 +964,48 @@ export function activate(context: vscode.ExtensionContext) {
 				return;
 			}
 
-			// 旧セッションから自動で遺言（引き継ぎサマリー）を生成
+			// 遺言生成モードを選択
+			const mode = await vscode.window.showQuickPick(
+				[
+					{ label: '簡易（即時）', description: 'JSONL末尾から自動抽出。コストゼロ', value: 'simple' as const },
+					{ label: '詳細（AI要約）', description: 'Claude CLIで要約生成。高品質だがトークンコストあり', value: 'detailed' as const },
+				],
+				{ placeHolder: '遺言の生成方法を選択してください' }
+			);
+			if (!mode) { return; }
+
 			const oldSession = sessionProvider.getSessionById(agent.sessionId);
+			const oldSessionId = agent.sessionId;
 			let testament = `${agent.name}の前セッションから引き継ぎ。`;
-			if (oldSession) {
-				try {
-					const content = await fs.promises.readFile(oldSession.filePath, 'utf-8');
-					const lines = content.split('\n').filter((l: string) => l.trim());
-					// 最後のユーザーメッセージとアシスタントメッセージを抽出
-					const summaryParts: string[] = [];
-					const recentLines = lines.slice(-50); // 直近50行から探索
-					for (const line of recentLines) {
-						try {
-							const entry = JSON.parse(line);
-							if (entry.type === 'user' && entry.message?.role === 'user' && typeof entry.message.content === 'string') {
-								summaryParts.push(`[User] ${entry.message.content.substring(0, 200)}`);
-							} else if (entry.type === 'assistant' && entry.message?.role === 'assistant') {
-								const text = typeof entry.message.content === 'string'
-									? entry.message.content
-									: Array.isArray(entry.message.content)
-										? entry.message.content.filter((b: { type: string }) => b.type === 'text').map((b: { text: string }) => b.text).join('')
-										: '';
-								if (text) {
-									summaryParts.push(`[Assistant] ${text.substring(0, 300)}`);
-								}
-							}
-						} catch { /* パース失敗は無視 */ }
-					}
-					// 直近のやり取りから遺言を構築
-					if (summaryParts.length > 0) {
-						const lastParts = summaryParts.slice(-4); // 直近2往復分
-						testament = `${agent.name}の前セッション引き継ぎ:\n${lastParts.join('\n')}`;
-					}
-				} catch {
-					// 読み込み失敗時はデフォルトメッセージのまま
-				}
+
+			if (mode.value === 'simple') {
+				// 簡易モード: JSONL末尾から自動抽出
+				testament = await generateSimpleTestament(agent, oldSession);
+			} else {
+				// 詳細モード: モデル選択 → Claude CLIでAI要約生成
+				const modelPick = await vscode.window.showQuickPick(
+					[
+						{ label: 'opus', description: '最高品質（推奨）', value: 'opus' },
+						{ label: 'sonnet', description: 'バランス重視', value: 'sonnet' },
+						{ label: 'haiku', description: '高速・低コスト', value: 'haiku' },
+					],
+					{ placeHolder: '要約に使用するモデルを選択', title: 'AI要約モデル' }
+				);
+				if (!modelPick) { return; }
+				testament = await generateDetailedTestament(agent, oldSession, modelPick.value);
 			}
 
-			// 確認ダイアログ（自動生成した遺言を表示、編集可能）
+			// 300文字上限
+			testament = testament.substring(0, 300);
+
+			// 確認ダイアログ（編集可能）
 			const finalTestament = await vscode.window.showInputBox({
-				prompt: '自動生成された引き継ぎメッセージ（編集可能）',
+				prompt: '引き継ぎメッセージ（編集可能・最大300文字）',
 				placeHolder: '次のセッションへの引き継ぎ事項...',
 				value: testament,
 			});
-			if (finalTestament === undefined) { return; } // キャンセル
+			if (finalTestament === undefined) { return; }
+			const trimmedTestament = finalTestament.substring(0, 300);
 
 			// 旧セッションのJSONLに引き継ぎメッセージを追記
 			if (oldSession) {
@@ -854,10 +1015,10 @@ export function activate(context: vscode.ExtensionContext) {
 						uuid: `testament-${Date.now()}`,
 						parentUuid: null,
 						timestamp: new Date().toISOString(),
-						sessionId: agent.sessionId,
+						sessionId: oldSessionId,
 						message: {
 							role: 'user',
-							content: `[セッション終了] ${finalTestament}`,
+							content: `[セッション終了] ${trimmedTestament}`,
 						},
 					});
 					await fs.promises.appendFile(oldSession.filePath, '\n' + entry);
@@ -866,9 +1027,19 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 			}
 
-			// セッションID紐づけを解除（空にする）
-			const updatedAgent = { ...agent, sessionId: '' };
-			dataStore.addAgent(updatedAgent);
+			// ルールファイルのカスタム部分に歴代セッション記録を追記
+			if (agent.ruleFile) {
+				await appendSessionHistoryToRuleFile(agent.ruleFile, oldSessionId, trimmedTestament);
+			}
+
+			// previousSessionIds を更新（直近5件保持）
+			const prevIds = [...(agent.previousSessionIds || [])];
+			prevIds.push(oldSessionId);
+			while (prevIds.length > 5) { prevIds.shift(); }
+
+			// セッションID紐づけを解除、previousSessionIds を保存
+			const updatedAgent: AgentConfig = { ...agent, sessionId: '', previousSessionIds: prevIds };
+			await dataStore.addAgent(updatedAgent);
 			refreshAll();
 			vscode.window.showInformationMessage(
 				`「${agent.name}」のセッション紐づけを解除しました。新しいセッションを紐づけてください。`

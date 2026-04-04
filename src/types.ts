@@ -85,6 +85,7 @@ export interface AgentConfig {
 	allowedTools?: string[];     // 許可ツール一覧
 	workDir?: string;            // 作業ディレクトリ
 	scope?: 'global' | 'project'; // ルールファイルのスコープ
+	previousSessionIds?: string[]; // 過去のセッションID（直近5件）
 	status?: 'active' | 'idle' | 'archived';
 	// Phase 1b: モデル制御
 	effort?: 'low' | 'medium' | 'high' | 'max'; // 推論努力レベル（max は Opus 4.6 のみ）

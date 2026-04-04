@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>エージェント組織図 - Claude Session Manager</title>
+<style>
+	:root {
+		--bg: #1e1e1e;
+		--surface: #252526;
+		--border: #3c3c3c;
+		--text: #cccccc;
+		--text-dim: #808080;
+		--accent: #e27e4a;
+		--opus: #b388ff;
+		--sonnet: #64b5f6;
+		--line: #555555;
+		--live-green: #4ec94e;
+	}
+
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+
+	body {
+		font-family: 'Segoe UI', 'Meiryo', sans-serif;
+		background: var(--bg);
+		color: var(--text);
+		padding: 24px;
+		min-height: 100vh;
+	}
+
+	h1 {
+		text-align: center;
+		font-size: 20px;
+		color: var(--accent);
+		margin-bottom: 8px;
+		font-weight: 500;
+	}
+
+	.subtitle {
+		text-align: center;
+		font-size: 12px;
+		color: var(--text-dim);
+		margin-bottom: 32px;
+	}
+
+	/* 組織図レイアウト */
+	.org-chart {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0;
+	}
+
+	/* ノード共通 */
+	.node {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 12px 16px;
+		min-width: 200px;
+		position: relative;
+		transition: border-color 0.2s, box-shadow 0.2s;
+		cursor: default;
+	}
+	.node:hover {
+		border-color: var(--accent);
+		box-shadow: 0 0 12px rgba(226, 126, 74, 0.2);
+	}
+
+	.node-header {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 4px;
+	}
+
+	.node-name {
+		font-size: 14px;
+		font-weight: 600;
+	}
+
+	.node-role {
+		font-size: 11px;
+		color: var(--text-dim);
+		line-height: 1.4;
+	}
+
+	.node-session {
+		font-size: 10px;
+		color: var(--text-dim);
+		margin-top: 6px;
+		font-family: 'Cascadia Code', 'Consolas', monospace;
+		opacity: 0.7;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+	.node-session:hover {
+		opacity: 1;
+		color: var(--accent);
+	}
+	.node-session .copy-icon {
+		font-size: 10px;
+	}
+
+	/* モデルバッジ */
+	.badge {
+		font-size: 10px;
+		padding: 1px 6px;
+		border-radius: 3px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+	}
+	.badge-opus {
+		background: rgba(179, 136, 255, 0.15);
+		color: var(--opus);
+		border: 1px solid rgba(179, 136, 255, 0.3);
+	}
+	.badge-sonnet {
+		background: rgba(100, 181, 246, 0.15);
+		color: var(--sonnet);
+		border: 1px solid rgba(100, 181, 246, 0.3);
+	}
+
+	/* ライブインジケーター */
+	.live-dot {
+		width: 8px;
+		height: 8px;
+		background: var(--live-green);
+		border-radius: 50%;
+		display: inline-block;
+		animation: pulse 2s infinite;
+	}
+	@keyframes pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.4; }
+	}
+
+	/* 取締役ノード */
+	.node-director {
+		border-color: var(--accent);
+		border-width: 2px;
+		min-width: 240px;
+		text-align: center;
+	}
+	.node-director .node-name {
+		color: var(--accent);
+		font-size: 16px;
+	}
+
+	/* 接続線 */
+	.connector-v {
+		width: 2px;
+		height: 24px;
+		background: var(--line);
+		margin: 0 auto;
+	}
+
+	.connector-h-wrap {
+		display: flex;
+		justify-content: center;
+		align-items: flex-start;
+		position: relative;
+		width: 100%;
+		margin-top: 0;
+	}
+
+	/* 部署グリッド */
+	.dept-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 16px;
+		max-width: 1000px;
+		width: 100%;
+	}
+
+	/* 部署ノードから下の接続線 */
+	.dept-col {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0;
+	}
+
+	/* 水平接続線（グリッド上部） */
+	.h-line {
+		height: 2px;
+		background: var(--line);
+		width: 100%;
+		max-width: 1000px;
+	}
+
+	/* 垂直ティック（各列の上部） */
+	.dept-col::before {
+		content: '';
+		display: block;
+		width: 2px;
+		height: 16px;
+		background: var(--line);
+	}
+
+	/* 子部署 */
+	.sub-dept {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0;
+		margin-top: 0;
+	}
+
+	.sub-dept .connector-v {
+		height: 16px;
+	}
+
+	.node-sub {
+		min-width: 180px;
+		border-style: dashed;
+	}
+
+	.node-sub .node-name {
+		font-size: 12px;
+	}
+
+	/* ツールタグ */
+	.tools {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 3px;
+		margin-top: 6px;
+	}
+	.tool-tag {
+		font-size: 9px;
+		padding: 1px 4px;
+		border-radius: 2px;
+		background: rgba(255, 255, 255, 0.06);
+		color: var(--text-dim);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+	}
+
+	/* 凡例 */
+	.legend {
+		display: flex;
+		gap: 24px;
+		justify-content: center;
+		margin-top: 32px;
+		font-size: 11px;
+		color: var(--text-dim);
+	}
+	.legend-item {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	/* 増設案内 */
+	.expandable {
+		font-size: 11px;
+		color: var(--text-dim);
+		text-align: center;
+		padding: 8px;
+		border: 1px dashed var(--border);
+		border-radius: 6px;
+		min-width: 180px;
+		margin-top: 4px;
+	}
+
+	/* コピー通知 */
+	.toast {
+		position: fixed;
+		bottom: 24px;
+		left: 50%;
+		transform: translateX(-50%) translateY(60px);
+		background: var(--accent);
+		color: #fff;
+		padding: 8px 16px;
+		border-radius: 6px;
+		font-size: 12px;
+		opacity: 0;
+		transition: all 0.3s;
+		pointer-events: none;
+		z-index: 100;
+	}
+	.toast.show {
+		transform: translateX(-50%) translateY(0);
+		opacity: 1;
+	}
+</style>
+</head>
+<body>
+
+<h1>エージェント組織図</h1>
+<p class="subtitle">Claude Code マルチエージェント運用体制</p>
+
+<div class="org-chart">
+	<!-- 取締役 -->
+	<div class="node node-director">
+		<div class="node-header" style="justify-content: center;">
+			<span class="node-name">取締役（メインセッション）</span>
+		</div>
+		<div class="node-role">全体統括・指示出し・承認</div>
+		<div class="node-session" onclick="copyId('main')" title="クリックでコピー">
+			<span class="copy-icon">📋</span> メインセッション
+		</div>
+	</div>
+
+	<div class="connector-v"></div>
+	<div class="h-line"></div>
+
+	<!-- 部署グリッド -->
+	<div class="dept-grid">
+
+		<!-- テスト部 -->
+		<div class="dept-col">
+			<div class="node">
+				<div class="node-header">
+					<span class="badge badge-opus">opus</span>
+					<span class="node-name">テスト部</span>
+				</div>
+				<div class="node-role">デバッグ・品質確認</div>
+				<div class="tools">
+					<span class="tool-tag">Read</span>
+					<span class="tool-tag">Glob</span>
+					<span class="tool-tag">Grep</span>
+				</div>
+				<div class="node-session" onclick="copyId('9581b670-2d75-4320-be43-b44d657c6552')" title="クリックでコピー">
+					<span class="copy-icon">📋</span> 9581b670...6552
+				</div>
+			</div>
+		</div>
+
+		<!-- 調査部 -->
+		<div class="dept-col">
+			<div class="node">
+				<div class="node-header">
+					<span class="badge badge-opus">opus</span>
+					<span class="node-name">調査部</span>
+				</div>
+				<div class="node-role">Web調査・情報収集</div>
+				<div class="tools">
+					<span class="tool-tag">制限なし</span>
+				</div>
+				<div class="node-session" onclick="copyId('')" title="未確定">
+					<span style="color: var(--text-dim);">未確定</span>
+				</div>
+			</div>
+		</div>
+
+		<!-- 雑務部 -->
+		<div class="dept-col">
+			<div class="node">
+				<div class="node-header">
+					<span class="badge badge-sonnet">sonnet</span>
+					<span class="node-name">雑務部</span>
+				</div>
+				<div class="node-role">ファイル整理・雑務全般</div>
+				<div class="tools">
+					<span class="tool-tag">Read</span>
+					<span class="tool-tag">Glob</span>
+					<span class="tool-tag">Bash(ls)</span>
+					<span class="tool-tag">Bash(wc)</span>
+				</div>
+				<div class="node-session" onclick="copyId('')" title="未確定">
+					<span style="color: var(--text-dim);">未確定</span>
+				</div>
+			</div>
+		</div>
+
+		<!-- タスク管理部 -->
+		<div class="dept-col">
+			<div class="node">
+				<div class="node-header">
+					<span class="badge badge-sonnet">sonnet</span>
+					<span class="node-name">タスク管理部</span>
+				</div>
+				<div class="node-role">ToDo管理・進捗報告</div>
+				<div class="tools">
+					<span class="tool-tag">TodoWrite</span>
+					<span class="tool-tag">Read</span>
+					<span class="tool-tag">Glob</span>
+				</div>
+				<div class="node-session" onclick="copyId('')" title="未確定">
+					<span style="color: var(--text-dim);">未確定</span>
+				</div>
+			</div>
+		</div>
+
+		<!-- CSM開発部 -->
+		<div class="dept-col">
+			<div class="node">
+				<div class="node-header">
+					<span class="badge badge-opus">opus</span>
+					<span class="node-name">CSM開発部</span>
+					<span class="live-dot" title="使用中"></span>
+				</div>
+				<div class="node-role">Claude Session Manager開発・改善</div>
+				<div class="tools">
+					<span class="tool-tag">既存セッション利用</span>
+				</div>
+				<div class="node-session" onclick="copyId('55f63fbc-6d5d-44aa-a188-1b5c16bcffa5')" title="クリックでコピー">
+					<span class="copy-icon">📋</span> 55f63fbc...cffa5
+				</div>
+			</div>
+		</div>
+
+		<!-- サーバー管理部 -->
+		<div class="dept-col">
+			<div class="node">
+				<div class="node-header">
+					<span class="badge badge-opus">opus</span>
+					<span class="node-name">サーバー管理部</span>
+				</div>
+				<div class="node-role">Ubuntu/Xserver管理</div>
+				<div class="tools">
+					<span class="tool-tag">Read</span>
+					<span class="tool-tag">Glob</span>
+					<span class="tool-tag">Grep</span>
+					<span class="tool-tag">Bash(ssh)</span>
+				</div>
+				<div class="node-session" onclick="copyId('23987cee-11a5-49d3-9678-ee232c6bd6cb')" title="クリックでコピー">
+					<span class="copy-icon">📋</span> 23987cee...d6cb
+				</div>
+			</div>
+		</div>
+
+		<!-- 品質管理部 -->
+		<div class="dept-col">
+			<div class="node">
+				<div class="node-header">
+					<span class="badge badge-opus">opus</span>
+					<span class="node-name">品質管理部</span>
+				</div>
+				<div class="node-role">コードレビュー・セキュリティ</div>
+				<div class="tools">
+					<span class="tool-tag">Read</span>
+					<span class="tool-tag">Glob</span>
+					<span class="tool-tag">Grep</span>
+				</div>
+				<div class="node-session" onclick="copyId('')" title="未確定">
+					<span style="color: var(--text-dim);">未確定</span>
+				</div>
+			</div>
+		</div>
+
+		<!-- ALOrderForge開発部（親 + 子） -->
+		<div class="dept-col">
+			<div class="node">
+				<div class="node-header">
+					<span class="badge badge-opus">opus</span>
+					<span class="node-name">ALOrderForge開発部</span>
+				</div>
+				<div class="node-role">AL開発全般の統括</div>
+				<div class="tools">
+					<span class="tool-tag">Edit</span>
+					<span class="tool-tag">Write</span>
+					<span class="tool-tag">Read</span>
+					<span class="tool-tag">Glob</span>
+					<span class="tool-tag">Grep</span>
+				</div>
+				<div class="node-session" onclick="copyId('')" title="未確定">
+					<span style="color: var(--text-dim);">未確定</span>
+				</div>
+			</div>
+
+			<!-- 子：ALデバッグ班 -->
+			<div class="sub-dept">
+				<div class="connector-v"></div>
+				<div class="node node-sub">
+					<div class="node-header">
+						<span class="badge badge-sonnet">sonnet</span>
+						<span class="node-name">ALデバッグ班</span>
+					</div>
+					<div class="node-role">バグ調査・修正</div>
+					<div class="node-session" onclick="copyId('')" title="未確定">
+						<span style="color: var(--text-dim);">未確定</span>
+					</div>
+				</div>
+
+				<div class="connector-v" style="height: 8px;"></div>
+				<div class="expandable">
+					＋ 班長が必要に応じて<br>AL●●班を増設
+				</div>
+			</div>
+		</div>
+
+	</div>
+</div>
+
+<!-- 凡例 -->
+<div class="legend">
+	<div class="legend-item">
+		<span class="badge badge-opus">opus</span> 高度な判断・開発
+	</div>
+	<div class="legend-item">
+		<span class="badge badge-sonnet">sonnet</span> 定型作業・補助
+	</div>
+	<div class="legend-item">
+		<span class="live-dot"></span> 使用中
+	</div>
+	<div class="legend-item">
+		📋 クリックでIDコピー
+	</div>
+</div>
+
+<!-- コピー通知 -->
+<div class="toast" id="toast">セッションIDをコピーしました</div>
+
+<script>
+function copyId(id) {
+	if (!id) return;
+	navigator.clipboard.writeText(id).then(() => {
+		const toast = document.getElementById('toast');
+		toast.textContent = 'コピー: ' + id;
+		toast.classList.add('show');
+		setTimeout(() => toast.classList.remove('show'), 2000);
+	});
+}
+</script>
+
+</body>
+</html>
