@@ -292,36 +292,6 @@
 				"category": "Claude Session Manager"
 			},
 			{
-				"command": "claudeManager.addTaskLog",
-				"title": "タスクを記録",
-				"icon": "$(add)",
-				"category": "Claude Session Manager"
-			},
-			{
-				"command": "claudeManager.completeTaskLog",
-				"title": "タスクを完了にする",
-				"icon": "$(check)",
-				"category": "Claude Session Manager"
-			},
-			{
-				"command": "claudeManager.deleteTaskLog",
-				"title": "タスクログを削除",
-				"icon": "$(trash)",
-				"category": "Claude Session Manager"
-			},
-			{
-				"command": "claudeManager.openTaskOutput",
-				"title": "出力ファイルを開く",
-				"icon": "$(file)",
-				"category": "Claude Session Manager"
-			},
-			{
-				"command": "claudeManager.clearTaskLogs",
-				"title": "全タスクログをクリア",
-				"icon": "$(clear-all)",
-				"category": "Claude Session Manager"
-			},
-			{
 				"command": "claudeManager.refreshUsage",
 				"title": "利用制限を更新",
 				"icon": "$(refresh)",
@@ -337,6 +307,12 @@
 				"command": "claudeManager.toggleMemoryFilter",
 				"title": "プロジェクト/全て切替",
 				"icon": "$(filter)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.migrateToFolderStructure",
+				"title": "フォルダ構造に移行",
+				"icon": "$(folder)",
 				"category": "Claude Session Manager"
 			}
 		],
@@ -402,12 +378,7 @@
 					"when": "view == claudeAgents",
 					"group": "navigation"
 				},
-				{
-					"command": "claudeManager.addTaskLog",
-					"when": "view == claudeAgents",
-					"group": "navigation"
-				},
-				{
+					{
 					"command": "claudeManager.refreshAgents",
 					"when": "view == claudeAgents",
 					"group": "navigation"
@@ -553,21 +524,6 @@
 					"command": "claudeManager.openProjectInVSC",
 					"when": "view == claudeMemory && viewItem == memoryProject",
 					"group": "0_open"
-				},
-				{
-					"command": "claudeManager.openTaskOutput",
-					"when": "view == claudeAgents && viewItem =~ /taskLogItem.*WithOutput/",
-					"group": "inline"
-				},
-				{
-					"command": "claudeManager.completeTaskLog",
-					"when": "view == claudeAgents && viewItem =~ /taskLogItemActive/",
-					"group": "1_task"
-				},
-				{
-					"command": "claudeManager.deleteTaskLog",
-					"when": "view == claudeAgents && viewItem =~ /^taskLogItem/",
-					"group": "2_danger"
 				}
 			]
 		},

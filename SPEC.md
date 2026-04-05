@@ -1176,6 +1176,54 @@ previousSessionIds?: string[];  // 過去のセッションID（直近5件）
 | `types.ts` | AgentConfig に `previousSessionIds` フィールド追加 |
 | `extension.ts` | `renewAgentSession` 全面改修、ヘルパー3関数追加（generateSimpleTestament / generateDetailedTestament / appendSessionHistoryToRuleFile） |
 
+## 53. フォルダ構造移行 + TODO.md自動管理 + タスクログUI削除
+
+### フォルダ構造（Phase 1）
+
+`.agent-rules/` 配下をフラット構造からフォルダ構造に移行:
+
+```
+.agent-rules/
+├── CSM開発部/
+│   ├── CSM開発部.md    ← ルールファイル（従来通り）
+│   ├── TODO.md          ← エージェント別タスク管理
+│   └── HISTORY.md       ← 歴代セッション記録（ルールファイルから分離）
+```
+
+- `autoGenerateRuleFile()` がフォルダ構造を自動作成
+- `resolveRuleFilePath()` がフラット/フォルダ両構造を自動判定
+- 移行コマンド `claudeManager.migrateToFolderStructure` で一括移行（旧ファイルは `.trash/` へ）
+- HISTORY.md はルールファイルの `## 歴代セッションの記録` セクションから自動分離
+
+### Stop フック — todo-flush.js（Phase 2）
+
+`~/.claude/scripts/csm/todo-flush.js` — Stop フック発火時に TodoWrite 最終状態を TODO.md にマージ:
+
+| ステップ | 処理 |
+|----------|------|
+| 0 | パスサニタイズ（パストラバーサル防止） |
+| 1 | セッションID取得（stdin主系 / 環境変数副系） |
+| 2 | session-manager.json からエージェント特定 |
+| 3 | JSONL末尾64KBからTodoWrite最終呼び出し抽出 |
+| 4 | TODO.md マージ（id重複検出 + 先頭40文字フォールバック） |
+| 5 | 完了タスク10件超過分をHISTORY.mdに転記 |
+
+- ロックファイル排他制御、非同期実行（async: true）
+
+### タスクログUI削除
+
+手動タスク記録UI（5コマンド + 3メニュー）を削除。自動検出（TaskTracker）は存続。
+
+### 影響範囲
+
+| ファイル | 変更 |
+|---|---|
+| `extension.ts` | フォルダ構造対応、`ensureAgentFolderFiles()` 追加、`migrateToFolderStructure` コマンド追加、タスクログ5コマンド削除 |
+| `agentManager.ts` | `resolveRuleFilePath()` フラット/フォルダ両対応 |
+| `package.json` | `migrateToFolderStructure` コマンド追加、タスクログ5コマンド+3メニュー削除 |
+| `~/.claude/scripts/csm/todo-flush.js` | 新規（Stop フックスクリプト） |
+| `~/.claude/settings.json` | Stop フックにtodo-flush.js追加 |
+
 ---
 
 ## バージョン

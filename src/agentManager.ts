@@ -26,15 +26,34 @@ export function enrichAgentsWithSessions(
 	}));
 }
 
-// ルールファイルのフルパスを解決（ファイル名のみならルールフォルダと結合）
+// ルールファイルのフルパスを解決（フラット構造 + フォルダ構造の両対応）
 export async function resolveRuleFilePath(ruleFilePath: string): Promise<string> {
 	if (!ruleFilePath) { return ''; }
-	// 既にフルパスの場合はそのまま
+	// 既にフルパスの場合
 	if (path.isAbsolute(ruleFilePath) || ruleFilePath.includes('/') || ruleFilePath.includes('\\')) {
+		// パスがディレクトリを指している場合 → <dir>/<dirname>.md として解決
+		try {
+			const stat = await fs.promises.stat(ruleFilePath);
+			if (stat.isDirectory()) {
+				const dirName = path.basename(ruleFilePath);
+				return path.join(ruleFilePath, `${dirName}.md`);
+			}
+		} catch {
+			// stat失敗 → ファイルとしてそのまま返す
+		}
 		return ruleFilePath;
 	}
 	// ファイル名のみの場合はルールフォルダと結合
 	const ruleFolder = await dataStore.getRuleFolder();
+	// フォルダ構造を優先チェック: .agent-rules/<name>/<name>.md
+	const nameWithoutExt = ruleFilePath.replace(/\.md$/, '');
+	const folderPath = path.join(ruleFolder, nameWithoutExt, ruleFilePath);
+	try {
+		await fs.promises.access(folderPath);
+		return folderPath;
+	} catch {
+		// フォルダ構造にない → フラット構造を返す
+	}
 	return path.join(ruleFolder, ruleFilePath);
 }
 

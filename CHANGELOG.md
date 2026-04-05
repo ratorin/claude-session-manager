@@ -77,6 +77,21 @@
 - JSONL読み取りを末尾読み取り（FileHandle API）に最適化（巨大ファイル対策）
 - ルールファイル書き込みエラーをOutputChannelにログ出力
 
+### フォルダ構造移行（Phase 1）
+- `.agent-rules/` 配下をフラット構造からフォルダ構造に移行対応（`.agent-rules/<name>/<name>.md` + TODO.md + HISTORY.md）
+- `resolveRuleFilePath()` がフラット/フォルダ両構造を自動判定（後方互換）
+- 移行コマンド `claudeManager.migrateToFolderStructure` 追加（旧ファイルは `.trash/` へ移動）
+- HISTORY.md 分離 — ルールファイルの「歴代セッションの記録」セクションを自動抽出
+
+### TODO.md自動管理（Phase 2）
+- Stop フックスクリプト `todo-flush.js` 新設 — TodoWrite の最終状態をエージェント別 TODO.md に自動マージ
+- パスサニタイズ（パストラバーサル防止）+ ロックファイル排他制御
+- 完了タスク10件超過分を HISTORY.md に自動転記
+
+### タスクログUI削除
+- 手動タスク記録コマンド5件削除（addTaskLog / completeTaskLog / deleteTaskLog / openTaskOutput / clearTaskLogs）
+- 関連メニュー3件削除 — 自動検出（TaskTracker）は引き続き機能
+
 ### バグ修正
 - ブックマークがプロジェクトフィルターの影響で非表示になる問題を修正
 - sessionLoader の fd リーク修正、XSS対策、unsafe type cast 修正

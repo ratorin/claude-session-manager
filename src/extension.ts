@@ -264,6 +264,7 @@ export function activate(context: vscode.ExtensionContext) {
 	}
 
 	// ruleFileが未設定の場合にルールファイルを自動生成するヘルパー（子エージェント用）— 非同期
+	// v0.3.0: 部署フォルダ構造対応（.agent-rules/<部署名>/<部署名>.md + TODO.md + HISTORY.md）
 	async function autoGenerateRuleFile(config: AgentConfig): Promise<AgentConfig> {
 		if (config.ruleFile) {
 			// 既にルールファイルがある場合 → マーカー内の自動生成部分のみ更新
@@ -272,35 +273,89 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 		const ruleFolder = await dataStore.getRuleFolderForScope(config.scope);
 		if (!ruleFolder) { return config; }
-		const filePath = path.join(ruleFolder, `${config.name}.md`);
-		// 既にファイルが存在する場合は紐づけ + 自動セクション更新
+
+		// フォルダ構造: .agent-rules/<部署名>/<部署名>.md
+		const agentFolder = path.join(ruleFolder, config.name);
+		const filePath = path.join(agentFolder, `${config.name}.md`);
+
+		// フラット構造の旧ファイルが存在するか確認（後方互換）
+		const flatPath = path.join(ruleFolder, `${config.name}.md`);
+		try {
+			await fs.promises.access(flatPath);
+			const flatStat = await fs.promises.stat(flatPath);
+			if (flatStat.isFile()) {
+				// フラット構造が存在 → そのまま使用（移行コマンドで変換）
+				await updateAutoSection(flatPath, config);
+				return { ...config, ruleFile: flatPath };
+			}
+		} catch {
+			// フラットファイルが存在しない → OK
+		}
+
+		// フォルダ構造のファイルが既に存在する場合は紐づけ + 自動セクション更新
 		try {
 			await fs.promises.access(filePath);
 			await updateAutoSection(filePath, config);
+			// TODO.md / HISTORY.md が無ければ作成
+			await ensureAgentFolderFiles(agentFolder, config.name);
 			return { ...config, ruleFile: filePath };
 		} catch {
 			// ファイルが存在しない → 新規作成
 		}
-		// 重複チェック: 他スコープに同名ファイルが存在する場合は警告
+
+		// 重複チェック: 他スコープに同名が存在する場合は警告
 		const otherScope = config.scope === 'global' ? 'project' : 'global';
 		const otherFolder = await dataStore.getRuleFolderForScope(otherScope);
-		const otherPath = path.join(otherFolder, `${config.name}.md`);
+		const otherPath = path.join(otherFolder, config.name, `${config.name}.md`);
+		const otherFlatPath = path.join(otherFolder, `${config.name}.md`);
 		try {
 			await fs.promises.access(otherPath);
 			vscode.window.showWarningMessage(
 				`同名のルールファイルが${otherScope === 'global' ? 'グローバル' : 'プロジェクト'}スコープに既に存在します: ${otherPath}`
 			);
 		} catch {
-			// 他スコープには存在しない → OK
+			try {
+				await fs.promises.access(otherFlatPath);
+				const s = await fs.promises.stat(otherFlatPath);
+				if (s.isFile()) {
+					vscode.window.showWarningMessage(
+						`同名のルールファイルが${otherScope === 'global' ? 'グローバル' : 'プロジェクト'}スコープに既に存在します: ${otherFlatPath}`
+					);
+				}
+			} catch {
+				// 他スコープには存在しない → OK
+			}
 		}
+
 		try {
-			await fs.promises.mkdir(ruleFolder, { recursive: true });
+			// 部署フォルダ作成
+			await fs.promises.mkdir(agentFolder, { recursive: true });
 			const autoContent = buildAutoSection(config);
 			const content = `<!-- CSM:AUTO:START -->\n${autoContent}\n<!-- CSM:AUTO:END -->\n\n<!-- 以下にカスタムルールを自由に追記してください -->\n`;
 			await fs.promises.writeFile(filePath, content, 'utf-8');
+			// TODO.md / HISTORY.md テンプレート作成
+			await ensureAgentFolderFiles(agentFolder, config.name);
 			return { ...config, ruleFile: filePath };
 		} catch {
 			return config;
+		}
+	}
+
+	// 部署フォルダに TODO.md / HISTORY.md が存在しなければテンプレートを作成
+	async function ensureAgentFolderFiles(agentFolder: string, agentName: string): Promise<void> {
+		const todoPath = path.join(agentFolder, 'TODO.md');
+		const historyPath = path.join(agentFolder, 'HISTORY.md');
+		try {
+			await fs.promises.access(todoPath);
+		} catch {
+			const todoTemplate = `# ${agentName} — TODO\n\n> 最終更新: ${new Date().toISOString()}\n\n## 未完了\n\n## 完了（直近10件）\n\n## 保留\n`;
+			await fs.promises.writeFile(todoPath, todoTemplate, 'utf-8');
+		}
+		try {
+			await fs.promises.access(historyPath);
+		} catch {
+			const historyTemplate = `# ${agentName} — 歴代セッション記録\n\n`;
+			await fs.promises.writeFile(historyPath, historyTemplate, 'utf-8');
 		}
 	}
 
@@ -1101,149 +1156,90 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	// --- タスクログ関連コマンド ---
+	// タスクログ手動記録コマンドは削除済み（v0.3.0: TODO.md自動管理に移行）
+	// 自動検知（taskTracker.ts）は引き続き動作
 
-	// タスクログ追加
+	// --- フォルダ構造移行コマンド ---
 	context.subscriptions.push(
-		vscode.commands.registerCommand('claudeManager.addTaskLog', async () => {
-			const agents = await dataStore.getAgents();
-			if (agents.length === 0) {
-				vscode.window.showWarningMessage('エージェントが登録されていません');
-				return;
-			}
-			const agentPick = await vscode.window.showQuickPick(
-				agents.map(a => ({ label: a.name, description: a.sessionId ? `Session: ${a.sessionId.substring(0, 8)}...` : '未紐づけ', agent: a })),
-				{ placeHolder: 'タスクを追加するエージェントを選択' }
-			);
-			if (!agentPick || !agentPick.agent.sessionId) {
-				if (agentPick && !agentPick.agent.sessionId) {
-					vscode.window.showWarningMessage('セッションが紐づけされていないエージェントにはタスクを追加できません');
-				}
-				return;
-			}
-			const summary = await vscode.window.showInputBox({ prompt: 'タスク概要', placeHolder: '例: v0.3.0のビルド確認' });
-			if (!summary) { return; }
-			const outputFile = await vscode.window.showInputBox({ prompt: '出力先ファイル（任意）', placeHolder: '例: c:/tmp/report.txt' });
-			// outputFile のパストラバーサル検証
-			if (outputFile && !validateOutputFile(outputFile)) {
-				vscode.window.showWarningMessage('出力先ファイルはワークスペース配下またはtmpフォルダのみ指定可能です');
-				return;
-			}
-			const log = {
-				id: Date.now().toString(36) + Math.random().toString(36).substring(2, 7),
-				agentName: agentPick.agent.name,
-				sessionId: agentPick.agent.sessionId,
-				summary: summary.slice(0, 200),
-				outputFile: outputFile || undefined,
-				status: 'pending' as const,
-				createdAt: Date.now(),
-			};
-			await dataStore.addTaskLog(log);
-			agentProvider.refresh();
-			vscode.window.showInformationMessage(`タスクログを追加しました: ${summary}`);
-		})
-	);
-
-	// タスクログ完了
-	context.subscriptions.push(
-		vscode.commands.registerCommand('claudeManager.completeTaskLog', async (taskLogOrId?: string | { id: string }) => {
-			let logId: string | undefined;
-			if (typeof taskLogOrId === 'string') {
-				logId = taskLogOrId;
-			} else if (taskLogOrId && typeof taskLogOrId === 'object' && 'id' in taskLogOrId) {
-				logId = taskLogOrId.id;
-			}
-			if (!logId) {
-				// QuickPickで選択
-				const allLogs = await dataStore.getTaskLogs();
-				const logs = allLogs.filter(t => t.status !== 'completed' && t.status !== 'error');
-				if (logs.length === 0) {
-					vscode.window.showInformationMessage('完了可能なタスクがありません');
-					return;
-				}
-				const pick = await vscode.window.showQuickPick(
-					logs.map(t => ({ label: `${t.agentName}: ${t.summary}`, description: t.status, logId: t.id })),
-					{ placeHolder: '完了するタスクを選択' }
-				);
-				if (!pick) { return; }
-				logId = pick.logId;
-			}
-			await dataStore.updateTaskLog(logId, { status: 'completed', completedAt: Date.now() });
-			agentProvider.refresh();
-			vscode.window.showInformationMessage('タスクを完了にしました');
-		})
-	);
-
-	// タスクログ削除
-	context.subscriptions.push(
-		vscode.commands.registerCommand('claudeManager.deleteTaskLog', async (taskLogOrId?: string | { id: string }) => {
-			let logId: string | undefined;
-			if (typeof taskLogOrId === 'string') {
-				logId = taskLogOrId;
-			} else if (taskLogOrId && typeof taskLogOrId === 'object' && 'id' in taskLogOrId) {
-				logId = taskLogOrId.id;
-			}
-			if (!logId) {
-				const logs = await dataStore.getTaskLogs();
-				if (logs.length === 0) {
-					vscode.window.showInformationMessage('タスクログがありません');
-					return;
-				}
-				const pick = await vscode.window.showQuickPick(
-					logs.map(t => ({ label: `${t.agentName}: ${t.summary}`, description: t.status, logId: t.id })),
-					{ placeHolder: '削除するタスクを選択' }
-				);
-				if (!pick) { return; }
-				logId = pick.logId;
-			}
-			await dataStore.removeTaskLog(logId);
-			agentProvider.refresh();
-			vscode.window.showInformationMessage('タスクログを削除しました');
-		})
-	);
-
-	// タスク出力ファイルを開く
-	context.subscriptions.push(
-		vscode.commands.registerCommand('claudeManager.openTaskOutput', async (taskLogOrId?: string | { id: string; outputFile?: string }) => {
-			let outputFile: string | undefined;
-			if (taskLogOrId && typeof taskLogOrId === 'object' && 'outputFile' in taskLogOrId) {
-				outputFile = taskLogOrId.outputFile;
-			}
-			if (!outputFile) {
-				const allLogs = await dataStore.getTaskLogs();
-				const logs = allLogs.filter(t => t.outputFile);
-				if (logs.length === 0) {
-					vscode.window.showInformationMessage('出力ファイル付きのタスクがありません');
-					return;
-				}
-				const pick = await vscode.window.showQuickPick(
-					logs.map(t => ({ label: `${t.agentName}: ${t.summary}`, description: t.outputFile, file: t.outputFile })),
-					{ placeHolder: '出力ファイルを開くタスクを選択' }
-				);
-				if (!pick || !pick.file) { return; }
-				outputFile = pick.file;
-			}
-			try {
-				const doc = await vscode.workspace.openTextDocument(outputFile);
-				await vscode.window.showTextDocument(doc);
-			} catch {
-				vscode.window.showErrorMessage(`ファイルを開けません: ${outputFile}`);
-			}
-		})
-	);
-
-	// タスクログ全クリア
-	context.subscriptions.push(
-		vscode.commands.registerCommand('claudeManager.clearTaskLogs', async () => {
+		vscode.commands.registerCommand('claudeManager.migrateToFolderStructure', async () => {
 			const confirm = await vscode.window.showWarningMessage(
-				'すべてのタスクログを削除しますか？',
+				'.agent-rules/ をフォルダ構造に移行します。旧ファイルは .trash/ に退避されます。',
 				{ modal: true },
-				'削除'
+				'移行実行'
 			);
-			if (confirm !== '削除') { return; }
-			await dataStore.clearTaskLogs();
-			agentProvider.refresh();
-			vscode.window.showInformationMessage('タスクログをすべて削除しました');
+			if (confirm !== '移行実行') { return; }
+
+			const agents = await dataStore.getAgents();
+			const migrated: string[] = [];
+			const skipped: string[] = [];
+
+			for (const agent of agents) {
+				if (!agent.ruleFile) { skipped.push(agent.name); continue; }
+				const resolved = await resolveRuleFilePath(agent.ruleFile);
+				try {
+					const stat = await fs.promises.stat(resolved);
+					if (!stat.isFile()) { skipped.push(agent.name); continue; }
+				} catch { skipped.push(agent.name); continue; }
+
+				// 既にフォルダ構造なら skip
+				const parentDir = path.dirname(resolved);
+				const parentName = path.basename(parentDir);
+				if (parentName === agent.name) { skipped.push(agent.name); continue; }
+
+				// フォルダ構造に移行
+				const ruleFolder = parentDir;
+				const agentFolder = path.join(ruleFolder, agent.name);
+				const newRuleFile = path.join(agentFolder, `${agent.name}.md`);
+
+				try {
+					await fs.promises.mkdir(agentFolder, { recursive: true });
+
+					// ルールファイルをコピー
+					const content = await fs.promises.readFile(resolved, 'utf-8');
+
+					// HISTORY.md 分離: ルールファイル内の歴代セッション記録を抽出
+					const HISTORY_HEADER = '## 歴代セッションの記録';
+					const historyIdx = content.indexOf(HISTORY_HEADER);
+					let ruleContent = content;
+					let historyContent = `# ${agent.name} — 歴代セッション記録\n\n`;
+					if (historyIdx >= 0) {
+						const afterHeader = content.substring(historyIdx);
+						const nextSectionMatch = afterHeader.match(/\n## [^#]/);
+						const sectionEnd = nextSectionMatch
+							? historyIdx + (nextSectionMatch.index ?? afterHeader.length)
+							: content.length;
+						const historySection = content.substring(historyIdx, sectionEnd).trim();
+						historyContent += historySection.substring(HISTORY_HEADER.length).trim() + '\n';
+						ruleContent = content.substring(0, historyIdx).trimEnd() + content.substring(sectionEnd);
+					}
+
+					await fs.promises.writeFile(newRuleFile, ruleContent, 'utf-8');
+					await fs.promises.writeFile(path.join(agentFolder, 'HISTORY.md'), historyContent, 'utf-8');
+
+					// TODO.md テンプレート作成
+					await ensureAgentFolderFiles(agentFolder, agent.name);
+
+					// 旧ファイルを .trash/ に移動
+					const trashDir = path.join(ruleFolder, '.trash');
+					await fs.promises.mkdir(trashDir, { recursive: true });
+					const trashDest = path.join(trashDir, `${agent.name}.md.${Date.now()}`);
+					await fs.promises.rename(resolved, trashDest);
+
+					// session-manager.json の ruleFile パスを更新
+					const updatedAgent: AgentConfig = { ...agent, ruleFile: newRuleFile };
+					await dataStore.addAgent(updatedAgent);
+					migrated.push(agent.name);
+				} catch (err) {
+					const ch = getExtensionOutputChannel();
+					ch.appendLine(`[${new Date().toISOString()}] 移行エラー (${agent.name}): ${err instanceof Error ? err.message : String(err)}`);
+					skipped.push(agent.name);
+				}
+			}
+
+			refreshAll();
+			vscode.window.showInformationMessage(
+				`移行完了: ${migrated.length}件成功${skipped.length > 0 ? `、${skipped.length}件スキップ` : ''}`
+			);
 		})
 	);
 
