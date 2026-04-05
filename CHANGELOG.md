@@ -60,7 +60,6 @@
 ### エージェントフォーム拡張
 - **Effort** 4段階（Low / Medium / High / Max）、MaxはOpus専用でグレーアウト連動
 - **Extended Thinking** トグルスイッチ（Haikuではグレーアウト）
-- **Max Thinking Tokens** 数値入力（1024〜128000）、環境変数 `MAX_THINKING_TOKENS` で反映
 - モデル選択に応じたUI連動（グレーアウト自動切替）
 
 ### CLI Builder

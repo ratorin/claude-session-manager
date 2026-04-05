@@ -116,9 +116,6 @@ export function generateFrontmatter(config: AgentConfig, description: string): s
 	if (config.thinkingEnabled !== undefined) {
 		lines.push(`thinking: ${config.thinkingEnabled}`);
 	}
-	if (config.maxThinkingTokens) {
-		lines.push(`maxThinkingTokens: ${config.maxThinkingTokens}`);
-	}
 	if (config.scope) { lines.push(`scope: ${config.scope}`); }
 	if (config.sessionId) { lines.push(`sessionId: ${config.sessionId}`); }
 	if (config.parentAgent) { lines.push(`parentAgent: ${config.parentAgent}`); }

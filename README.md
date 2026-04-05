@@ -153,8 +153,7 @@ description: |
 
 - **推論努力レベル（Effort）** — Low / Medium / High / Max の4段階（MaxはOpus専用でグレーアウト連動）
 - **Extended Thinking** — トグルスイッチでON/OFF（Haikuではグレーアウト）
-- **Max Thinking Tokens** — 数値入力（1024〜128000）、環境変数 `MAX_THINKING_TOKENS` で反映
-- **モデル別UI連動** — モデル選択に応じてEffort Max / Thinking / MaxTokens のグレーアウトが自動切替
+- **モデル別UI連動** — モデル選択に応じてEffort Max / Thinking のグレーアウトが自動切替
 
 ---
 

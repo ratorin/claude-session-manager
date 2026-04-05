@@ -259,26 +259,6 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 		font-size: 13px;
 	}
 
-	/* 数値入力フィールド */
-	input[type="number"] {
-		width: 160px;
-		padding: 6px 10px;
-		border: 1px solid var(--input-border);
-		background: var(--input-bg);
-		color: var(--input-fg);
-		border-radius: 4px;
-		font-size: 13px;
-		font-family: var(--vscode-font-family);
-	}
-	input[type="number"]:focus {
-		outline: none;
-		border-color: var(--focus);
-	}
-	input[type="number"]:disabled {
-		opacity: 0.35;
-		cursor: not-allowed;
-	}
-
 	/* ボタン */
 	.form-actions {
 		display: flex;
@@ -392,21 +372,6 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 </div>
 
 <div class="form-group">
-	<label class="form-label">Max Thinking Tokens</label>
-	<div class="form-desc">Thinking使用時の最大トークン数</div>
-	<input type="number" id="maxThinkingTokens" min="1024" max="128000" value="${v.maxThinkingTokens || 31999}" ${v.thinkingEnabled === false || v.model === 'haiku' ? 'disabled' : ''}>
-	<div class="form-desc" style="margin-top: 4px; opacity: 0.7;">※ 環境変数 MAX_THINKING_TOKENS で反映（CLIフラグなし）</div>
-	<div class="form-desc" style="margin-top: 4px; opacity: 0.7;">
-		min: 1,024 / max: 128,000 / デフォルト: 31,999<br>
-		<strong>目安:</strong>
-		1,024〜4,096 軽い処理（簡単な質問・定型作業）｜
-		8,000〜16,000 通常の開発作業｜
-		31,999 デフォルト（ほとんどの場合これで十分）｜
-		64,000〜128,000 複雑な設計・大規模リファクタリング
-	</div>
-</div>
-
-<div class="form-group">
 	<label class="form-label">セッション運用<span class="required">*</span></label>
 	<div class="form-desc">セッションの使い方を選択</div>
 	<div class="radio-group">
@@ -491,7 +456,6 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 			model: document.querySelector('input[name="model"]:checked')?.value || 'opus',
 			effort: document.querySelector('input[name="effort"]:checked')?.value || 'high',
 			thinkingEnabled: thinkingOn,
-			maxThinkingTokens: thinkingOn ? parseInt(document.getElementById('maxThinkingTokens').value, 10) || 31999 : undefined,
 			sessionMode: document.querySelector('input[name="sessionMode"]:checked')?.value || 'fixed',
 			scope: document.querySelector('input[name="scope"]:checked')?.value || 'project',
 			parentAgent: document.getElementById('parentAgent').value || undefined,
@@ -533,24 +497,20 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 		const thinkingSwitch = document.getElementById('thinkingSwitch');
 		const thinkingCheckbox = document.getElementById('thinkingEnabled');
 		const thinkingLabel = document.getElementById('thinkingLabel');
-		const maxTokensInput = document.getElementById('maxThinkingTokens');
 
 		if (model === 'opus') {
-			// Opus: 全4択有効、thinking有効、maxThinking有効
+			// Opus: 全4択有効、thinking有効
 			maxOption.classList.remove('disabled');
 			thinkingSwitch.classList.remove('disabled');
-			maxTokensInput.disabled = !thinkingCheckbox.checked;
 		} else if (model === 'sonnet') {
-			// Sonnet: maxグレーアウト、thinking有効、maxThinking有効
+			// Sonnet: maxグレーアウト、thinking有効
 			maxOption.classList.add('disabled');
-			// maxが選択中ならhighに戻す
 			if (document.getElementById('effort-max').checked) {
 				document.getElementById('effort-high').checked = true;
 			}
 			thinkingSwitch.classList.remove('disabled');
-			maxTokensInput.disabled = !thinkingCheckbox.checked;
 		} else if (model === 'haiku') {
-			// Haiku: maxグレーアウト、thinking OFF固定、maxThinkingグレーアウト
+			// Haiku: maxグレーアウト、thinking OFF固定
 			maxOption.classList.add('disabled');
 			if (document.getElementById('effort-max').checked) {
 				document.getElementById('effort-high').checked = true;
@@ -558,7 +518,6 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 			thinkingSwitch.classList.add('disabled');
 			thinkingCheckbox.checked = false;
 			thinkingLabel.textContent = 'OFF';
-			maxTokensInput.disabled = true;
 		}
 	}
 
@@ -566,13 +525,6 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	document.getElementById('thinkingEnabled').addEventListener('change', function() {
 		const label = document.getElementById('thinkingLabel');
 		label.textContent = this.checked ? 'ON' : 'OFF';
-		const model = document.querySelector('input[name="model"]:checked')?.value;
-		const maxTokensInput = document.getElementById('maxThinkingTokens');
-		if (model === 'haiku') {
-			maxTokensInput.disabled = true;
-		} else {
-			maxTokensInput.disabled = !this.checked;
-		}
 	});
 
 	// モデルラジオ変更イベント

@@ -25,11 +25,6 @@ export function buildCommand(config: AgentConfig): CliCommand {
 		parts.push('--effort', config.effort);
 	}
 
-	// maxThinkingTokens → 環境変数（CLIフラグは存在しない）
-	if (config.thinkingEnabled !== false && config.maxThinkingTokens) {
-		env['MAX_THINKING_TOKENS'] = String(config.maxThinkingTokens);
-	}
-
 	// ルールファイル → --append-system-prompt-file
 	if (config.ruleFile) {
 		parts.push('--append-system-prompt-file', config.ruleFile);

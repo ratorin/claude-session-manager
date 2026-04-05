@@ -196,7 +196,6 @@ export interface AgentConfig {
     // v0.3.0 追加: モデル制御
     effort?: 'low' | 'medium' | 'high' | 'max'; // 推論努力レベル（max は Opus のみ）
     thinkingEnabled?: boolean;   // Extended Thinking 有効/無効
-    maxThinkingTokens?: number;  // Thinking最大トークン数（MAX_THINKING_TOKENS 環境変数で反映）
 }
 ```
 
@@ -864,12 +863,11 @@ Windows固有のtasklist依存を排除し、PC負荷を軽減する。
 ### Phase 4: フォーム拡張
 - Effort 4段階（low/medium/high/max）、max=Opus専用グレーアウト
 - Thinkingトグル、Haiku時グレーアウト
-- maxThinkingTokens数値入力、環境変数MAX_THINKING_TOKENS
 - モデル変更時のUI連動（onModelChange）
 
 ### Phase 5: CLI Builder
 - `cliBuilder.ts` 新設: buildCommand、buildCommandFormatted、buildSpawnOptions
-- --allowedTools スペース区切り、MAX_THINKING_TOKENS環境変数、--add-dir
+- --allowedTools スペース区切り、--add-dir
 
 ### UI改善
 - セッションフィルター（project/all切替）: toggleSessionFilter コマンド、sessionFilterMode 設定
@@ -884,9 +882,9 @@ Windows固有のtasklist依存を排除し、PC負荷を軽減する。
 | `src/memoryManager.ts` | **新規作成** |
 | `src/memoryTreeProvider.ts` | **新規作成** |
 | `src/agentMonitor.ts` | **削除** |
-| `src/types.ts` | AgentWatcherState, SubagentInfo, LocalManagerData 追加、AgentConfig に effort/thinkingEnabled/maxThinkingTokens 追加 |
+| `src/types.ts` | AgentWatcherState, SubagentInfo, LocalManagerData 追加、AgentConfig に effort/thinkingEnabled 追加 |
 | `src/dataStore.ts` | ローカル/グローバルデュアルファイル方式にリライト |
-| `src/agentFormPanel.ts` | Effort 4段階、Thinkingトグル、maxThinkingTokens、モデル別グレーアウト |
+| `src/agentFormPanel.ts` | Effort 4段階、Thinkingトグル、モデル別グレーアウト |
 | `src/agentTreeProvider.ts` | ハードコードソート廃止 → 子持ちエージェント優先 |
 | `src/sessionTreeProvider.ts` | プロジェクトフィルター機能追加 |
 | `src/extension.ts` | AgentWatcher統合、新コマンド3件追加、旧監視コード削除 |
@@ -1254,7 +1252,7 @@ description: |
 ```
 
 - `frontmatterUtils.ts` 新設 — `parseFrontmatter()` / `generateFrontmatter()` / `updateFrontmatterInContent()` / `migrateAutoToYaml()`
-- AgentConfig のフィールドを frontmatter にマッピング: name, model, effort, thinking, maxThinkingTokens, scope, sessionId, parentAgent, role
+- AgentConfig のフィールドを frontmatter にマッピング: name, model, effort, thinking, scope, sessionId, parentAgent, role
 - `description` フィールドにリテラルブロックスカラー（`|`）で自動生成テキストを格納
 - `---` 以下のカスタム記述は一切変更しない
 - 旧形式（CSM:AUTO マーカー）は `updateRuleFrontmatter()` 呼び出し時に自動移行

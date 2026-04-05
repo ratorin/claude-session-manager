@@ -90,7 +90,6 @@ export interface AgentConfig {
 	// Phase 1b: モデル制御
 	effort?: 'low' | 'medium' | 'high' | 'max'; // 推論努力レベル（max は Opus 4.6 のみ）
 	thinkingEnabled?: boolean;   // Extended Thinking 有効/無効
-	maxThinkingTokens?: number;  // Thinking最大トークン数（環境変数 MAX_THINKING_TOKENS で反映）
 }
 
 // agentWatcher のイベントデータ
