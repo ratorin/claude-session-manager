@@ -46,8 +46,10 @@ delete_session(session_id)
 - `tag_session()` — タグ機能をSDK経由に統一（現在はdataStore独自管理）
 - `list_sessions()` — セッション一覧取得をSDK API化（JSONLディレクトリ走査の置換）
 
+**採用する部分（同期方式）:**
+- `rename_session()` — CSMでリネーム時にSDKの `rename_session()` も同時実行して同期。customNameはCSM独自のメタデータとして残し、設定済みならcustomNameを優先表示（現行動作を維持）。これによりClaude Code側タイトルとの不整合を解消
+
 **見送る部分:**
-- `rename_session()` — CSM独自のcustomNameはClaude Codeの/renameとは別管理。統一するとCSMメタデータが失われる
 - `delete_session()` — CSMは.trash/移動ポリシー。SDKの完全削除は方針と矛盾
 
 ### 実装戦略
@@ -55,6 +57,18 @@ delete_session(session_id)
 2. **現行実装を第1バックエンド**: `JsonlSessionBackend`（既存ロジックをラップ）
 3. **SDK実装を第2バックエンド**: `SdkSessionBackend`（Agent SDK TypeScript版）
 4. 設定で切替可能（デフォルト: JSONL直接、オプション: SDK経由）
+
+### rename_session() 同期方式
+CSMのリネームコマンド実行時、以下の2つを同時に行う:
+1. `dataStore.setCustomName(sessionId, name)` — CSM独自メタデータに保存（既存動作）
+2. `sdk.rename_session(sessionId, name)` — Claude Code側のタイトルを同期更新
+
+**表示優先度:**
+1. customName（CSM独自）が設定されていればそれを表示
+2. Claude Codeのタイトル（`custom-title` > `ai-title`）
+3. ユーザーの最初の発言
+
+SDK呼び出しが失敗してもcustomName設定は成功扱いとする（SDK非依存の堅牢性を維持）。
 
 > **リスク:** Agent SDK TypeScript版はPython版の6.1K starsに比べまだ安定度が不明。Breaking changeへの追随コスト。
 > **対策:** 抽象レイヤーで切替可能にし、SDK不具合時はJSONL直接にフォールバック。dynamic importで遅延ロード。
@@ -68,7 +82,7 @@ delete_session(session_id)
 | 要素 | 公式 | CSM取締役 | 差分 |
 |------|------|-----------|------|
 | 役割 | サブエージェント委任、タスク調整 | 部署エージェント管理、タスク振り分け | 同一思想。CSMが先に実装 |
-| サブエージェント定義 | `.claude/agents/` | `.agent-rules/` | パス・フォーマットが異なる |
+| サブエージェント定義 | `.claude/agents/` | `.agent-rules/` | 役割分担で共存（下記参照） |
 | 出力スタイル | `.claude/output-styles/` | 未実装 | 新規取り込み候補 |
 | フック | PostToolUse で操作追跡 | Stop/PostToolUse 使用中 | 追加フック活用可 |
 | カスタムコマンド | `.claude/commands/`（→スキル統合済み） | CSM:AUTOマーカー管理 | スキル形式への段階移行を検討 |
@@ -79,14 +93,34 @@ delete_session(session_id)
 - **出力スタイル定義** — `.claude/output-styles/` パターンを取締役ルールファイルに組み込み
 - **取締役ルールファイルのベストプラクティス反映** — 公式CLAUDE.mdガイドラインに基づく整理
 
-**段階的に採用:**
-- `.agent-rules → .claude/agents/` への段階移行（Phase 2で両方式サポート後、将来的に公式パスに統一）
+**段階的に採用: ルールとデータの分離方針**
+
+`.agent-rules/` と `.claude/agents/` を完全統一するのではなく、**役割で分離**する:
+
+| 種別 | 保存先 | 形式 | 理由 |
+|------|--------|------|------|
+| **ルールファイル（行動規範）** | `.agent-rules/<部署名>/` | Markdown | `--append-system-prompt-file` で直接使える。人間も読める |
+| **設定データ（組織・モデル）** | `.claude/agents/` | YAML/JSON | Agent SDKが読める公式形式。CSMなしでも機能する |
+
+**ルールファイル（.agent-rules/に残す）:**
+- 部署の行動規範（.md）
+- HISTORY.md（セッション引継ぎ履歴）
+- TODO.md（タスク管理）
+- ユーザーカスタム記述
+
+**設定データ（.claude/agents/に移行）:**
+- 組織情報（name, role, department, parentId）
+- セッションID（sessionId, previousSessionIds）
+- モデル設定（model, effort, thinking等）
+- ルールファイルへの参照パス
 
 **見送り:**
-- `.agent-rules` の即時完全廃止 — 既存ユーザーの移行コスト大。フォルダ構造移行中に二重移行は避ける
+- `.agent-rules` の完全廃止 — ルールファイルはmd形式でCLI/人間の両方から使えるメリットが大きい
 
-> **リスク:** `.agent-rules/` と `.claude/agents/` の二重パス問題。同名エージェント存在時の優先度が未定義。
-> **対策:** `resolveRuleFilePath()` に `.claude/agents/` フォールバックを追加。優先度: `.agent-rules/` > `.claude/agents/`。名前衝突時は警告UI表示。
+> **理由:** CSMを使わない場面でもエージェント機能が活きるよう、設定データは公式SDKと互換性のある `.claude/agents/` に置く。一方、ルールファイルは `--append-system-prompt-file` で直接参照でき、人間が読み書きしやすいmdのまま `.agent-rules/` に維持する。
+>
+> **リスク:** ルールと設定が2箇所に分散し、参照パスの不整合が起きうる。
+> **対策:** `.claude/agents/<name>.yml` に `ruleFile: .agent-rules/<name>/index.md` の参照を持たせ、CSMが整合性を検証。不整合時は警告UI表示。
 
 ---
 
@@ -184,8 +218,8 @@ effort: high
 3. エージェント設定変更時にフロントマターとCSM:AUTOを同時更新
 4. フロントマターの `tools` と AgentConfig の `allowedTools` を双方向同期
 
-> **リスク:** フロントマターとAgentConfigの不整合（どちらが真実か問題）。
-> **対策:** AgentConfig（session-manager.json）を正とし、フロントマターは「表示用 + 公式ツール連携用」の派生データとする。
+> **リスク:** フロントマターと `.claude/agents/` 設定ファイルの不整合（どちらが真実か問題）。
+> **対策:** `.claude/agents/<name>.yml` を設定の正（Single Source of Truth）とし、ルールファイルのフロントマターは「表示用 + CLI連携用」の派生データとする。session-manager.json の agents 配列は `.claude/agents/` への移行完了後に廃止予定。
 
 ---
 
@@ -241,14 +275,16 @@ effort: high
 | effort UI非推奨表示 | `agentFormPanel.ts` |
 | cliBuilder effort優先ロジック | `cliBuilder.ts` |
 
-### Phase 2: v0.4.0 — 公式フォーマット統合
+### Phase 2: v0.4.0 — 公式フォーマット統合 + ルール/データ分離
 
 | 作業 | 影響ファイル |
 |------|-------------|
-| YAMLフロントマター出力 | `extension.ts`, `agentManager.ts` |
-| .claude/agents/ フォールバック読み取り | `agentFormPanel.ts` |
+| `.claude/agents/<name>.yml` に設定データ移行 | `agentManager.ts`, `dataStore.ts` |
+| session-manager.json agents → `.claude/agents/` マイグレーション | `extension.ts` |
+| ルールファイルのYAMLフロントマター出力 | `agentManager.ts`, `agentFormPanel.ts` |
 | 出力スタイル定義サポート | `types.ts` |
 | TaskCreated/TaskCompleted フック | |
+| ルール/設定の整合性検証ロジック | `agentManager.ts` |
 
 ### Phase 3: v0.5.0 — SDK API移行
 
@@ -257,6 +293,7 @@ effort: high
 | sessionBackend.ts 抽象レイヤー | `sessionBackend.ts` (新規) |
 | SdkSessionBackend 実装 | `sessionLoader.ts` |
 | fork_session / tag_session SDK化 | `types.ts` |
+| rename_session 同期（CSMリネーム時にSDK同時実行） | `extension.ts`, `dataStore.ts` |
 | maxThinkingTokens / thinkingEnabled 非推奨完了 | |
 
 ---
@@ -267,10 +304,11 @@ effort: high
 |----------|----------|--------|----------|
 | SubagentStopフック設計（§8） | Hooks #3 SubagentStop | **完全一致** | 設計書の仕様をそのまま実装。公式入力JSONスキーマに合わせる |
 | TODO.md自動管理（todo-flush.js） | Hooks #3 SessionEnd/PreCompact | **補完関係** | 既存Stopに加え、SessionEnd/PreCompactにも同スクリプト登録 |
-| フォルダ構造（.agent-rules/\<name\>/） | 公式 .claude/agents/ パス | **並行運用** | CSM管理は.agent-rules/を正、.claude/agents/はフォールバック |
+| フォルダ構造（.agent-rules/\<name\>/） | 公式 .claude/agents/ パス | **役割分離** | ルール(.md)は.agent-rules/、設定(.yml)は.claude/agents/。参照パスで連結 |
 | CSM:AUTOマーカー | YAMLフロントマター | **共存可能** | フロントマター → CSM:AUTO → ユーザーカスタム の3層構造 |
 | effortフォームUI | effort公式推奨 | **完全一致** | 既存UI維持。maxThinkingTokensに非推奨ラベル追加のみ |
 | TaskTracker（JSONL走査） | TaskCreated/Completed フック | **段階移行** | Phase 2でフックベースに移行。JSONL走査はフォールバック保持 |
+| リネーム（customName独自管理） | SDK rename_session() | **同期採用** | CSMリネーム時にSDKも同時実行。customNameは優先表示用に残す |
 
 ---
 
@@ -280,7 +318,7 @@ effort: high
 |---|--------|--------|------|------|
 | R1 | Agent SDK TypeScript版のAPI変更・非互換 | 高 | 中 | 抽象レイヤーで切替可能に。JSONL直接をデフォルト維持 |
 | R2 | フック増加によるセッション遅延 | 中 | 低 | 全CSMフック async:true + timeout:10。累積影響を計測 |
-| R3 | .agent-rules と .claude/agents の二重管理混乱 | 高 | 中 | CSM管理を正とする明確な優先度ルール。名前衝突警告UI |
-| R4 | YAMLフロントマターとAgentConfigの不整合 | 中 | 中 | AgentConfigをSingle Source of Truth。フロントマターは派生データ |
+| R3 | ルール(.agent-rules)と設定(.claude/agents)の参照パス不整合 | 中 | 中 | .yml に ruleFile パスを持たせCSMが整合性検証。不整合時は警告UI |
+| R4 | YAMLフロントマターと.claude/agents/設定の不整合 | 中 | 中 | .claude/agents/をSingle Source of Truth。フロントマターは派生データ |
 | R5 | maxThinkingTokens非推奨化でユーザー混乱 | 低 | 低 | 非推奨ラベルのみ。削除はPhase 3。CHANGELOGに移行ガイド |
 | R6 | 公式フック仕様の変更 | 中 | 低 | 各フックスクリプトは独立。不要時はsettings.jsonから除外 |
