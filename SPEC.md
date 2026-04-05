@@ -1226,7 +1226,69 @@ previousSessionIds?: string[];  // 過去のセッションID（直近5件）
 
 ---
 
+## 54. v0.3.1 — YAML Frontmatter 移行 + SubagentStart/Stop フック
+
+### YAML Frontmatter 移行
+
+ルールファイルの自動生成マーカーを `<!-- CSM:AUTO:START/END -->` から YAML Frontmatter 形式に移行:
+
+**旧形式（v0.3.0）:**
+```markdown
+<!-- CSM:AUTO:START -->
+自動生成テキスト
+<!-- CSM:AUTO:END -->
+カスタム記述
+```
+
+**新形式（v0.3.1）:**
+```yaml
+---
+name: CSM開発部
+model: sonnet
+effort: high
+description: |
+  自動生成テキスト
+---
+
+カスタム記述
+```
+
+- `frontmatterUtils.ts` 新設 — `parseFrontmatter()` / `generateFrontmatter()` / `updateFrontmatterInContent()` / `migrateAutoToYaml()`
+- AgentConfig のフィールドを frontmatter にマッピング: name, model, effort, thinking, maxThinkingTokens, scope, sessionId, parentAgent, role
+- `description` フィールドにリテラルブロックスカラー（`|`）で自動生成テキストを格納
+- `---` 以下のカスタム記述は一切変更しない
+- 旧形式（CSM:AUTO マーカー）は `updateRuleFrontmatter()` 呼び出し時に自動移行
+
+### SubagentStart/Stop フック
+
+シグナルファイル方式でサブエージェントのライフサイクルを捕捉:
+
+| 項目 | 内容 |
+|------|------|
+| スクリプト | `~/.claude/scripts/csm/subagent-signal.js` |
+| シグナルディレクトリ | `~/.claude/.csm-signals/` |
+| イベント | `SubagentStart` / `SubagentStop` |
+| 出力 | `{start\|stop}-{timestamp}.json`（type, timestamp, pid, cwd, sessionId, agentType, description, parentSessionId） |
+| クリーンアップ | 5分超のシグナルファイルを自動削除 |
+| 設定 | `async: true`, `timeout: 10` |
+
+- `ensureSubagentHooks()` — 取締役セットアップ時に `settings.json` へフック自動登録（既存チェック + バックアップ作成）
+- stdin パイプ切断対応（try/catch）、`main().catch(() => {})` でPromise拒否防止
+
+### 影響範囲
+
+| ファイル | 変更 |
+|---|---|
+| `frontmatterUtils.ts` | 新規（YAML frontmatter パース・生成・移行ユーティリティ） |
+| `extension.ts` | CSM:AUTO関数5件削除 → frontmatter関数4件新設、`ensureSubagentHooks()` 追加 |
+| `package.json` | バージョン 0.3.0 → 0.3.1 |
+| `~/.claude/scripts/csm/subagent-signal.js` | 新規（SubagentStart/Stop フックスクリプト） |
+| `~/.claude/settings.json` | SubagentStart/Stop フック自動登録 |
+
+---
+
 ## バージョン
+- **0.3.1** — YAML Frontmatter 移行 + SubagentStart/Stop フック
 - **0.3.0** — 監視アーキテクチャ刷新 + メモリ拡張 + フォーム拡張 + CLI Builder + タスク管理 + パフォーマンス改善
 - **0.2.8** — ルールファイル管理改善（スコープ分離・自動生成強化・MEMORY.mdポインタ方式）
 - **0.2.7** — ステータスバー稼働判定バグ修正（PIDベースに変更）

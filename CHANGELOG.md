@@ -1,5 +1,22 @@
 # 更新履歴
 
+## v0.3.1 (2026-04-05)
+
+### YAML Frontmatter 移行
+- ルールファイルの自動生成マーカーを `<!-- CSM:AUTO -->` から YAML Frontmatter 形式に移行
+- `frontmatterUtils.ts` 新設 — パース・生成・移行ユーティリティ
+- AgentConfig フィールドを frontmatter にマッピング（name, model, effort, thinking 等）
+- `description` フィールドにリテラルブロックスカラー（`|`）で自動生成テキストを格納
+- 旧形式（CSM:AUTO マーカー）は更新時に自動移行
+- カスタム記述セクションは一切変更しない
+
+### SubagentStart/Stop フック
+- `subagent-signal.js` 新規 — SubagentStart/Stop イベントでシグナルファイル出力
+- シグナルディレクトリ: `~/.claude/.csm-signals/`
+- `ensureSubagentHooks()` — 取締役セットアップ時に settings.json へフック自動登録
+- 5分超の古いシグナルファイルを自動クリーンアップ
+- stdin パイプ切断対応 + Promise拒否防止
+
 ## v0.3.0 (2026-04-04)
 
 ### 監視アーキテクチャ刷新

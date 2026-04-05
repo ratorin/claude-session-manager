@@ -18,6 +18,10 @@ import * as dataStore from './dataStore';
 import { AgentConfig } from './types';
 import { loadMemoryFiles, deleteMemoryFile, mergeMemoryFiles, extractFromMemory, addToIndex } from './memoryManager';
 import { resolveRuleFilePath } from './agentManager';
+import {
+	parseFrontmatter, generateFrontmatter, updateFrontmatterInContent,
+	migrateAutoToYaml, isLegacyAutoFormat, sanitizeForYaml,
+} from './frontmatterUtils';
 
 // VS Code設定から値を取得するヘルパー
 function getConfig<T>(key: string, defaultValue: T): T {
@@ -208,15 +212,10 @@ export function activate(context: vscode.ExtensionContext) {
 		}).catch(() => {/* ignore */});
 	}
 
-	// CSM:AUTOマーカーのインジェクション対策: マーカー文字列を除去
-	function sanitizeForAutoSection(value: string): string {
-		return value.replace(/<!--\s*CSM:AUTO:(START|END)\s*-->/gi, '');
-	}
-
-	// 自動生成セクションの内容を構築
-	function buildAutoSection(config: AgentConfig): string {
-		const safeName = sanitizeForAutoSection(config.name);
-		const safeRole = sanitizeForAutoSection(config.role || '（役割未設定）');
+	// 子エージェント用 description テキストを構築
+	function buildDescription(config: AgentConfig): string {
+		const safeName = sanitizeForYaml(config.name);
+		const safeRole = sanitizeForYaml(config.role || '（役割未設定）');
 		const lines: string[] = [
 			`あなたは${safeName}所属のエンジニアです。`,
 			`- ${safeRole}を担当する`,
@@ -226,49 +225,46 @@ export function activate(context: vscode.ExtensionContext) {
 			`- 「※子エージェントはこのセクションを無視すること」とマークされたセクションは読み飛ばすこと`,
 		];
 		if (config.parentAgent) {
-			const safeParent = sanitizeForAutoSection(config.parentAgent);
+			const safeParent = sanitizeForYaml(config.parentAgent);
 			lines.push(`- 報告先: ${safeParent}（親エージェント）。作業完了時は結果を報告すること`);
 		}
 		if (config.workDir) {
-			const safeWorkDir = sanitizeForAutoSection(config.workDir);
+			const safeWorkDir = sanitizeForYaml(config.workDir);
 			lines.push(`- 編集対象は \`${safeWorkDir}\` 内のみ。それ以外のフォルダは絶対に変更しない`);
 		}
 		return lines.join('\n');
 	}
 
-	// 既存ファイルの自動セクションのみを更新（カスタム部分は保持）— 非同期
-	async function updateAutoSection(filePath: string, config: AgentConfig): Promise<void> {
+	// 既存ファイルのフロントマター（description含む）を更新（本文は保持）— 非同期
+	async function updateRuleFrontmatter(filePath: string, config: AgentConfig, description: string): Promise<void> {
 		try {
 			const content = await fs.promises.readFile(filePath, 'utf-8');
-			const autoContent = buildAutoSection(config);
-			const START_MARKER = '<!-- CSM:AUTO:START -->';
-			const END_MARKER = '<!-- CSM:AUTO:END -->';
 
-			const startIdx = content.indexOf(START_MARKER);
-			const endIdx = content.indexOf(END_MARKER);
-
-			if (startIdx >= 0 && endIdx > startIdx) {
-				// マーカーが見つかった → マーカー内のみ更新
-				const before = content.substring(0, startIdx);
-				const after = content.substring(endIdx + END_MARKER.length);
-				const newContent = before + START_MARKER + '\n' + autoContent + '\n' + END_MARKER + after;
+			// 旧 CSM:AUTO 形式 → YAML フロントマターに自動移行
+			if (isLegacyAutoFormat(content)) {
+				const migrated = migrateAutoToYaml(content, config);
+				// 移行後に description を最新化
+				const newContent = updateFrontmatterInContent(migrated, config, description);
 				await fs.promises.writeFile(filePath, newContent, 'utf-8');
-			} else {
-				// マーカーがない → 先頭にマーカー付き自動セクションを追加、既存内容は後ろに保持
-				const newContent = START_MARKER + '\n' + autoContent + '\n' + END_MARKER + '\n\n' + content;
-				await fs.promises.writeFile(filePath, newContent, 'utf-8');
+				return;
 			}
+
+			// YAML フロントマター形式 → フロントマターのみ更新
+			const newContent = updateFrontmatterInContent(content, config, description);
+			await fs.promises.writeFile(filePath, newContent, 'utf-8');
 		} catch {
 			// ファイル読み書きエラーは無視
 		}
 	}
 
 	// ruleFileが未設定の場合にルールファイルを自動生成するヘルパー（子エージェント用）— 非同期
-	// v0.3.0: 部署フォルダ構造対応（.agent-rules/<部署名>/<部署名>.md + TODO.md + HISTORY.md）
+	// v0.3.1: YAML フロントマター形式（CSM:AUTOマーカー廃止）
 	async function autoGenerateRuleFile(config: AgentConfig): Promise<AgentConfig> {
+		const description = buildDescription(config);
+
 		if (config.ruleFile) {
-			// 既にルールファイルがある場合 → マーカー内の自動生成部分のみ更新
-			await updateAutoSection(config.ruleFile, config);
+			// 既にルールファイルがある → フロントマター更新（旧形式は自動移行）
+			await updateRuleFrontmatter(config.ruleFile, config, description);
 			return config;
 		}
 		const ruleFolder = await dataStore.getRuleFolderForScope(config.scope);
@@ -284,18 +280,18 @@ export function activate(context: vscode.ExtensionContext) {
 			await fs.promises.access(flatPath);
 			const flatStat = await fs.promises.stat(flatPath);
 			if (flatStat.isFile()) {
-				// フラット構造が存在 → そのまま使用（移行コマンドで変換）
-				await updateAutoSection(flatPath, config);
+				// フラット構造が存在 → フロントマター更新（旧形式は自動移行）
+				await updateRuleFrontmatter(flatPath, config, description);
 				return { ...config, ruleFile: flatPath };
 			}
 		} catch {
 			// フラットファイルが存在しない → OK
 		}
 
-		// フォルダ構造のファイルが既に存在する場合は紐づけ + 自動セクション更新
+		// フォルダ構造のファイルが既に存在する場合は紐づけ + フロントマター更新
 		try {
 			await fs.promises.access(filePath);
-			await updateAutoSection(filePath, config);
+			await updateRuleFrontmatter(filePath, config, description);
 			// TODO.md / HISTORY.md が無ければ作成
 			await ensureAgentFolderFiles(agentFolder, config.name);
 			return { ...config, ruleFile: filePath };
@@ -330,8 +326,9 @@ export function activate(context: vscode.ExtensionContext) {
 		try {
 			// 部署フォルダ作成
 			await fs.promises.mkdir(agentFolder, { recursive: true });
-			const autoContent = buildAutoSection(config);
-			const content = `<!-- CSM:AUTO:START -->\n${autoContent}\n<!-- CSM:AUTO:END -->\n\n<!-- 以下にカスタムルールを自由に追記してください -->\n`;
+			// YAML フロントマター形式で新規作成
+			const frontmatter = generateFrontmatter(config, description);
+			const content = frontmatter + '\n\n<!-- 以下にカスタムルールを自由に追記してください -->\n';
 			await fs.promises.writeFile(filePath, content, 'utf-8');
 			// TODO.md / HISTORY.md テンプレート作成
 			await ensureAgentFolderFiles(agentFolder, config.name);
@@ -455,11 +452,11 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}
 
-	// ルールファイルの「歴代セッションの記録」セクションに遺言を追記（直近3世代保持）
+	// ルールファイルの本文に「歴代セッションの記録」を追記（直近3世代保持）
+	// v0.3.1: フロントマター方式対応（本文=フロントマター以降の部分に書き込む）
 	async function appendSessionHistoryToRuleFile(ruleFilePath: string, oldSessionId: string, testament: string): Promise<void> {
 		const HISTORY_HEADER = '## 歴代セッションの記録';
 		const MAX_GENERATIONS = 3;
-		const END_MARKER = '<!-- CSM:AUTO:END -->';
 
 		try {
 			let content = await fs.promises.readFile(ruleFilePath, 'utf-8');
@@ -502,14 +499,15 @@ export function activate(context: vscode.ExtensionContext) {
 				const newSection = HISTORY_HEADER + '\n\n' + entries.join('\n\n') + '\n';
 				content = content.substring(0, sectionStart) + newSection + content.substring(sectionEnd);
 			} else {
-				// 歴代セクションが存在しない → CSM:AUTO:END マーカーの後に追加
-				const endMarkerIdx = content.indexOf(END_MARKER);
-				if (endMarkerIdx >= 0) {
-					const insertPos = endMarkerIdx + END_MARKER.length;
-					const newSection = '\n\n' + HISTORY_HEADER + '\n\n' + newEntry + '\n';
-					content = content.substring(0, insertPos) + newSection + content.substring(insertPos);
+				// 歴代セクションが存在しない → フロントマター直後（本文の先頭）に追加
+				const parsed = parseFrontmatter(content);
+				if (parsed) {
+					// フロントマター形式 → 本文の先頭に歴代セクションを挿入
+					const fm = content.substring(0, content.length - parsed.body.length);
+					const newSection = HISTORY_HEADER + '\n\n' + newEntry + '\n\n';
+					content = fm + newSection + parsed.body;
 				} else {
-					// マーカーもない → ファイル末尾に追加
+					// フロントマターなし → ファイル末尾に追加
 					content += '\n\n' + HISTORY_HEADER + '\n\n' + newEntry + '\n';
 				}
 			}
@@ -1416,6 +1414,8 @@ export function activate(context: vscode.ExtensionContext) {
 				await dataStore.addAgent(finalConfig);
 				// MEMORY.mdに組織情報を書き込み
 				await writeOrgInfoToMemory(finalConfig);
+				// SubagentStart/Stop フックを settings.json に登録
+				await ensureSubagentHooks();
 				// Extension Host分離設定（affinity）を自動追加
 				await addAffinitySettings();
 				refreshAll();
@@ -1457,28 +1457,31 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}
 
-	// 取締役専用ルールファイル生成（CSM:AUTOマーカー対応）
+	// 取締役専用ルールファイル生成（v0.3.1: YAML フロントマター形式）
 	async function generateDirectorRuleFile(config: AgentConfig): Promise<AgentConfig> {
+		const description = buildDirectorDescription(config);
+
 		if (config.ruleFile) {
-			// 既にルールファイルがある → マーカー内の自動生成部分のみ更新
-			await updateDirectorAutoSection(config.ruleFile, config);
+			// 既にルールファイルがある → フロントマター更新（旧形式は自動移行���
+			await updateRuleFrontmatter(config.ruleFile, config, description);
 			return config;
 		}
 		const ruleFolder = await dataStore.getRuleFolderForScope(config.scope);
 		if (!ruleFolder) { return config; }
 		const filePath = path.join(ruleFolder, `${config.name}.md`);
-		// 既にファイルが存在する場合は紐づけ + 自動セクション更新
+		// 既にファイルが存在する場合は紐づけ + フロントマター更新
 		try {
 			await fs.promises.access(filePath);
-			await updateDirectorAutoSection(filePath, config);
+			await updateRuleFrontmatter(filePath, config, description);
 			return { ...config, ruleFile: filePath };
 		} catch {
 			// ファイルが存在しない → 新規作成
 		}
 		try {
 			await fs.promises.mkdir(ruleFolder, { recursive: true });
-			const autoContent = buildDirectorAutoSection(config);
-			const content = `<!-- CSM:AUTO:START -->\n${autoContent}\n<!-- CSM:AUTO:END -->\n\n<!-- 以下にカスタムルールを自由に追記してください。このエリアはCSMによる自動更新の対象外です。 -->\n`;
+			// YAML フロントマター形式で新規作成
+			const frontmatter = generateFrontmatter(config, description);
+			const content = frontmatter + '\n\n<!-- 以下にカスタムルールを自由に追記してください。このエリアはCSMによる自動更新の対象外です。 -->\n';
 			await fs.promises.writeFile(filePath, content, 'utf-8');
 			return { ...config, ruleFile: filePath };
 		} catch {
@@ -1486,9 +1489,9 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}
 
-	// 取締役ルールファイルの自動生成セクション内容を構築
-	function buildDirectorAutoSection(config: AgentConfig): string {
-		const safeName = sanitizeForAutoSection(config.name);
+	// 取締役用 description テキストを構築
+	function buildDirectorDescription(config: AgentConfig): string {
+		const safeName = sanitizeForYaml(config.name);
 		const lines: string[] = [
 			`あなたは${safeName}です。プロジェクト全体を統括する最上位のエージェントです。`,
 			``,
@@ -1518,30 +1521,91 @@ export function activate(context: vscode.ExtensionContext) {
 		return lines.join('\n');
 	}
 
-	// 取締役ルールファイルの自動セクションのみを更新（カスタム部分は保持）
-	async function updateDirectorAutoSection(filePath: string, config: AgentConfig): Promise<void> {
+	// v0.3.1: SubagentStart/Stop フックを settings.json に登録する
+	async function ensureSubagentHooks(): Promise<void> {
+		const homeDir = os.homedir();
+		const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+		const signalScript = path.join(homeDir, '.claude', 'scripts', 'csm', 'subagent-signal.js');
+
+		// シグナルスクリプトが存在しなければスキップ
 		try {
-			const content = await fs.promises.readFile(filePath, 'utf-8');
-			const autoContent = buildDirectorAutoSection(config);
-			const START_MARKER = '<!-- CSM:AUTO:START -->';
-			const END_MARKER = '<!-- CSM:AUTO:END -->';
-
-			const startIdx = content.indexOf(START_MARKER);
-			const endIdx = content.indexOf(END_MARKER);
-
-			if (startIdx >= 0 && endIdx > startIdx) {
-				// マーカーが見つかった → マーカー内のみ更新
-				const before = content.substring(0, startIdx);
-				const after = content.substring(endIdx + END_MARKER.length);
-				const newContent = before + START_MARKER + '\n' + autoContent + '\n' + END_MARKER + after;
-				await fs.promises.writeFile(filePath, newContent, 'utf-8');
-			} else {
-				// マーカーがないファイル → 先頭にマーカー付き自動セクションを追加
-				const newContent = START_MARKER + '\n' + autoContent + '\n' + END_MARKER + '\n\n' + content;
-				await fs.promises.writeFile(filePath, newContent, 'utf-8');
-			}
+			await fs.promises.access(signalScript);
 		} catch {
-			// ファイル読み書きエラーは無視
+			return;
+		}
+
+		try {
+			let settings: Record<string, unknown> = {};
+			try {
+				const raw = await fs.promises.readFile(settingsPath, 'utf-8');
+				settings = JSON.parse(raw);
+			} catch {
+				// settings.json が存在しないか読み取り不可
+				return;
+			}
+
+			// hooks 配列を取得
+			const hooks = (settings.hooks || []) as Array<Record<string, unknown>>;
+			const CSM_SIGNAL_MARKER = 'csm/subagent-signal.js';
+
+			// 既に登録済みか確認
+			const hasStart = hooks.some((h: Record<string, unknown>) => {
+				const hooksArr = h.hooks as Array<Record<string, unknown>> | undefined;
+				return hooksArr?.some((hh: Record<string, unknown>) =>
+					typeof hh.command === 'string' && hh.command.includes(CSM_SIGNAL_MARKER) && hh.command.includes('start')
+				);
+			});
+			const hasStop = hooks.some((h: Record<string, unknown>) => {
+				const hooksArr = h.hooks as Array<Record<string, unknown>> | undefined;
+				return hooksArr?.some((hh: Record<string, unknown>) =>
+					typeof hh.command === 'string' && hh.command.includes(CSM_SIGNAL_MARKER) && hh.command.includes('stop')
+				);
+			});
+
+			let changed = false;
+
+			if (!hasStart) {
+				hooks.push({
+					event: 'SubagentStart',
+					matcher: '*',
+					hooks: [{
+						type: 'command',
+						command: `node "${signalScript.replace(/\\/g, '/')}" start`,
+						timeout: 10,
+						async: true,
+					}],
+				});
+				changed = true;
+			}
+
+			if (!hasStop) {
+				hooks.push({
+					event: 'SubagentStop',
+					matcher: '*',
+					hooks: [{
+						type: 'command',
+						command: `node "${signalScript.replace(/\\/g, '/')}" stop`,
+						timeout: 10,
+						async: true,
+					}],
+				});
+				changed = true;
+			}
+
+			if (changed) {
+				settings.hooks = hooks;
+				// バックアップ作成
+				const backupPath = settingsPath + `.bak.${Date.now()}`;
+				try {
+					await fs.promises.copyFile(settingsPath, backupPath);
+				} catch { /* バックアップ失敗は無視 */ }
+				await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, '\t'), 'utf-8');
+				const ch = getExtensionOutputChannel();
+				ch.appendLine(`[${new Date().toISOString()}] SubagentStart/Stop フックを settings.json に登録しました`);
+			}
+		} catch (err) {
+			const ch = getExtensionOutputChannel();
+			ch.appendLine(`[${new Date().toISOString()}] フック登録エラー: ${err instanceof Error ? err.message : String(err)}`);
 		}
 	}
 
