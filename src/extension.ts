@@ -1706,10 +1706,32 @@ export function activate(context: vscode.ExtensionContext) {
 				});
 			};
 
+			// 旧エントリ除去: Stop イベントに誤登録された csm-signal.js を検出・除去
+			const removeStaleSignalHooks = (eventKey: string): boolean => {
+				const entries = hooksObj[eventKey];
+				if (!Array.isArray(entries)) { return false; }
+				const originalLen = entries.length;
+				const filtered = entries.filter((entry: Record<string, unknown>) => {
+					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+					if (!Array.isArray(innerHooks)) { return true; }
+					// csm-signal.js が含まれるエントリは不正な場所から除去
+					return !innerHooks.some((hh: Record<string, unknown>) =>
+						typeof hh.command === 'string' && hh.command.includes(CSM_SIGNAL_MARKER)
+					);
+				});
+				if (filtered.length !== originalLen) {
+					hooksObj[eventKey] = filtered;
+					return true;
+				}
+				return false;
+			};
+			// Stop イベントに csm-signal.js があれば除去（SubagentStop に正しく移す）
+			const removedFromStop = removeStaleSignalHooks('Stop');
+
 			const hasStart = hasSignalHook('SubagentStart', 'start');
 			const hasStop = hasSignalHook('SubagentStop', 'stop');
 
-			let changed = false;
+			let changed = removedFromStop;
 
 			if (!hasStart) {
 				if (!Array.isArray(hooksObj['SubagentStart'])) {

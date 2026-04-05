@@ -22,6 +22,14 @@
 - クリックでYAMLフロントマター変換 + フォルダ構造移行を一括実行
 - 移行完了後バナーは自動非表示
 
+### SignalWatcher
+- agentWatcher.ts に SignalWatcher 追加 — `~/.claude/.csm-signals/` を fs.watch で監視
+- シグナルファイル（JSON）を読み取り、start/stop でライブ状態更新、処理後に即削除
+- 200ms デバウンス、enableAgentMonitor OFF 時は停止
+
+### 旧Stopエントリ除去
+- ensureSubagentHooks() で旧 Stop イベントの csm-signal.js エントリを検出・除去
+
 ### renewAgentSession 修正
 - 全体をtry/catchで囲み致命的エラー時にエラーメッセージ + OutputChannel表示
 - 遺言生成失敗時はデフォルトメッセージで続行

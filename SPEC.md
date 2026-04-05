@@ -1327,8 +1327,40 @@ description: |
 
 ---
 
+## 56. v0.3.1 追加 — SignalWatcher + 旧Stopエントリ除去
+
+### SignalWatcher（agentWatcher.ts）
+
+`~/.claude/.csm-signals/` を fs.watch で監視し、シグナルファイルをリアルタイム処理:
+
+| 処理 | 内容 |
+|------|------|
+| startSignalWatcher() | ディレクトリ作成 → 既存シグナル処理 → fs.watch 開始 |
+| processSignals() | JSONファイル読み取り → type/sessionId解析 → start=ライブ追加 / stop=追跡 → ファイル削除 |
+| applySignalState() | signalLiveSessions を liveSessionIds に反映（update()でも呼び出し） |
+| スケジュール | 200ms デバウンス |
+
+- `enableAgentMonitor: false` の場合は監視しない
+- シグナルファイルは処理後に即削除
+- `onDidChange` イベントを発火してツリー更新
+
+### 旧Stopエントリ除去（extension.ts）
+
+`ensureSubagentHooks()` に旧エントリ検出・除去ロジックを追加:
+- `Stop` イベントに誤登録された csm-signal.js エントリを検出
+- 該当エントリを除去し、`SubagentStop` に正しく再登録
+
+### 影響範囲
+
+| ファイル | 変更 |
+|---|---|
+| `agentWatcher.ts` | SignalWatcher（startSignalWatcher, processSignals, applySignalState, signalLiveSessions） |
+| `extension.ts` | ensureSubagentHooks() に removeStaleSignalHooks() 追加 |
+
+---
+
 ## バージョン
-- **0.3.1** — YAML Frontmatter 移行 + SubagentStart/Stop フック + マイグレーションバナー
+- **0.3.1** — YAML Frontmatter 移行 + SubagentStart/Stop フック + マイグレーションバナー + SignalWatcher
 - **0.3.0** — 監視アーキテクチャ刷新 + メモリ拡張 + フォーム拡張 + CLI Builder + タスク管理 + パフォーマンス改善
 - **0.2.8** — ルールファイル管理改善（スコープ分離・自動生成強化・MEMORY.mdポインタ方式）
 - **0.2.7** — ステータスバー稼働判定バグ修正（PIDベースに変更）

@@ -10,6 +10,18 @@ import { AgentWatcherState } from './types';
 import * as dataStore from './dataStore';
 import { detectSubagents } from './subagentDetector';
 
+// シグナルファイルから読み取った情報
+interface SignalData {
+	type: 'start' | 'stop';
+	timestamp: string;
+	pid?: number;
+	cwd?: string;
+	sessionId?: string;
+	agentType?: string;
+	description?: string;
+	parentSessionId?: string;
+}
+
 export class AgentWatcher implements vscode.Disposable {
 	// 状態変更イベント（ツリーリフレッシュ等に利用）
 	private _onDidChange = new vscode.EventEmitter<void>();
@@ -17,6 +29,8 @@ export class AgentWatcher implements vscode.Disposable {
 
 	// ウォッチャー（setIntervalは廃止）
 	private watcher: fs.FSWatcher | undefined;
+	private signalWatcher: fs.FSWatcher | undefined;
+	private signalDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 	private debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 	// 状態
@@ -24,6 +38,8 @@ export class AgentWatcher implements vscode.Disposable {
 	private states = new Map<string, AgentWatcherState>();
 	private sessionMtimes = new Map<string, number>(); // セッションIDごとのJSONL mtime
 	private sessionCwdMap = new Map<string, string>(); // セッションID → cwd（JSONL特定用）
+	// シグナルベースの子エージェント追跡（sessionId → true/false）
+	private signalLiveSessions = new Map<string, boolean>();
 	private enabled = false;
 	private updating = false; // 二重実行防止
 
@@ -48,6 +64,9 @@ export class AgentWatcher implements vscode.Disposable {
 		} catch {
 			// ディレクトリが存在しない場合はスキップ
 		}
+
+		// .csm-signals/ ディレクトリの監視（シグナルファイル方式の子エージェント検出）
+		this.startSignalWatcher();
 	}
 
 	// デバウンス付き更新スケジュール（300ms）
@@ -67,9 +86,17 @@ export class AgentWatcher implements vscode.Disposable {
 			clearTimeout(this.debounceTimer);
 			this.debounceTimer = undefined;
 		}
+		if (this.signalDebounceTimer) {
+			clearTimeout(this.signalDebounceTimer);
+			this.signalDebounceTimer = undefined;
+		}
 		if (this.watcher) {
 			this.watcher.close();
 			this.watcher = undefined;
+		}
+		if (this.signalWatcher) {
+			this.signalWatcher.close();
+			this.signalWatcher = undefined;
 		}
 	}
 
@@ -160,6 +187,9 @@ export class AgentWatcher implements vscode.Disposable {
 		this.sessionMtimes = newSessionMtimes;
 		this.sessionCwdMap = newSessionCwdMap;
 
+		// シグナルベースの状態を反映（start シグナルがあればライブに追加）
+		this.applySignalState();
+
 		// 2. 各エージェントの状態を更新（サブエージェント検出含む）
 		const agents = await dataStore.getAgents();
 		const prevStates = new Map(this.states);
@@ -197,6 +227,91 @@ export class AgentWatcher implements vscode.Disposable {
 		// 3. 変更があればイベント発火
 		if (this.hasChanged(prevStates)) {
 			this._onDidChange.fire();
+		}
+	}
+
+	// --- SignalWatcher: ~/.claude/.csm-signals/ 監視 ---
+
+	private startSignalWatcher(): void {
+		const signalsDir = path.join(os.homedir(), '.claude', '.csm-signals');
+
+		// ディレクトリがなければ作成
+		fs.promises.mkdir(signalsDir, { recursive: true }).then(() => {
+			// 起動時に既存シグナルファイルを処理
+			this.processSignals(signalsDir);
+
+			// fs.watch で監視
+			try {
+				this.signalWatcher = fs.watch(signalsDir, () => this.scheduleSignalProcessing(signalsDir));
+			} catch {
+				// 監視開始失敗はスキップ
+			}
+		}).catch(() => {
+			// ディレクトリ作成失敗はスキップ
+		});
+	}
+
+	// デバウンス付きシグナル処理スケジュール（200ms）
+	private scheduleSignalProcessing(signalsDir: string): void {
+		if (this.signalDebounceTimer) {
+			clearTimeout(this.signalDebounceTimer);
+		}
+		this.signalDebounceTimer = setTimeout(() => {
+			this.signalDebounceTimer = undefined;
+			this.processSignals(signalsDir);
+		}, 200);
+	}
+
+	// シグナルファイルを読み取り・処理・削除
+	private async processSignals(signalsDir: string): Promise<void> {
+		try {
+			const files = await fs.promises.readdir(signalsDir);
+			const jsonFiles = files.filter(f => f.endsWith('.json'));
+			if (jsonFiles.length === 0) { return; }
+
+			let changed = false;
+
+			for (const file of jsonFiles) {
+				const filePath = path.join(signalsDir, file);
+				try {
+					const raw = await fs.promises.readFile(filePath, 'utf-8');
+					const signal: SignalData = JSON.parse(raw);
+
+					if (signal.sessionId) {
+						if (signal.type === 'start') {
+							this.signalLiveSessions.set(signal.sessionId, true);
+							changed = true;
+						} else if (signal.type === 'stop') {
+							this.signalLiveSessions.set(signal.sessionId, false);
+							changed = true;
+						}
+					}
+
+					// 処理済みシグナルファイルを削除
+					await fs.promises.unlink(filePath);
+				} catch {
+					// 個別ファイルの読み取り/削除エラーは無視
+				}
+			}
+
+			if (changed) {
+				// シグナルベースの変更をライブセッションに反映し、ツリー更新
+				this.applySignalState();
+				this._onDidChange.fire();
+			}
+		} catch {
+			// readdir失敗は無視
+		}
+	}
+
+	// シグナルベースのライブ状態をメイン状態に反映
+	private applySignalState(): void {
+		for (const [sessionId, isLive] of this.signalLiveSessions) {
+			if (isLive) {
+				this.liveSessionIds.add(sessionId);
+			}
+			// stop の場合は liveSessionIds から除去しない（PIDベースが正なので）
+			// stop シグナルは states の更新トリガーとして使うだけ
 		}
 	}
 
