@@ -14,8 +14,8 @@
 | 1 | Agent SDK セッション管理API | **部分採用** | Phase 3 | APIは有用だが現行JSONL直接読み取りが安定。SDK安定後に段階移行 |
 | 2 | Chief of Staff agentパターン | **部分採用** | Phase 2 | 取締役パターンは同一思想。出力スタイル・フック設計は即取り込み可 |
 | 3 | Hooks 24種の活用 | **採用** | Phase 1 | SubagentStop・SessionEnd・SessionStart(compact)は即座に活用可能 |
-| 4 | サブエージェントYAMLフロントマター | **部分採用** | Phase 2 | 公式フォーマットへの段階移行。CSM:AUTOマーカーとの共存設計必要 |
-| 5 | effortパラメータへの移行 | **採用** | Phase 1 | CSMは既にeffort UIを持つ。maxThinkingTokensの非推奨化を反映するのみ |
+| 4 | サブエージェントYAMLフロントマター | **採用** | Phase 2 | CSM:AUTOマーカーを廃止しdescriptionフィールドに統合。テスト済み |
+| 5 | effortパラメータ | **対応済み** | — | CSMは初版からeffortに対応。追加作業なし |
 | 6 | スキルの段階的開示（L1→L2→L3） | **見送り** | — | メモリ管理には過剰設計。既にフラット構造で十分機能 |
 
 ---
@@ -85,7 +85,7 @@ SDK呼び出しが失敗してもcustomName設定は成功扱いとする（SDK�
 | サブエージェント定義 | `.claude/agents/` | `.agent-rules/` | 役割分担で共存（下記参照） |
 | 出力スタイル | `.claude/output-styles/` | 未実装 | 新規取り込み候補 |
 | フック | PostToolUse で操作追跡 | Stop/PostToolUse 使用中 | 追加フック活用可 |
-| カスタムコマンド | `.claude/commands/`（→スキル統合済み） | CSM:AUTOマーカー管理 | スキル形式への段階移行を検討 |
+| カスタムコマンド | `.claude/commands/`（→スキル統合済み） | YAMLフロントマターdescription管理 | 公式準拠済み |
 
 ### 判断: **部分採用** — Phase 2
 
@@ -175,7 +175,7 @@ effort: high
 あなたはコードレビューアです。...
 ```
 
-### CSM現行フォーマット
+### CSM旧フォーマット（v0.3.0まで）
 
 ```
 <!-- CSM:AUTO:START -->
@@ -186,68 +186,80 @@ effort: high
 （ユーザーカスタム記述）
 ```
 
-### 判断: **部分採用** — Phase 2
+### 判断: **採用** — Phase 2
 
-**採用方針: ハイブリッドフォーマット**
-- CSM:AUTOマーカーは**存続**（ユーザーカスタム記述の保護が最重要機能）
-- ルールファイル先頭に**YAMLフロントマター互換メタデータ**を追加
-- CSMがフロントマターを読み取り、AgentConfigとの同期を維持
+**方針: CSM:AUTOマーカー廃止 → YAMLフロントマターのdescriptionに統合**
 
-**提案するハイブリッドフォーマット:**
+テスト結果: YAMLフロントマターの `description` フィールドに自動生成テキストを入れ、本文をカスタム部分にする方式で、Claude Codeが両方正しく認識することを確認済み。
+
+**新フォーマット:**
 
 ```yaml
 ---
 name: CSM開発部
-description: Claude Session Managerの開発・改善を担当
-tools: Read, Write, Edit, Bash, Grep, Glob
-model: opus
+model: sonnet
 effort: high
+scope: project
+description: |
+  あなたはCSM開発部所属のエンジニアです。
+  - 回答の冒頭に「【CSM開発部】」と付ける
+  ...
 ---
-<!-- CSM:AUTO:START -->
-あなたはCSM開発部所属のエンジニアです。
-...
-<!-- CSM:AUTO:END -->
 
-## カスタム指示
-（ユーザー自由記述）
+## 歴代セッションの記録
+### 2026-04-05 (旧ID: xxx)
+...
+
+## カスタムルール
+手動追記部分
 ```
 
+**設計ポイント:**
+
+| 領域 | CSMの管理範囲 | ユーザーの管理範囲 |
+|------|-------------|------------------|
+| YAMLフロントマター | `description` を含む全フィールドを書き換え | 直接編集可（CSMが次回同期時に上書き） |
+| 本文（`---` より下） | **一切触らない** | 自由に編集（歴代セッション、カスタムルール等） |
+
+**CSM:AUTOマーカーからの移行:**
+- `<!-- CSM:AUTO:START/END -->` マーカーを廃止
+- 旧マーカー内のテキスト → `description` フィールドに移動
+- 旧マーカー外のテキスト → 本文（`---` より下）にそのまま残る
+- 既存ルールファイルは初回起動時に自動マイグレーション
+
 **実装ステップ:**
-1. `autoGenerateRuleFile()` でYAMLフロントマターを先頭に出力
+1. `autoGenerateRuleFile()` をYAMLフロントマター出力に変更（`description` に行動規範を格納）
 2. `parseAgentFrontmatter()` 関数追加でメタデータ解析
-3. エージェント設定変更時にフロントマターとCSM:AUTOを同時更新
-4. フロントマターの `tools` と AgentConfig の `allowedTools` を双方向同期
+3. エージェント設定変更時はフロントマターのみ書き換え、本文は保持
+4. 既存CSM:AUTOマーカー形式の自動マイグレーション処理
+
+**メリット:**
+- Anthropic公式のサブエージェント定義フォーマットに準拠
+- CSM:AUTOという独自仕様が不要になる
+- CSMなしでもCLIから `--append-system-prompt-file` で直接使える
+- 本文の保護が「マーカー間の判定」から「フロントマター外は触らない」に簡素化
 
 > **リスク:** フロントマターと `.claude/agents/` 設定ファイルの不整合（どちらが真実か問題）。
-> **対策:** `.claude/agents/<name>.yml` を設定の正（Single Source of Truth）とし、ルールファイルのフロントマターは「表示用 + CLI連携用」の派生データとする。session-manager.json の agents 配列は `.claude/agents/` への移行完了後に廃止予定。
+> **対策:** `.claude/agents/<name>.yml` を設定の正（Single Source of Truth）とし、ルールファイルのフロントマターは派生データとする。session-manager.json の agents 配列は `.claude/agents/` への移行完了後に廃止予定。
 
 ---
 
-## 5. effortパラメータへの移行
+## 5. effortパラメータ
 
-### 公式推奨の変更
+### 公式仕様
 
-| 項目 | 旧 | 新（公式推奨） |
-|------|------|----------------|
-| 深度制御 | `budget_tokens` / `maxThinkingTokens` | `effort`（low/medium/high/max） |
-| Extended Thinking | `thinking: {type: "enabled", budget_tokens: N}` | `thinking: {type: "adaptive"}` + `effort` |
-| CLIフラグ | `MAX_THINKING_TOKENS` 環境変数 | `--effort` フラグ |
+| 項目 | 公式推奨 |
+|------|----------|
+| 深度制御 | `effort`（low/medium/high/max） |
+| Extended Thinking | `thinking: {type: "adaptive"}` + `effort` |
+| CLIフラグ | `--effort` フラグ |
 
-### CSMの現状
-- `AgentConfig` に `effort` (4段階) + `thinkingEnabled` + `maxThinkingTokens` の3フィールドが存在
-- `cliBuilder.ts` は `--effort` と `MAX_THINKING_TOKENS` の両方を出力
-- フォームUIは effort 4段階 + thinking トグル + maxThinkingTokens 数値入力
+### 判断: **対応済み** — 追加作業なし
 
-### 判断: **採用** — Phase 1
-
-**変更内容:**
-1. `maxThinkingTokens` フォームフィールドに**「非推奨」ラベル**を追加
-2. `thinkingEnabled` トグルをeffortと連動: effort設定時はthinkingを自動でadaptiveに
-3. `cliBuilder.ts`: effort設定時は `MAX_THINKING_TOKENS` 環境変数を出力しない
-4. 将来（Phase 3）で `thinkingEnabled` と `maxThinkingTokens` を AgentConfig から削除予定
-
-> **リスク:** 既存ユーザーがmaxThinkingTokensを精密設定している場合の移行。
-> **対策:** 非推奨化のみで削除はしない。effort未設定時は従来通り使用。CHANGELOGに移行ガイド記載。
+CSMは公開前のため、初版（v0.3.0）からeffortパラメータに対応済み:
+- `AgentConfig` に `effort` フィールド（4段階: low/medium/high/max）
+- `cliBuilder.ts` は `--effort` フラグを出力
+- フォームUIにeffort選択を実装済み
 
 ---
 
@@ -265,15 +277,13 @@ effort: high
 
 ## 7. 実装ロードマップ
 
-### Phase 1: v0.3.1 — フック活用 + effort移行
+### Phase 1: v0.3.1 — フック活用
 
 | 作業 | 影響ファイル |
 |------|-------------|
 | SubagentStop/Start フックスクリプト作成 | `~/.claude/scripts/csm/` (3ファイル新規) |
 | SessionStart(compact) TODO再注入 | `settings.json` (4フック追加) |
 | PreCompact に todo-flush 二重登録 | |
-| effort UI非推奨表示 | `agentFormPanel.ts` |
-| cliBuilder effort優先ロジック | `cliBuilder.ts` |
 
 ### Phase 2: v0.4.0 — 公式フォーマット統合 + ルール/データ分離
 
@@ -281,7 +291,8 @@ effort: high
 |------|-------------|
 | `.claude/agents/<name>.yml` に設定データ移行 | `agentManager.ts`, `dataStore.ts` |
 | session-manager.json agents → `.claude/agents/` マイグレーション | `extension.ts` |
-| ルールファイルのYAMLフロントマター出力 | `agentManager.ts`, `agentFormPanel.ts` |
+| CSM:AUTO → YAMLフロントマターdescription移行 | `agentManager.ts`, `agentFormPanel.ts` |
+| 既存ルールファイルの自動マイグレーション | `extension.ts` |
 | 出力スタイル定義サポート | `types.ts` |
 | TaskCreated/TaskCompleted フック | |
 | ルール/設定の整合性検証ロジック | `agentManager.ts` |
@@ -294,7 +305,6 @@ effort: high
 | SdkSessionBackend 実装 | `sessionLoader.ts` |
 | fork_session / tag_session SDK化 | `types.ts` |
 | rename_session 同期（CSMリネーム時にSDK同時実行） | `extension.ts`, `dataStore.ts` |
-| maxThinkingTokens / thinkingEnabled 非推奨完了 | |
 
 ---
 
@@ -305,8 +315,8 @@ effort: high
 | SubagentStopフック設計（§8） | Hooks #3 SubagentStop | **完全一致** | 設計書の仕様をそのまま実装。公式入力JSONスキーマに合わせる |
 | TODO.md自動管理（todo-flush.js） | Hooks #3 SessionEnd/PreCompact | **補完関係** | 既存Stopに加え、SessionEnd/PreCompactにも同スクリプト登録 |
 | フォルダ構造（.agent-rules/\<name\>/） | 公式 .claude/agents/ パス | **役割分離** | ルール(.md)は.agent-rules/、設定(.yml)は.claude/agents/。参照パスで連結 |
-| CSM:AUTOマーカー | YAMLフロントマター | **共存可能** | フロントマター → CSM:AUTO → ユーザーカスタム の3層構造 |
-| effortフォームUI | effort公式推奨 | **完全一致** | 既存UI維持。maxThinkingTokensに非推奨ラベル追加のみ |
+| CSM:AUTOマーカー（廃止） | YAMLフロントマターdescription | **統合完了** | CSM:AUTO廃止。descriptionに行動規範、本文にユーザーカスタムの2層構造 |
+| effortフォームUI | effort公式推奨 | **対応済み** | 初版からeffort対応。追加作業なし |
 | TaskTracker（JSONL走査） | TaskCreated/Completed フック | **段階移行** | Phase 2でフックベースに移行。JSONL走査はフォールバック保持 |
 | リネーム（customName独自管理） | SDK rename_session() | **同期採用** | CSMリネーム時にSDKも同時実行。customNameは優先表示用に残す |
 
@@ -319,6 +329,5 @@ effort: high
 | R1 | Agent SDK TypeScript版のAPI変更・非互換 | 高 | 中 | 抽象レイヤーで切替可能に。JSONL直接をデフォルト維持 |
 | R2 | フック増加によるセッション遅延 | 中 | 低 | 全CSMフック async:true + timeout:10。累積影響を計測 |
 | R3 | ルール(.agent-rules)と設定(.claude/agents)の参照パス不整合 | 中 | 中 | .yml に ruleFile パスを持たせCSMが整合性検証。不整合時は警告UI |
-| R4 | YAMLフロントマターと.claude/agents/設定の不整合 | 中 | 中 | .claude/agents/をSingle Source of Truth。フロントマターは派生データ |
-| R5 | maxThinkingTokens非推奨化でユーザー混乱 | 低 | 低 | 非推奨ラベルのみ。削除はPhase 3。CHANGELOGに移行ガイド |
-| R6 | 公式フック仕様の変更 | 中 | 低 | 各フックスクリプトは独立。不要時はsettings.jsonから除外 |
+| R4 | YAMLフロントマターdescriptionと.claude/agents/設定の不整合 | 中 | 中 | .claude/agents/をSingle Source of Truth。descriptionは派生データ。本文はCSM不干渉 |
+| R5 | 公式フック仕様の変更 | 中 | 低 | 各フックスクリプトは独立。不要時はsettings.jsonから除外 |
