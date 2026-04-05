@@ -1287,8 +1287,50 @@ description: |
 
 ---
 
+## 55. v0.3.1 追加 — マイグレーションバナー + renewAgentSession 修正
+
+### マイグレーションバナー
+
+エージェント管理ツリービュー上部に旧形式ルールファイルの移行バナーを表示:
+
+- `MigrationBannerItem` — 旧形式ルールファイル検出時に⚠バナー表示
+- `detectLegacyAgents()` — 全エージェントのルールファイルを走査、以下を旧形式と判定:
+  - CSM:AUTO マーカーあり（`isLegacyAutoFormat`）
+  - YAML フロントマターなし（`!hasFrontmatter`）
+  - フラット構造（親ディレクトリ名 ≠ エージェント名）
+- クリックで `claudeManager.migrateRuleFiles` コマンド実行
+- 移行完了後、バナーは自動非表示
+
+### 一括マイグレーションコマンド（`migrateRuleFiles`）
+
+| フェーズ | 処理 |
+|----------|------|
+| A: YAML変換 | CSM:AUTO → migrateAutoToYaml() / フロントマターなし → generateFrontmatter() |
+| B: フォルダ移行 | フラット → 部署フォルダ構造、HISTORY.md分離、旧ファイル→.trash/ |
+
+- プログレスバー表示（Notification）
+- OutputChannel にログ出力
+- エラー発生時は OutputChannel を自動表示
+
+### renewAgentSession 修正
+
+- 全体を try/catch で囲み、致命的エラー時に showErrorMessage + OutputChannel.show
+- 遺言生成失敗時はデフォルトメッセージで続行（内側 try/catch）
+- JSONL追記・歴代記録追記にも個別 try/catch
+- OutputChannel を起動時に即作成（遅延作成を廃止）
+
+### 影響範囲
+
+| ファイル | 変更 |
+|---|---|
+| `agentTreeProvider.ts` | `MigrationBannerItem` 追加、`detectLegacyAgents()` 追加、`getChildren()` にバナー表示ロジック |
+| `extension.ts` | `migrateRuleFiles` コマンド追加、`renewAgentSession` エラーハンドリング強化、OutputChannel即作成 |
+| `package.json` | `migrateRuleFiles` コマンド登録 |
+
+---
+
 ## バージョン
-- **0.3.1** — YAML Frontmatter 移行 + SubagentStart/Stop フック
+- **0.3.1** — YAML Frontmatter 移行 + SubagentStart/Stop フック + マイグレーションバナー
 - **0.3.0** — 監視アーキテクチャ刷新 + メモリ拡張 + フォーム拡張 + CLI Builder + タスク管理 + パフォーマンス改善
 - **0.2.8** — ルールファイル管理改善（スコープ分離・自動生成強化・MEMORY.mdポインタ方式）
 - **0.2.7** — ステータスバー稼働判定バグ修正（PIDベースに変更）

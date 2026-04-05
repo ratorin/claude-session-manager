@@ -314,6 +314,12 @@
 				"title": "フォルダ構造に移行",
 				"icon": "$(folder)",
 				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.migrateRuleFiles",
+				"title": "ルールファイルを一括移行（YAML + フォルダ構造）",
+				"icon": "$(arrow-up)",
+				"category": "Claude Session Manager"
 			}
 		],
 		"menus": {

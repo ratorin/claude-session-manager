@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import { AgentConfig, ParsedSession, TaskLog } from './types';
 import * as dataStore from './dataStore';
-import { getRuleFileInfo } from './agentManager';
+import { getRuleFileInfo, resolveRuleFilePath } from './agentManager';
+import { isLegacyAutoFormat, hasFrontmatter } from './frontmatterUtils';
 
-type AgentTreeNode = AgentItem | TaskLogItem;
+type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem;
 
 // エージェント管理サイドバーのTreeDataProvider（ツリー構造対応）
 export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>, vscode.Disposable {
@@ -34,6 +36,10 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		this.getVisibleTasksFn = fn;
 	}
 
+	// マイグレーション不要になったらバナーを非表示にする
+	private migrationNeeded = false;
+	getMigrationNeeded(): boolean { return this.migrationNeeded; }
+
 	refresh(): void {
 		this._onDidChangeTreeData.fire(undefined);
 	}
@@ -43,8 +49,9 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 	}
 
 	async getChildren(element?: AgentTreeNode): Promise<AgentTreeNode[]> {
-		// TaskLogItem は子を持たない
+		// TaskLogItem / MigrationBannerItem は子を持たない
 		if (element instanceof TaskLogItem) { return []; }
+		if (element instanceof MigrationBannerItem) { return []; }
 
 		const agents = await dataStore.getAgents();
 		if (agents.length === 0) { return []; }
@@ -94,6 +101,15 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		}
 
 		if (!element) {
+			const result: AgentTreeNode[] = [];
+
+			// マイグレーションバナー: 旧形式のルールファイルがあれば表示
+			const legacyAgents = await detectLegacyAgents(agents);
+			this.migrationNeeded = legacyAgents.length > 0;
+			if (this.migrationNeeded) {
+				result.push(new MigrationBannerItem(legacyAgents.length));
+			}
+
 			// トップレベル: parentAgent 未設定、または存在しない親を参照しているもの（孤児防止）
 			const topLevel = agents.filter((a) => !a.parentAgent || !agentNames.has(a.parentAgent));
 			// ソート: 子を持つエージェントが上 → 稼働中を上 → 名前順
@@ -106,13 +122,14 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				if (aLive !== bLive) { return aLive - bLive; }
 				return a.name.localeCompare(b.name);
 			});
-			return topLevel.map((agent) => {
+			for (const agent of topLevel) {
 				const isLive = checkLive(agent);
 				const sessionTitle = agent.sessionId ? titleMap.get(agent.sessionId) : undefined;
 				const hasTasks = this.getVisibleTasksFn ? this.getVisibleTasksFn(agent.name).length > 0 : false;
-				const hasChildren = childMap.has(agent.name) || hasTasks;
-				return new AgentItem(agent, isLive, sessionTitle, false, hasChildren, ruleStrMap.get(agent.name) || '');
-			});
+				const hasChildrenFlag = childMap.has(agent.name) || hasTasks;
+				result.push(new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || ''));
+			}
+			return result;
 		}
 
 		// AgentItem の子: 子エージェント + タスクログ
@@ -235,6 +252,57 @@ export class AgentItem extends vscode.TreeItem {
 			arguments: [this],
 		};
 	}
+}
+
+// マイグレーションバナーのTreeItem
+export class MigrationBannerItem extends vscode.TreeItem {
+	constructor(legacyCount: number) {
+		super(`⚠ 旧形式のルールファイルが${legacyCount}件あります`, vscode.TreeItemCollapsibleState.None);
+		this.description = 'クリックで移行';
+		this.tooltip = new vscode.MarkdownString(
+			`**ルールファイル移行が必要です**\n\n` +
+			`旧形式（CSM:AUTOマーカー / フロントマターなし / フラット構造）のルールファイルが **${legacyCount}件** 検出されました。\n\n` +
+			`クリックすると以下を一括実行します:\n` +
+			`- YAML フロントマター形式に変換\n` +
+			`- フォルダ構造に移行（部署名/部署名.md）\n` +
+			`- HISTORY.md テンプレート作成\n` +
+			`- session-manager.json のパス更新`
+		);
+		this.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('terminal.ansiYellow'));
+		this.contextValue = 'migrationBanner';
+		this.command = {
+			command: 'claudeManager.migrateRuleFiles',
+			title: 'ルールファイルを移行',
+		};
+	}
+}
+
+// 旧形式のルールファイルを持つエージェントを検出
+async function detectLegacyAgents(agents: AgentConfig[]): Promise<AgentConfig[]> {
+	const legacy: AgentConfig[] = [];
+	for (const agent of agents) {
+		if (!agent.ruleFile) { continue; }
+		try {
+			const resolved = await resolveRuleFilePath(agent.ruleFile);
+			if (!resolved) { continue; }
+
+			// フラット構造チェック: 親ディレクトリ名がエージェント名と一致しない
+			const parentName = require('path').basename(require('path').dirname(resolved));
+			const isFlat = parentName !== agent.name;
+
+			// ファイル内容チェック
+			const content = await fs.promises.readFile(resolved, 'utf-8');
+			const hasLegacyMarker = isLegacyAutoFormat(content);
+			const hasFm = hasFrontmatter(content);
+
+			if (isFlat || hasLegacyMarker || !hasFm) {
+				legacy.push(agent);
+			}
+		} catch {
+			// ファイル読み込みエラーは無視
+		}
+	}
+	return legacy;
 }
 
 // タスクログのTreeItem

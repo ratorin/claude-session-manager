@@ -6,7 +6,7 @@ import { SessionTreeProvider, SessionItem, SessionDecorationProvider } from './s
 import { BookmarkTreeProvider } from './bookmarkTreeProvider';
 import { TagTreeProvider, TagSessionItem } from './tagTreeProvider';
 import { MemoryTreeProvider, MemoryFileItem, MemoryGroupItem } from './memoryTreeProvider';
-import { AgentTreeProvider, AgentItem } from './agentTreeProvider';
+import { AgentTreeProvider, AgentItem, MigrationBannerItem } from './agentTreeProvider';
 import { showSessionPreview, showMemoryPreview, updatePreviewTitle } from './webviewPanel';
 import { showAgentFormPanel } from './agentFormPanel';
 import { showAgentPreview } from './agentPreviewPanel';
@@ -20,7 +20,7 @@ import { loadMemoryFiles, deleteMemoryFile, mergeMemoryFiles, extractFromMemory,
 import { resolveRuleFilePath } from './agentManager';
 import {
 	parseFrontmatter, generateFrontmatter, updateFrontmatterInContent,
-	migrateAutoToYaml, isLegacyAutoFormat, sanitizeForYaml,
+	migrateAutoToYaml, isLegacyAutoFormat, hasFrontmatter, sanitizeForYaml,
 } from './frontmatterUtils';
 
 // VS Code設定から値を取得するヘルパー
@@ -372,12 +372,10 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}
 
-	// OutputChannel（エラーログ出力用）
-	let extensionOutputChannel: vscode.OutputChannel | undefined;
+	// OutputChannel（エラーログ出力用）— 起動時に即作成
+	const extensionOutputChannel = vscode.window.createOutputChannel('CSM Session Manager');
+	context.subscriptions.push(extensionOutputChannel);
 	function getExtensionOutputChannel(): vscode.OutputChannel {
-		if (!extensionOutputChannel) {
-			extensionOutputChannel = vscode.window.createOutputChannel('CSM Session Manager');
-		}
 		return extensionOutputChannel;
 	}
 
@@ -1011,92 +1009,112 @@ export function activate(context: vscode.ExtensionContext) {
 	// セッションを新しくする（自動遺言生成して新セッション作成）
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.renewAgentSession', async (item: AgentItem) => {
+			const ch = getExtensionOutputChannel();
 			const agent = item.agent;
 			if (!agent.sessionId) {
 				vscode.window.showWarningMessage('セッションが紐づけされていません');
 				return;
 			}
 
-			// 遺言生成モードを選択
-			const mode = await vscode.window.showQuickPick(
-				[
-					{ label: '簡易（即時）', description: 'JSONL末尾から自動抽出。コストゼロ', value: 'simple' as const },
-					{ label: '詳細（AI要約）', description: 'Claude CLIで要約生成。高品質だがトークンコストあり', value: 'detailed' as const },
-				],
-				{ placeHolder: '遺言の生成方法を選択してください' }
-			);
-			if (!mode) { return; }
-
-			const oldSession = sessionProvider.getSessionById(agent.sessionId);
-			const oldSessionId = agent.sessionId;
-			let testament = `${agent.name}の前セッションから引き継ぎ。`;
-
-			if (mode.value === 'simple') {
-				// 簡易モード: JSONL末尾から自動抽出
-				testament = await generateSimpleTestament(agent, oldSession);
-			} else {
-				// 詳細モード: モデル選択 → Claude CLIでAI要約生成
-				const modelPick = await vscode.window.showQuickPick(
+			try {
+				// 遺言生成モードを選択
+				const mode = await vscode.window.showQuickPick(
 					[
-						{ label: 'opus', description: '最高品質（推奨）', value: 'opus' },
-						{ label: 'sonnet', description: 'バランス重視', value: 'sonnet' },
-						{ label: 'haiku', description: '高速・低コスト', value: 'haiku' },
+						{ label: '簡易（即時）', description: 'JSONL末尾から自動抽出。コストゼロ', value: 'simple' as const },
+						{ label: '詳細（AI要約）', description: 'Claude CLIで要約生成。高品質だがトークンコストあり', value: 'detailed' as const },
 					],
-					{ placeHolder: '要約に使用するモデルを選択', title: 'AI要約モデル' }
+					{ placeHolder: '遺言の生成方法を選択してください' }
 				);
-				if (!modelPick) { return; }
-				testament = await generateDetailedTestament(agent, oldSession, modelPick.value);
-			}
+				if (!mode) { return; }
 
-			// 300文字上限
-			testament = testament.substring(0, 300);
+				const oldSession = sessionProvider.getSessionById(agent.sessionId);
+				const oldSessionId = agent.sessionId;
+				let testament = `${agent.name}の前セッションから引き継ぎ。`;
 
-			// 確認ダイアログ（編集可能）
-			const finalTestament = await vscode.window.showInputBox({
-				prompt: '引き継ぎメッセージ（編集可能・最大300文字）',
-				placeHolder: '次のセッションへの引き継ぎ事項...',
-				value: testament,
-			});
-			if (finalTestament === undefined) { return; }
-			const trimmedTestament = finalTestament.substring(0, 300);
-
-			// 旧セッションのJSONLに引き継ぎメッセージを追記
-			if (oldSession) {
+				// 遺言生成（エラー時はデフォルトメッセージで続行）
 				try {
-					const entry = JSON.stringify({
-						type: 'user',
-						uuid: `testament-${Date.now()}`,
-						parentUuid: null,
-						timestamp: new Date().toISOString(),
-						sessionId: oldSessionId,
-						message: {
-							role: 'user',
-							content: `[セッション終了] ${trimmedTestament}`,
-						},
-					});
-					await fs.promises.appendFile(oldSession.filePath, '\n' + entry);
-				} catch {
-					// 書き込み失敗は無視
+					if (mode.value === 'simple') {
+						testament = await generateSimpleTestament(agent, oldSession);
+					} else {
+						// 詳細モード: モデル選択 → Claude CLIでAI要約生成
+						const modelPick = await vscode.window.showQuickPick(
+							[
+								{ label: 'opus', description: '最高品質（推奨）', value: 'opus' },
+								{ label: 'sonnet', description: 'バランス重視', value: 'sonnet' },
+								{ label: 'haiku', description: '高速・低コスト', value: 'haiku' },
+							],
+							{ placeHolder: '要約に使用するモデルを選択', title: 'AI要約モデル' }
+						);
+						if (!modelPick) { return; }
+						testament = await generateDetailedTestament(agent, oldSession, modelPick.value);
+					}
+				} catch (testamentErr) {
+					ch.appendLine(`[${new Date().toISOString()}] 遺言生成エラー: ${testamentErr instanceof Error ? testamentErr.message : String(testamentErr)}`);
+					vscode.window.showWarningMessage(`遺言生成に失敗しました。デフォルトメッセージで続行します。`);
+					// testament はデフォルト値のまま続行
 				}
+
+				// 300文字上限
+				testament = testament.substring(0, 300);
+
+				// 確認ダイアログ（編集可能）
+				const finalTestament = await vscode.window.showInputBox({
+					prompt: '引き継ぎメッセージ（編集可能・最大300文字）',
+					placeHolder: '次のセッションへの引き継ぎ事項...',
+					value: testament,
+				});
+				if (finalTestament === undefined) { return; }
+				const trimmedTestament = finalTestament.substring(0, 300);
+
+				// 旧セッションのJSONLに引き継ぎメッセージを追記
+				if (oldSession) {
+					try {
+						const entry = JSON.stringify({
+							type: 'user',
+							uuid: `testament-${Date.now()}`,
+							parentUuid: null,
+							timestamp: new Date().toISOString(),
+							sessionId: oldSessionId,
+							message: {
+								role: 'user',
+								content: `[セッション終了] ${trimmedTestament}`,
+							},
+						});
+						await fs.promises.appendFile(oldSession.filePath, '\n' + entry);
+					} catch (writeErr) {
+						ch.appendLine(`[${new Date().toISOString()}] JSONL追記エラー: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
+						// 書き込み失敗でもセッション更新は続行
+					}
+				}
+
+				// ルールファイルのカスタム部分に歴代セッション記録を追記
+				if (agent.ruleFile) {
+					try {
+						await appendSessionHistoryToRuleFile(agent.ruleFile, oldSessionId, trimmedTestament);
+					} catch (historyErr) {
+						ch.appendLine(`[${new Date().toISOString()}] 歴代セッション記録追記エラー: ${historyErr instanceof Error ? historyErr.message : String(historyErr)}`);
+						// 追記失敗でもセッション更新は続行
+					}
+				}
+
+				// previousSessionIds を更新（直近5件保持）
+				const prevIds = [...(agent.previousSessionIds || [])];
+				prevIds.push(oldSessionId);
+				while (prevIds.length > 5) { prevIds.shift(); }
+
+				// セッションID紐づけを解除、previousSessionIds を保存
+				const updatedAgent: AgentConfig = { ...agent, sessionId: '', previousSessionIds: prevIds };
+				await dataStore.addAgent(updatedAgent);
+				refreshAll();
+				vscode.window.showInformationMessage(
+					`「${agent.name}」のセッション紐づけを解除しました。新しいセッションを紐づけてください。`
+				);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				ch.appendLine(`[${new Date().toISOString()}] renewAgentSession 致命的エラー (${agent.name}): ${msg}`);
+				ch.show(true);
+				vscode.window.showErrorMessage(`セッション更新に失敗しました: ${msg}`);
 			}
-
-			// ルールファイルのカスタム部分に歴代セッション記録を追記
-			if (agent.ruleFile) {
-				await appendSessionHistoryToRuleFile(agent.ruleFile, oldSessionId, trimmedTestament);
-			}
-
-			// previousSessionIds を更新（直近5件保持）
-			const prevIds = [...(agent.previousSessionIds || [])];
-			prevIds.push(oldSessionId);
-			while (prevIds.length > 5) { prevIds.shift(); }
-
-			// セッションID紐づけを解除、previousSessionIds を保存
-			const updatedAgent: AgentConfig = { ...agent, sessionId: '', previousSessionIds: prevIds };
-			await dataStore.addAgent(updatedAgent);
-			refreshAll();
-			vscode.window.showInformationMessage(
-				`「${agent.name}」のセッション紐づけを解除しました。新しいセッションを紐づけてください。`
-			);
 		})
 	);
 
@@ -1238,6 +1256,126 @@ export function activate(context: vscode.ExtensionContext) {
 			vscode.window.showInformationMessage(
 				`移行完了: ${migrated.length}件成功${skipped.length > 0 ? `、${skipped.length}件スキップ` : ''}`
 			);
+		})
+	);
+
+	// --- ルールファイル一括マイグレーション（バナーから呼ばれる） ---
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.migrateRuleFiles', async () => {
+			const ch = getExtensionOutputChannel();
+			const confirm = await vscode.window.showWarningMessage(
+				'旧形式のルールファイルをYAMLフロントマター形式に変換し、フォルダ構造に移行します。旧ファイルは .trash/ に退避されます。',
+				{ modal: true },
+				'移行実行'
+			);
+			if (confirm !== '移行実行') { return; }
+
+			const agents = await dataStore.getAgents();
+			const migrated: string[] = [];
+			const skipped: string[] = [];
+			const errors: string[] = [];
+
+			await vscode.window.withProgress(
+				{ location: vscode.ProgressLocation.Notification, title: 'ルールファイル移行中...', cancellable: false },
+				async (progress) => {
+					for (let i = 0; i < agents.length; i++) {
+						const agent = agents[i];
+						progress.report({ message: `${agent.name} (${i + 1}/${agents.length})`, increment: 100 / agents.length });
+
+						if (!agent.ruleFile) { skipped.push(agent.name); continue; }
+
+						try {
+							const resolved = await resolveRuleFilePath(agent.ruleFile);
+							if (!resolved) { skipped.push(agent.name); continue; }
+
+							let stat: fs.Stats;
+							try { stat = await fs.promises.stat(resolved); } catch { skipped.push(agent.name); continue; }
+							if (!stat.isFile()) { skipped.push(agent.name); continue; }
+
+							const parentDir = path.dirname(resolved);
+							const parentName = path.basename(parentDir);
+							const content = await fs.promises.readFile(resolved, 'utf-8');
+							const hasLegacyMarker = isLegacyAutoFormat(content);
+							const hasFm = hasFrontmatter(content);
+							const isFlat = parentName !== agent.name;
+
+							// 移行不要ならスキップ
+							if (!isFlat && !hasLegacyMarker && hasFm) {
+								skipped.push(agent.name);
+								continue;
+							}
+
+							// --- Phase A: YAML フロントマター変換 ---
+							let newContent = content;
+							if (hasLegacyMarker) {
+								// CSM:AUTO → YAML frontmatter
+								newContent = migrateAutoToYaml(content, agent);
+							} else if (!hasFm) {
+								// フロントマターなし → 新規生成して本文を保持
+								const description = buildDescription(agent);
+								const fm = generateFrontmatter(agent, description);
+								newContent = fm + '\n\n' + content;
+							}
+
+							// --- Phase B: フォルダ構造移行 ---
+							if (isFlat) {
+								// フラット → フォルダ構造
+								const ruleFolder = parentDir;
+								const agentFolder = path.join(ruleFolder, agent.name);
+								const newRuleFile = path.join(agentFolder, `${agent.name}.md`);
+
+								await fs.promises.mkdir(agentFolder, { recursive: true });
+
+								// HISTORY.md 分離: ルールファイル内の歴代セッション記録を抽出
+								const HISTORY_HEADER = '## 歴代セッションの記録';
+								const historyIdx = newContent.indexOf(HISTORY_HEADER);
+								let ruleContent = newContent;
+								let historyContent = `# ${agent.name} — 歴代セッション記録\n\n`;
+								if (historyIdx >= 0) {
+									const afterHeader = newContent.substring(historyIdx);
+									const nextSectionMatch = afterHeader.match(/\n## [^#]/);
+									const sectionEnd = nextSectionMatch
+										? historyIdx + (nextSectionMatch.index ?? afterHeader.length)
+										: newContent.length;
+									const historySection = newContent.substring(historyIdx, sectionEnd).trim();
+									historyContent += historySection.substring(HISTORY_HEADER.length).trim() + '\n';
+									ruleContent = newContent.substring(0, historyIdx).trimEnd() + newContent.substring(sectionEnd);
+								}
+
+								await fs.promises.writeFile(newRuleFile, ruleContent, 'utf-8');
+								await fs.promises.writeFile(path.join(agentFolder, 'HISTORY.md'), historyContent, 'utf-8');
+								await ensureAgentFolderFiles(agentFolder, agent.name);
+
+								// 旧ファイルを .trash/ に移動
+								const trashDir = path.join(ruleFolder, '.trash');
+								await fs.promises.mkdir(trashDir, { recursive: true });
+								await fs.promises.rename(resolved, path.join(trashDir, `${agent.name}.md.${Date.now()}`));
+
+								// session-manager.json のパス更新
+								const updatedAgent: AgentConfig = { ...agent, ruleFile: newRuleFile };
+								await dataStore.addAgent(updatedAgent);
+							} else {
+								// 既にフォルダ構造 → 内容だけ上書き
+								await fs.promises.writeFile(resolved, newContent, 'utf-8');
+							}
+
+							migrated.push(agent.name);
+							ch.appendLine(`[${new Date().toISOString()}] 移行成功: ${agent.name}`);
+						} catch (err) {
+							const msg = err instanceof Error ? err.message : String(err);
+							ch.appendLine(`[${new Date().toISOString()}] 移行エラー (${agent.name}): ${msg}`);
+							errors.push(agent.name);
+						}
+					}
+				}
+			);
+
+			refreshAll();
+			const parts: string[] = [`移行完了: ${migrated.length}件成功`];
+			if (skipped.length > 0) { parts.push(`${skipped.length}件スキップ`); }
+			if (errors.length > 0) { parts.push(`${errors.length}件エラー（OutputChannel参照）`); }
+			vscode.window.showInformationMessage(parts.join('、'));
+			if (errors.length > 0) { ch.show(true); }
 		})
 	);
 
