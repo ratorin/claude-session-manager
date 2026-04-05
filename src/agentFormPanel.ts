@@ -396,6 +396,14 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	<div class="form-desc">Thinking使用時の最大トークン数</div>
 	<input type="number" id="maxThinkingTokens" min="1024" max="128000" value="${v.maxThinkingTokens || 31999}" ${v.thinkingEnabled === false || v.model === 'haiku' ? 'disabled' : ''}>
 	<div class="form-desc" style="margin-top: 4px; opacity: 0.7;">※ 環境変数 MAX_THINKING_TOKENS で反映（CLIフラグなし）</div>
+	<div class="form-desc" style="margin-top: 4px; opacity: 0.7;">
+		min: 1,024 / max: 128,000 / デフォルト: 31,999<br>
+		<strong>目安:</strong>
+		1,024〜4,096 軽い処理（簡単な質問・定型作業）｜
+		8,000〜16,000 通常の開発作業｜
+		31,999 デフォルト（ほとんどの場合これで十分）｜
+		64,000〜128,000 複雑な設計・大規模リファクタリング
+	</div>
 </div>
 
 <div class="form-group">
