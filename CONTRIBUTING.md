@@ -13,7 +13,7 @@ npx @vscode/vsce package
 生成された `.vsix` ファイルをVS Codeにインストール:
 
 ```bash
-code --install-extension claude-session-manager-0.3.0.vsix
+code --install-extension claude-session-manager-0.3.1.vsix
 ```
 
 または VS Code内で `Ctrl+Shift+P` → `Extensions: Install from VSIX...` から選択。
@@ -128,7 +128,8 @@ claude-session-manager/
 │   ├── subagentDetector.ts     # サブエージェント検出（JSONLテール解析）
 │   ├── taskTracker.ts          # タスク状態自動判定（running/stalled/completed/error）
 │   ├── cliBuilder.ts           # Claude CLIコマンド組み立て
-│   └── usageMonitor.ts         # Anthropic API利用制限モニター
+│   ├── usageMonitor.ts         # Anthropic API利用制限モニター
+│   └── frontmatterUtils.ts    # YAML Frontmatter パース・生成・移行ユーティリティ
 ├── package.json                # 拡張機能マニフェスト（46コマンド・15設定）
 ├── tsconfig.json
 ├── guide.html                  # 図解ガイド（ブラウザで開く）

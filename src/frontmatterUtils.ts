@@ -62,6 +62,10 @@ export function parseFrontmatter(content: string): ParsedFrontmatter | null {
 					if (blockLine.startsWith('  ')) {
 						blockLines.push(blockLine.substring(2));
 					} else if (blockLine.trim() === '') {
+						// 空行の次がインデントなしの key: パターンならブロック終了
+						if (i + 1 < lines.length && /^[a-zA-Z_]\w*:\s/.test(lines[i + 1])) {
+							break;
+						}
 						blockLines.push('');
 					} else {
 						break; // インデントが戻った → ブロック終了

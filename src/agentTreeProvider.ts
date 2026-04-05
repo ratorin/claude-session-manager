@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import * as path from 'path';
 import { AgentConfig, ParsedSession, TaskLog } from './types';
 import * as dataStore from './dataStore';
 import { getRuleFileInfo, resolveRuleFilePath } from './agentManager';
@@ -287,7 +288,7 @@ async function detectLegacyAgents(agents: AgentConfig[]): Promise<AgentConfig[]>
 			if (!resolved) { continue; }
 
 			// フラット構造チェック: 親ディレクトリ名がエージェント名と一致しない
-			const parentName = require('path').basename(require('path').dirname(resolved));
+			const parentName = path.basename(path.dirname(resolved));
 			const isFlat = parentName !== agent.name;
 
 			// ファイル内容チェック

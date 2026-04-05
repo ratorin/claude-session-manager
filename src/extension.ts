@@ -468,8 +468,9 @@ export function activate(context: vscode.ExtensionContext) {
 				// 既存の歴代セクションを解析
 				const sectionStart = historyIdx;
 				const afterHeader = content.substring(sectionStart + HISTORY_HEADER.length);
-				// 「## 」で始まる次のセクション（同レベル以上のヘッダ）を探す
-				const nextSectionMatch = afterHeader.match(/\n## [^#]/);
+				// 「## 」で始まる次のセクション（空行の後に来る同レベル以上のヘッダ）を探す
+				// 歴代記録内の ## ヘッダを誤検出しないよう、空行を前提とする
+				const nextSectionMatch = afterHeader.match(/\n\n## [^#]/);
 				const sectionEnd = nextSectionMatch
 					? sectionStart + HISTORY_HEADER.length + (nextSectionMatch.index ?? afterHeader.length)
 					: content.length;
@@ -1220,7 +1221,7 @@ export function activate(context: vscode.ExtensionContext) {
 					let historyContent = `# ${agent.name} — 歴代セッション記録\n\n`;
 					if (historyIdx >= 0) {
 						const afterHeader = content.substring(historyIdx);
-						const nextSectionMatch = afterHeader.match(/\n## [^#]/);
+						const nextSectionMatch = afterHeader.match(/\n\n## [^#]/);
 						const sectionEnd = nextSectionMatch
 							? historyIdx + (nextSectionMatch.index ?? afterHeader.length)
 							: content.length;
@@ -1333,7 +1334,7 @@ export function activate(context: vscode.ExtensionContext) {
 								let historyContent = `# ${agent.name} — 歴代セッション記録\n\n`;
 								if (historyIdx >= 0) {
 									const afterHeader = newContent.substring(historyIdx);
-									const nextSectionMatch = afterHeader.match(/\n## [^#]/);
+									const nextSectionMatch = afterHeader.match(/\n\n## [^#]/);
 									const sectionEnd = nextSectionMatch
 										? historyIdx + (nextSectionMatch.index ?? afterHeader.length)
 										: newContent.length;
@@ -1706,7 +1707,7 @@ export function activate(context: vscode.ExtensionContext) {
 			};
 
 			const hasStart = hasSignalHook('SubagentStart', 'start');
-			const hasStop = hasSignalHook('Stop', 'stop');
+			const hasStop = hasSignalHook('SubagentStop', 'stop');
 
 			let changed = false;
 
@@ -1727,10 +1728,10 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 
 			if (!hasStop) {
-				if (!Array.isArray(hooksObj['Stop'])) {
-					hooksObj['Stop'] = [];
+				if (!Array.isArray(hooksObj['SubagentStop'])) {
+					hooksObj['SubagentStop'] = [];
 				}
-				(hooksObj['Stop'] as Array<Record<string, unknown>>).push({
+				(hooksObj['SubagentStop'] as Array<Record<string, unknown>>).push({
 					matcher: '*',
 					hooks: [{
 						type: 'command',
