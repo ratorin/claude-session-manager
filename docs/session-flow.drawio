@@ -1,0 +1,468 @@
+<mxfile host="app.diagrams.net" modified="2026-04-05T09:00:00.000Z" agent="Claude Session Manager" version="24.0.0" type="device">
+  <diagram id="flow1" name="1. セッション引継ぎフロー">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- タイトル -->
+        <mxCell id="t1" value="セッション引継ぎフロー（renewAgentSession）" style="text;html=1;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;fillColor=none;strokeColor=none;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="400" y="20" width="500" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- 凡例 -->
+        <mxCell id="leg1" value="CSM処理" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1200" y="20" width="80" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="leg2" value="Claude Code" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1290" y="20" width="80" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="leg3" value="ファイル" style="shape=document;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1380" y="14" width="70" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="leg4" value="ユーザー操作" style="shape=parallelogram;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1460" y="18" width="90" height="26" as="geometry" />
+        </mxCell>
+
+        <!-- ステップ1: コマンド発火 -->
+        <mxCell id="s1" value="「セッションを新しくする」&#xa;コマンド実行" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="540" y="80" width="220" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- ステップ2: モード選択 -->
+        <mxCell id="s2" value="モード選択&#xa;QuickPick" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="560" y="160" width="180" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s1" target="s2" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- 分岐: 簡易 / 詳細 -->
+        <mxCell id="d1" value="モード？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="590" y="230" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s2" target="d1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- 簡易モード -->
+        <mxCell id="s3a" value="簡易モード&#xa;JSONL末尾128KB読取&#xa;→ 直近2往復を抽出" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="340" y="320" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="e3a" value="簡易" style="edgeStyle=orthogonalEdgeStyle;fontSize=10;" edge="1" source="d1" target="s3a" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- 詳細モード -->
+        <mxCell id="s3b_model" value="モデル選択&#xa;（デフォルト: opus）" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="780" y="310" width="170" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="e3b_m" value="詳細" style="edgeStyle=orthogonalEdgeStyle;fontSize=10;" edge="1" source="d1" target="s3b_model" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s3b" value="詳細モード&#xa;Claude CLI で末尾256KB要約&#xa;（失敗時→簡易にフォールバック）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="760" y="360" width="210" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="e3b_c" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s3b_model" target="s3b" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- 合流: 遺言テキスト -->
+        <mxCell id="s4" value="遺言テキスト&#xa;（最大300文字）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="540" y="440" width="180" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="e4a" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s3a" target="s4" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4b" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s3b" target="s4" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ステップ4: ユーザー編集 -->
+        <mxCell id="s5" value="InputBox で編集" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="555" y="510" width="150" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s4" target="s5" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ステップ5: 旧セッションマーク -->
+        <mxCell id="s6" value="旧セッション JSONL 末尾に&#xa;[セッション終了] 追記" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="525" y="580" width="210" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s5" target="s6" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ファイル: 旧JSONL -->
+        <mxCell id="f1" value="旧セッション.jsonl" style="shape=document;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="790" y="578" width="130" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ef1" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#999999;" edge="1" source="s6" target="f1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ステップ6: ルール書き込み（並列） -->
+        <mxCell id="s7" value="ルールファイルに遺言追記&#xa;appendSessionHistoryToRuleFile()&#xa;CSM:AUTO:END 直後に配置&#xa;（直近3世代保持）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="280" y="660" width="240" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- ステップ7: Agent設定更新 -->
+        <mxCell id="s8" value="AgentConfig 更新&#xa;・sessionId = &quot;&quot;（紐づけ解除）&#xa;・previousSessionIds に旧ID追加&#xa;　（直近5件保持）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="560" y="660" width="240" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- ステップ: HISTORY.md -->
+        <mxCell id="s8h" value="HISTORY.md に転記&#xa;（session-leader連携）&#xa;日付・セッション名・作業内容" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="840" y="660" width="210" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s6" target="s7" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="630" y="645" />
+              <mxPoint x="400" y="645" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s6" target="s8" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="630" y="645" />
+              <mxPoint x="680" y="645" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e8h" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s6" target="s8h" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="630" y="645" />
+              <mxPoint x="945" y="645" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ファイル群 -->
+        <mxCell id="f2" value="ルールファイル.md&#xa;（歴代セッション記録）" style="shape=document;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="260" y="760" width="150" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="ef2" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#999999;" edge="1" source="s7" target="f2" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="f3" value="session-manager.json&#xa;（AgentConfig配列）" style="shape=document;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="580" y="760" width="150" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="ef3" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#999999;" edge="1" source="s8" target="f3" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="f3h" value="HISTORY.md&#xa;（時系列記録）" style="shape=document;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="875" y="760" width="130" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="ef3h" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#999999;" edge="1" source="s8h" target="f3h" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ステップ8: 新セッション起動 -->
+        <mxCell id="s9" value="新セッション起動&#xa;claude --append-system-prompt-file {ruleFile}&#xa;→ ルールファイル経由で遺言+歴代記録を自動読込" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="430" y="840" width="380" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="e9a" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="f2" target="s9" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9b" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="f3" target="s9" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- 最終: 新セッション紐づけ -->
+        <mxCell id="s10" value="新セッションを&#xa;エージェントに紐づけ" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="530" y="920" width="200" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="s9" target="s10" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="flow2" name="2. 組織図とAgentWatcher">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- タイトル -->
+        <mxCell id="t2" value="組織図とAgentWatcherイベントフロー" style="text;html=1;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;fillColor=none;strokeColor=none;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="400" y="20" width="500" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- === 左半分: 組織構造 === -->
+        <mxCell id="org_title" value="エージェント組織構造" style="text;html=1;fontSize=14;fontStyle=5;align=center;fillColor=none;strokeColor=none;fontColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="100" y="70" width="200" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- 取締役 -->
+        <mxCell id="dir" value="取締役&#xa;Opus・固定" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="130" y="110" width="140" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- 部署群 -->
+        <mxCell id="dev" value="CSM開発部&#xa;Sonnet" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="30" y="200" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="qa" value="品質管理部&#xa;Sonnet" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="150" y="200" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="doc" value="資料作成部&#xa;Sonnet" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="270" y="200" width="100" height="36" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edir" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="dir" target="dev" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="eqa" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="dir" target="qa" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="edoc" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="dir" target="doc" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- 各部署のルールファイル -->
+        <mxCell id="rf1" value=".md" style="shape=document;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="55" y="255" width="50" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="rf2" value=".md" style="shape=document;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="175" y="255" width="50" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="rf3" value=".md" style="shape=document;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="295" y="255" width="50" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="erf1" style="dashed=1;strokeColor=#999999;" edge="1" source="dev" target="rf1" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="erf2" style="dashed=1;strokeColor=#999999;" edge="1" source="qa" target="rf2" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="erf3" style="dashed=1;strokeColor=#999999;" edge="1" source="doc" target="rf3" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="note_org" value="parentAgent で親子関係定義&#xa;→ 組織図Webviewで階層表示" style="shape=note;whiteSpace=wrap;html=1;size=14;fillColor=#ffffc0;strokeColor=#c0c040;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="310" width="200" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- === 右半分: AgentWatcher フロー === -->
+        <mxCell id="aw_title" value="AgentWatcher イベントフロー" style="text;html=1;fontSize=14;fontStyle=5;align=center;fillColor=none;strokeColor=none;fontColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="550" y="70" width="260" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- 監視対象 -->
+        <mxCell id="fsw" value="fs.watch&#xa;~/.claude/sessions/" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="590" y="110" width="180" height="45" as="geometry" />
+        </mxCell>
+
+        <mxCell id="deb" value="デバウンス&#xa;300ms" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="630" y="180" width="100" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="efsw" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="fsw" target="deb" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="upd" value="update()&#xa;① sessions/*.json PID生存チェック&#xa;② liveSessionIds 更新&#xa;③ detectSubagents() JSONL解析&#xa;④ 状態変更 → onDidChange.fire()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="560" y="240" width="250" height="85" as="geometry" />
+        </mxCell>
+        <mxCell id="edeb" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="deb" target="upd" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- EventEmitter -->
+        <mxCell id="evt" value="onDidChange&#xa;EventEmitter" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="610" y="355" width="150" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="eupd" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="upd" target="evt" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- リスナー3つ -->
+        <mxCell id="l1" value="agentTreeProvider&#xa;.refreshAll()&#xa;ツリーUI更新" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="470" y="430" width="130" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="l2" value="taskTracker&#xa;.evaluate()&#xa;タスク状態判定" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="620" y="430" width="130" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="l3" value="updateStatusBar()&#xa;🟢 N 👥 M&#xa;ステータスバー更新" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="770" y="430" width="140" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="el1" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="evt" target="l1" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="el2" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="evt" target="l2" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="el3" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="evt" target="l3" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- TaskTracker 詳細 -->
+        <mxCell id="tt_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#d6b656;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="540" y="510" width="290" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tt_title" value="TaskTracker 状態判定" style="text;html=1;fontSize=11;fontStyle=5;fillColor=none;strokeColor=none;fontColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="600" y="515" width="160" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tt1" value="🔄 Running&#xa;PID生存 &amp; mtime 60秒以内" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="555" y="540" width="130" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="tt2" value="⚠️ Stalled&#xa;PID生存 &amp; mtime 60秒超" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="695" y="540" width="125" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="tt3" value="✅ Completed&#xa;PID消失 &amp; 前回Running" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="555" y="585" width="130" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="tt4" value="❌ Error&#xa;PID消失 &amp; 異常終了" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="695" y="585" width="125" height="35" as="geometry" />
+        </mxCell>
+
+        <mxCell id="notify" value="VS Code 通知&#xa;（60秒間隔制限）" style="shape=callout;whiteSpace=wrap;html=1;perimeter=calloutPerimeter;size=10;position=0.5;base=15;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="610" y="635" width="150" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="el2tt" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="l2" target="tt_box" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- SubagentStopフック（将来構想） -->
+        <mxCell id="hook_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#9673a6;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="900" y="110" width="280" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="hook_title" value="SubagentStop フック（将来構想）" style="text;html=1;fontSize=11;fontStyle=5;fillColor=none;strokeColor=none;fontColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="930" y="115" width="220" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="h1" value="Claude Code&#xa;Hooks: SubagentStop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="930" y="145" width="150" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="h2" value=".csm-signals/&#xa;シグナルファイル作成" style="shape=document;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="930" y="200" width="150" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="h3" value="CSM検知&#xa;→ タスク状態更新&#xa;→ 通知" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="930" y="260" width="150" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="eh1" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="h1" target="h2" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="eh2" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="h2" target="h3" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="flow3" name="3. データフロー全体像">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- タイトル -->
+        <mxCell id="t3" value="CSM データフロー全体像" style="text;html=1;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;fillColor=none;strokeColor=none;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="500" y="20" width="400" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- === CSMコア（中央） === -->
+        <mxCell id="csm_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=3;opacity=20;" vertex="1" parent="1">
+          <mxGeometry x="440" y="80" width="520" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="csm_label" value="CSM（VS Code拡張機能）" style="text;html=1;fontSize=16;fontStyle=5;align=center;fillColor=none;strokeColor=none;fontColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="570" y="85" width="260" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- CSM内部モジュール -->
+        <mxCell id="ext" value="extension.ts&#xa;コマンドハンドラ" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="610" y="120" width="140" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ds" value="dataStore.ts&#xa;TTLキャッシュ&#xa;async I/O" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="475" y="190" width="120" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="aw" value="agentWatcher.ts&#xa;fs.watch + デバウンス&#xa;EventEmitter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="620" y="190" width="140" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="sd" value="subagentDetector.ts&#xa;JSONL末尾解析" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="785" y="190" width="140" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="tt" value="taskTracker.ts&#xa;状態自動評価" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="475" y="270" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="cli" value="cliBuilder.ts&#xa;CLI自動構築" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="620" y="270" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="um" value="usageMonitor.ts&#xa;API利用率取得" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="770" y="270" width="130" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- CSM内UI -->
+        <mxCell id="tree" value="TreeView&#xa;（セッション/エージェント/メモリ）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="475" y="340" width="180" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="wv" value="Webview&#xa;（組織図/フォーム/プレビュー）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="680" y="340" width="180" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="sb" value="ステータスバー&#xa;🟢 N 👥 M" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="570" y="400" width="130" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="notif" value="VS Code&#xa;通知" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="730" y="400" width="80" height="36" as="geometry" />
+        </mxCell>
+
+        <!-- 内部接続 -->
+        <mxCell id="ic1" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#6c8ebf;" edge="1" source="ext" target="ds" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ic2" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#6c8ebf;" edge="1" source="ext" target="aw" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ic3" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#6c8ebf;" edge="1" source="aw" target="sd" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ic4" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#6c8ebf;" edge="1" source="aw" target="tt" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ic5" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#6c8ebf;" edge="1" source="ext" target="cli" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- === 左側: ファイル群 === -->
+        <mxCell id="files_label" value="永続化ファイル" style="text;html=1;fontSize=14;fontStyle=5;align=center;fillColor=none;strokeColor=none;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="100" y="85" width="140" height="25" as="geometry" />
+        </mxCell>
+
+        <mxCell id="f_smj" value="session-manager.json&#xa;エージェント設定&#xa;（AgentConfig配列）" style="shape=document;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="120" width="170" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="f_sml" value="session-manager.local.json&#xa;プロジェクト固有エージェント" style="shape=document;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="80" y="195" width="185" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="f_rule" value="ルールファイル（*.md）&#xa;行動規範 + 歴代セッション記録&#xa;CSM:AUTO マーカー保護" style="shape=document;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="260" width="200" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="f_mem" value="MEMORY.md&#xa;メモリファイルポインタ" style="shape=document;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="80" y="335" width="160" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="f_hist" value="HISTORY.md&#xa;時系列セッション記録&#xa;（session-leader連携）" style="shape=document;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="395" width="175" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- ファイル→CSM接続 -->
+        <mxCell id="ef_smj" value="R/W" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#666666;fontSize=9;" edge="1" source="f_smj" target="ds" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ef_sml" value="R/W" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#666666;fontSize=9;" edge="1" source="f_sml" target="ds" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ef_rule" value="R/W" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#666666;fontSize=9;" edge="1" source="f_rule" target="ext" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- === 右側: 外部システム === -->
+        <mxCell id="ext_label" value="外部システム" style="text;html=1;fontSize=14;fontStyle=5;align=center;fillColor=none;strokeColor=none;fontColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="85" width="140" height="25" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cc" value="Claude Code&#xa;（別プロセス）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="130" width="150" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="sess" value="~/.claude/sessions/&#xa;*.json（PID情報）&#xa;*.jsonl（会話ログ）" style="shape=document;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="210" width="160" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="api" value="Anthropic API&#xa;利用制限情報" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=8;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="300" width="110" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="sl" value="session-leader&#xa;スキル" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="390" width="120" height="36" as="geometry" />
+        </mxCell>
+
+        <!-- 外部→CSM接続 -->
+        <mxCell id="ecc1" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#82b366;" edge="1" source="cc" target="sess" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ecc2" value="fs.watch" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#82b366;fontSize=9;" edge="1" source="sess" target="aw" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ecc3" value="JSONL解析" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#82b366;fontSize=9;" edge="1" source="sess" target="sd" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="eapi" value="HTTP" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#82b366;fontSize=9;" edge="1" source="api" target="um" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="esl" value="R/W" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#9673a6;fontSize=9;" edge="1" source="sl" target="f_hist" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- CLI → Claude Code -->
+        <mxCell id="ecli" value="claude --append-system-prompt-file" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#82b366;fontSize=9;fontStyle=2;" edge="1" source="cli" target="cc" parent="1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- === 下部: データ一覧テーブル === -->
+        <mxCell id="tbl" value="データストア一覧" style="text;html=1;fontSize=12;fontStyle=5;align=left;fillColor=none;strokeColor=none;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="80" y="520" width="200" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tbl_hdr" value="&lt;table style='font-size:11px;border-collapse:collapse;'&gt;&lt;tr style='background:#dae8fc'&gt;&lt;th style='padding:4px 12px;border:1px solid #6c8ebf'&gt;ファイル&lt;/th&gt;&lt;th style='padding:4px 12px;border:1px solid #6c8ebf'&gt;内容&lt;/th&gt;&lt;th style='padding:4px 12px;border:1px solid #6c8ebf'&gt;保持ルール&lt;/th&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;session-manager.json&lt;/td&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;エージェント設定（名前・モデル・セッションID・スコープ）&lt;/td&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;全件保持&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;ルールファイル.md&lt;/td&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;行動規範 + 歴代セッション記録（遺言）&lt;/td&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;直近3世代&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;previousSessionIds&lt;/td&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;過去セッションIDの配列&lt;/td&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;直近5件&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;MEMORY.md&lt;/td&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;メモリファイルへのポインタ（インデックス）&lt;/td&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;最大200行&lt;/td&gt;&lt;/tr&gt;&lt;tr style='background:#f3e8f9'&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;HISTORY.md&lt;/td&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;時系列セッション記録（session-leader管理）&lt;/td&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;追記のみ&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;タスクログ&lt;/td&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;エージェントのタスク状態（running/stalled/completed/error）&lt;/td&gt;&lt;td style='padding:4px 12px;border:1px solid #ccc'&gt;completed 72h / running 168h&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;" style="text;html=1;align=left;verticalAlign=top;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="80" y="545" width="800" height="200" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

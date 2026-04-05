@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSM TODO.md自動管理 設計仕様書</title>
+<style>
+  :root {
+    --bg: #1e1e2e;
+    --surface: #24243a;
+    --surface2: #2a2a44;
+    --border: #3a3a5c;
+    --text: #cdd6f4;
+    --text-dim: #8888aa;
+    --accent: #89b4fa;
+    --accent2: #a6e3a1;
+    --warning: #f9e2af;
+    --error: #f38ba8;
+    --code-bg: #181825;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', 'Meiryo', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 2rem;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 1.8rem;
+    color: var(--accent);
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+  h2 {
+    font-size: 1.4rem;
+    color: var(--accent2);
+    margin: 2rem 0 0.8rem;
+    padding-left: 0.5rem;
+    border-left: 4px solid var(--accent2);
+  }
+  h3 {
+    font-size: 1.1rem;
+    color: var(--warning);
+    margin: 1.2rem 0 0.5rem;
+  }
+  h4 { font-size: 1rem; color: var(--text); margin: 0.8rem 0 0.3rem; }
+  p, li { margin-bottom: 0.4rem; }
+  ul, ol { padding-left: 1.5rem; }
+  code {
+    background: var(--code-bg);
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 0.9em;
+  }
+  pre {
+    background: var(--code-bg);
+    padding: 1rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 0.8rem 0;
+    border: 1px solid var(--border);
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.8rem 0;
+    font-size: 0.9rem;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 0.5rem 0.8rem;
+    text-align: left;
+  }
+  th { background: var(--surface2); color: var(--accent); }
+  tr:nth-child(even) { background: var(--surface); }
+  .badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: bold;
+  }
+  .high { background: #f38ba833; color: var(--error); border: 1px solid var(--error); }
+  .medium { background: #f9e2af33; color: var(--warning); border: 1px solid var(--warning); }
+  .low { background: #89b4fa33; color: var(--accent); border: 1px solid var(--accent); }
+  .new { background: #a6e3a133; color: var(--accent2); border: 1px solid var(--accent2); }
+  .fixed { background: #89b4fa22; color: #b4befe; border: 1px solid #b4befe; }
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.2rem;
+    margin: 1rem 0;
+  }
+  .diagram {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.2rem;
+    margin: 0.8rem 0;
+    font-family: 'Cascadia Code', monospace;
+    font-size: 0.85rem;
+    white-space: pre;
+    overflow-x: auto;
+    line-height: 1.4;
+  }
+  .callout {
+    background: var(--surface2);
+    border-left: 4px solid var(--warning);
+    padding: 0.8rem 1rem;
+    margin: 0.8rem 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .callout-info {
+    border-left-color: var(--accent);
+  }
+  .callout-fixed {
+    border-left-color: #b4befe;
+  }
+  .meta {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    margin-bottom: 2rem;
+  }
+  .phase-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .phase-num {
+    background: var(--accent);
+    color: var(--bg);
+    width: 2rem;
+    height: 2rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-weight: bold;
+    font-size: 0.9rem;
+  }
+  footer {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 0.85rem;
+  }
+</style>
+</head>
+<body>
+
+<h1>CSM エージェント別 TODO.md 自動管理 設計仕様書</h1>
+<div class="meta">
+  バージョン: Draft 1.1 | 作成日: 2026-04-05 | 品質管理部レビュー反映済 | 対象: CSM v0.4.0 | 作成: CSM開発部
+</div>
+
+<!-- ===== 1. 背景と目的 ===== -->
+<h2>1. 背景と目的</h2>
+<div class="section">
+  <h3>問題</h3>
+  <p><code>TodoWrite</code> ツールで管理するタスクはセッション終了時に消失する。次のセッションでは未完了タスクの存在すら知らない。</p>
+
+  <h3>3層ToDo管理パターン</h3>
+  <table>
+    <tr><th>層</th><th>手段</th><th>寿命</th><th>粒度</th><th>現状</th></tr>
+    <tr><td>長期</td><td>GitHub Issues / Asana</td><td>永続</td><td>エピック・ストーリー</td><td>外部管理</td></tr>
+    <tr><td><strong>中期</strong></td><td><strong>TODO.md（本設計）</strong></td><td>セッション横断</td><td>タスク・サブタスク</td><td><span class="badge high">欠落</span></td></tr>
+    <tr><td>短期</td><td>TodoWrite</td><td>セッション内</td><td>実装ステップ</td><td>既存</td></tr>
+  </table>
+
+  <h3>目的</h3>
+  <p>CSMにエージェント別TODO.md自動管理を組み込み、<strong>中期層</strong>を埋める。セッション終了時にTodoWriteの未完了タスクを永続化し、次のセッションで自動復元する。</p>
+</div>
+
+<!-- ===== 2. フォルダ構造 ===== -->
+<h2>2. フォルダ構造の変更</h2>
+
+<h3>2.1 現状（フラット構造）</h3>
+<pre><code>.agent-rules/
+├── 取締役.md
+├── CSM開発部.md
+├── テスト部.md
+├── 品質管理部.md
+├── 役割.md
+├── エージェント一覧.md
+├── temp/
+└── tmp/</code></pre>
+
+<h3>2.2 新構造（部署フォルダ構造）</h3>
+<pre><code>.agent-rules/
+├── 取締役/
+│   ├── 取締役.md          # ルールファイル（既存内容を移行）
+│   ├── TODO.md            # 未完了タスク（自動管理）
+│   └── HISTORY.md         # 歴代セッション記録（ルールファイルから分離）
+├── CSM開発部/
+│   ├── CSM開発部.md
+│   ├── TODO.md
+│   └── HISTORY.md
+├── テスト部/
+│   └── ...
+├── _shared/
+│   ├── 役割.md            # 共有ファイル（移行先）
+│   └── エージェント一覧.md
+├── temp/
+└── tmp/</code></pre>
+
+<div class="callout">
+  <strong>設計判断:</strong> HISTORY.md をルールファイルの <code>## 歴代セッションの記録</code> セクションから独立ファイルに分離する。
+  理由: (1) ルールファイルの肥大化防止 (2) session-leader スキルとの構造統一 (3) 将来的にHISTORY.mdの世代制限を緩和可能。
+  <br><br><strong>HISTORY.md 上限:</strong> 初期上限は <strong>20世代 または 50KB</strong> のいずれか早い方。超過分は古いエントリから削除。
+  <span class="badge fixed">MEDIUM-5 対応</span>
+</div>
+
+<h3>2.3 グローバル / プロジェクトの棲み分け</h3>
+<table>
+  <tr><th>スコープ</th><th>パス</th><th>用途</th></tr>
+  <tr>
+    <td>グローバル</td>
+    <td><code>~/.claude/agent-rules/&lt;部署名&gt;/</code></td>
+    <td>全プロジェクト共通のエージェント（取締役、総務部など）</td>
+  </tr>
+  <tr>
+    <td>プロジェクト</td>
+    <td><code>&lt;workspace&gt;/.agent-rules/&lt;部署名&gt;/</code></td>
+    <td>プロジェクト固有のエージェント（ALOrderForge開発部など）</td>
+  </tr>
+</table>
+<p>CSMの <code>AgentConfig.scope</code> フィールド（<code>'global' | 'project'</code>）でどちらに配置するか決定。</p>
+
+<!-- ===== 3. TODO.md フォーマット ===== -->
+<h2>3. TODO.md フォーマット</h2>
+
+<pre><code># CSM開発部 — TODO
+
+&gt; 最終更新: 2026-04-05T09:25:00Z (セッション: 55f63fbc)
+
+## 未完了
+
+- [ ] SubagentStopフックの実装 (優先度: HIGH) &lt;!-- id:abc --&gt;
+  - [ ] tool_result検出時のコールバック設計 &lt;!-- id:abc-1 --&gt;
+  - [ ] TODO.md更新トリガーの接続 &lt;!-- id:abc-2 --&gt;
+- [ ] テストカバレッジ80%達成 (優先度: MEDIUM) &lt;!-- id:def --&gt;
+- [ ] HISTORY.md分離のマイグレーション (優先度: LOW)
+
+## 完了（直近10件）
+
+- [x] 遺言上限を300文字に変更 (2026-04-05) &lt;!-- id:ghi --&gt;
+- [x] JSONL末尾読み取り最適化 (2026-04-05)
+- [x] OutputChannelログ追加 (2026-04-05)
+
+## 保留
+
+- [-] Marketplace公開の自動化 — ブロッカー: PAT有効期限問題
+</code></pre>
+
+<h3>3.1 フォーマットルール</h3>
+<table>
+  <tr><th>項目</th><th>ルール</th></tr>
+  <tr><td>セクション</td><td><code>## 未完了</code> / <code>## 完了（直近10件）</code> / <code>## 保留</code> の3セクション固定</td></tr>
+  <tr><td>タスク記法</td><td>GitHub Flavored Markdown チェックボックス <code>- [ ]</code> / <code>- [x]</code> / <code>- [-]</code></td></tr>
+  <tr><td>タスクID</td><td>TodoWrite由来のタスクは行末にHTMLコメント <code>&lt;!-- id:xxx --&gt;</code> で保持。手動追記タスクはID不要</td></tr>
+  <tr><td>優先度</td><td><code>(優先度: HIGH|MEDIUM|LOW)</code> をタスク末尾に付与（任意）</td></tr>
+  <tr><td>サブタスク</td><td>インデント2スペースで子タスク表現（Markdownサブリスト標準。プロジェクトのタブインデントとは別）</td></tr>
+  <tr><td>完了セクション</td><td>完了日時降順の上位10件のみ保持（親タスク単位でカウント、子タスクは親に含む）。超過分はHISTORY.mdに転記</td></tr>
+  <tr><td>ヘッダー</td><td>最終更新日時 + セッションIDを <code>&gt;</code> 引用で記載</td></tr>
+</table>
+
+<h3>3.2 ステータスマッピング <span class="badge fixed">LOW-1 対応</span></h3>
+<table>
+  <tr><th>TodoWrite status</th><th>AgentTodo status</th><th>TODO.md チェックボックス</th><th>配置セクション</th></tr>
+  <tr><td><code>pending</code></td><td><code>pending</code></td><td><code>- [ ]</code></td><td>## 未完了</td></tr>
+  <tr><td><code>in_progress</code></td><td><code>in_progress</code></td><td><code>- [ ]</code> (進行中タスクも未チェック)</td><td>## 未完了</td></tr>
+  <tr><td><code>completed</code></td><td><code>completed</code></td><td><code>- [x]</code></td><td>## 完了</td></tr>
+  <tr><td>（手動）</td><td><code>blocked</code></td><td><code>- [-]</code></td><td>## 保留</td></tr>
+</table>
+
+<!-- ===== 4. ライフサイクル ===== -->
+<h2>4. TODO.md ライフサイクル</h2>
+
+<div class="diagram">セッション開始                    セッション中                        セッション終了
+    │                              │                                  │
+    ▼                              ▼                                  ▼
+┌──────────────┐          ┌──────────────────┐            ┌───────────────────┐
+│ TODO.md 読込  │          │  TodoWrite 操作   │            │  Stop フック発火    │
+│ → system     │          │  (短期タスク管理)  │            │                   │
+│   prompt に  │          │                  │            │  TodoWrite 未完了  │
+│   注入       │          │  ユーザー手動追加  │            │  → TODO.md 書出   │
+└──────────────┘          │  → TODO.md 直接  │            │                   │
+                          │    編集も可能     │            │  完了タスク        │
+                          └──────────────────┘            │  → TODO.md 更新   │
+                                                          │  → HISTORY.md 転記│
+                                                          └───────────────────┘</div>
+
+<!-- ===== 5. Stopフック設計 ===== -->
+<h2>5. Stopフックによる自動フラッシュ</h2>
+
+<h3>5.1 フック発火タイミング</h3>
+<div class="section">
+  <p>Claude Code の <code>Stop</code> フックはセッション応答完了時に発火する。
+  CSMはこのタイミングで以下の処理を実行する。</p>
+
+  <h4>処理フロー</h4>
+  <ol>
+    <li>Stop フックが発火</li>
+    <li>セッションID取得（優先順位）: <span class="badge fixed">HIGH-1 対応</span>
+      <ol>
+        <li><strong>主系:</strong> JSONL ファイル末尾から <code>sessionId</code> フィールドを抽出（最も確実）</li>
+        <li><strong>副系:</strong> 環境変数 <code>$SESSION_ID</code>（Claude Code が提供する場合）</li>
+        <li><strong>失敗時:</strong> TODO.md を更新せず、<code>stderr</code> にエラーログのみ出力して終了（exit 0）</li>
+      </ol>
+    </li>
+    <li><code>session-manager.json</code> を読み、該当セッションIDに紐づくエージェントを特定</li>
+    <li>セッションの JSONL ファイル末尾から <strong>TodoWrite の最終状態</strong> を抽出</li>
+    <li>該当エージェントの <code>TODO.md</code> を更新:
+      <ul>
+        <li>TodoWrite の未完了タスク → <code>## 未完了</code> セクションにマージ</li>
+        <li>TodoWrite の完了タスク → <code>## 完了</code> セクションに追記</li>
+        <li>重複検出（優先順位）: <span class="badge fixed">HIGH-2 対応</span>
+          <ol>
+            <li><strong>主キー:</strong> TodoWrite の <code>id</code> フィールドと TODO.md の <code>&lt;!-- id:xxx --&gt;</code> コメントで照合</li>
+            <li><strong>フォールバック:</strong> id が無い手動追記タスクのみ、タスク内容の先頭40文字でマッチング</li>
+          </ol>
+        </li>
+      </ul>
+    </li>
+  </ol>
+</div>
+
+<h3>5.2 TodoWrite 状態の抽出方法</h3>
+<pre><code>// JSONL末尾からTodoWriteの最終呼び出しを探す
+// tool_use (name === "TodoWrite") の最後の呼び出しの input パラメータ:
+{
+  "type": "tool_use",
+  "name": "TodoWrite",
+  "input": {
+    "todos": [
+      { "id": "abc", "content": "SubagentStopフック実装", "status": "in_progress" },
+      { "id": "def", "content": "テストカバレッジ80%", "status": "pending" },
+      { "id": "ghi", "content": "遺言上限300文字", "status": "completed" }
+    ]
+  }
+}</code></pre>
+
+<h3>5.3 パスサニタイズ（セキュリティ） <span class="badge fixed">CRITICAL-1 対応</span></h3>
+<div class="callout" style="border-left-color: var(--error);">
+  <strong>必須:</strong> <code>todo-flush.js</code> は VSCode 拡張の外側で動作するため、CSM 本体の <code>validateOutputFile()</code> や <code>sanitizeForAutoSection()</code> のガードが効かない。以下のサニタイズを必ず実装すること:
+  <ol>
+    <li><code>AgentConfig.name</code> から <code>..</code>、絶対パス成分（<code>/</code> 先頭、<code>C:\</code> 等）、制御文字を除去</li>
+    <li><code>path.resolve()</code> 後に、結果パスが許可ベースディレクトリ（<code>ruleFolder</code>）配下であることを検証</li>
+    <li>検証失敗時はエラーログを出力して当該エージェントをスキップ（他エージェントの処理は継続）</li>
+  </ol>
+<pre><code>// パスサニタイズ例
+function sanitizeAgentName(name: string): string {
+    return name.replace(/[\/\\\.]{2,}/g, '').replace(/^[\/\\]/, '');
+}
+function validatePath(resolved: string, baseDir: string): boolean {
+    const normalBase = path.resolve(baseDir);
+    const normalTarget = path.resolve(resolved);
+    return normalTarget.startsWith(normalBase + path.sep);
+}</code></pre>
+</div>
+
+<h3>5.4 実装方式</h3>
+<div class="callout callout-info">
+  <strong>推奨: A + B のハイブリッド</strong><br>
+  <strong>A) 外部スクリプト方式</strong> — Stop フックから Node.js スクリプトを実行。CSM非依存で単体テスト容易。<br>
+  <strong>B) CSM拡張内方式</strong> — FileSystemWatcher で TODO.md 変更を検知し UI 更新。<br>
+  外部スクリプトで TODO.md 書き出し、CSM拡張で FileSystemWatcher による UI 更新。
+</div>
+
+<h3>5.5 フックスクリプト設計</h3>
+<pre><code># ~/.claude/settings.json の hooks セクションに追加
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/todo-flush.js"
+          }
+        ]
+      }
+    ]
+  }
+}</code></pre>
+
+<h3>5.6 todo-flush.js の責務</h3>
+<table>
+  <tr><th>ステップ</th><th>処理</th><th>入力</th><th>出力</th></tr>
+  <tr><td>0</td><td><strong>パスサニタイズ</strong></td><td>AgentConfig.name</td><td>安全なフォルダパス（CRITICAL-1）</td></tr>
+  <tr><td>1</td><td>セッションID取得</td><td>JSONL末尾（主系）/ 環境変数（副系）</td><td>sessionId or エラー終了</td></tr>
+  <tr><td>2</td><td>エージェント特定</td><td><code>session-manager.json</code></td><td>AgentConfig</td></tr>
+  <tr><td>3</td><td>TodoWrite抽出</td><td>JSONL末尾 64KB</td><td>todos[]</td></tr>
+  <tr><td>4</td><td>TODO.md マージ</td><td>既存 TODO.md + todos[]</td><td>更新された TODO.md</td></tr>
+  <tr><td>5</td><td>完了タスク転記</td><td>完了タスク（10件超過分）</td><td>HISTORY.md 追記</td></tr>
+</table>
+
+<h3>5.7 ロックファイル設計 <span class="badge fixed">MEDIUM-1 対応</span></h3>
+<div class="section">
+  <p>同時書き込み防止のため <code>.TODO.md.lock</code> を使用する。スタレロック対策を含む:</p>
+  <pre><code>// ロックファイル内容: { "pid": 12345, "createdAt": "2026-04-05T09:25:00Z" }
+// 取得手順:
+// 1. .TODO.md.lock の存在チェック
+// 2. 存在する場合:
+//    a. ロックファイル内の pid が生存しているか確認（process.kill(pid, 0)）
+//    b. pid が死んでいる → スタレロック。強制解除して再取得
+//    c. pid が生存 + 作成から5秒以内 → 待機（100msポーリング、最大5秒）
+//    d. pid が生存 + 作成から5秒超過 → スタレロック。強制解除
+// 3. ロック取得: 自身の pid + 現在時刻を書き込み
+// 4. 処理完了後: ロックファイルを削除（finally ブロック）</code></pre>
+</div>
+
+<!-- ===== 6. セッション開始時の読み込み ===== -->
+<h2>6. セッション開始時の自動読み込み</h2>
+
+<h3>6.1 方式: A + B 併用 <span class="badge fixed">MEDIUM-3 対応</span></h3>
+<table>
+  <tr><th>方式</th><th>役割</th><th>確実性</th></tr>
+  <tr>
+    <td><strong>A) <code>--append-system-prompt-file</code></strong></td>
+    <td>TODO.md の内容をシステムプロンプトに確実に注入（主系）</td>
+    <td><span class="badge new">高</span></td>
+  </tr>
+  <tr>
+    <td><strong>B) ルールファイル内ポインタ</strong></td>
+    <td>バックアップ。TODO.md の存在を明示し、エージェントが自発的に読む</td>
+    <td><span class="badge medium">中</span></td>
+  </tr>
+</table>
+
+<div class="callout callout-info">
+  <strong>方式A の実装:</strong> CSMはルールファイルをclaude CLI に <code>--append-system-prompt-file</code> で渡す機能を持つ。
+  TODO.md も同じ引数で追加渡しする。これにより確実にシステムプロンプトに含まれる。<br>
+  <strong>方式B（バックアップ）:</strong> ルールファイルの CSM:AUTO セクションにも「TODO.mdを確認」と記載し、
+  方式Aが使えない場合（手動でclaude CLI起動時など）にもエージェントが自発的に読むようにする。
+</div>
+
+<h3>6.2 ルールファイル テンプレート追記</h3>
+<pre><code>&lt;!-- CSM:AUTO:START --&gt;
+あなたはCSM開発部所属のエンジニアです。
+- 回答の冒頭に「【CSM開発部】」と付ける
+...
+
+## セッション引き継ぎ
+- **未完了タスクは `TODO.md`（同フォルダ内）を確認すること**
+- 歴代セッション記録は `HISTORY.md`（同フォルダ内）を参照
+&lt;!-- CSM:AUTO:END --&gt;</code></pre>
+
+<!-- ===== 7. CSM UI 統合 ===== -->
+<h2>7. CSM UI 統合</h2>
+
+<h3>7.1 エージェントツリーのバッジ表示</h3>
+<div class="section">
+  <p><code>AgentTreeProvider</code> の <code>getTreeItem()</code> を拡張し、TODO.md の未完了タスク数をバッジ表示する。</p>
+
+  <pre><code>// agentTreeProvider.ts — getTreeItem 拡張案
+const todoCount = await getTodoCount(agent);
+if (todoCount > 0) {
+    item.description += ` (TODO: ${todoCount})`;
+}</code></pre>
+
+  <h4>表示例</h4>
+  <pre><code>エージェント管理
+├── Ｏ  取締役  📄52行 | 🟢稼働中 (TODO: 3)
+├── Ｓ  CSM開発部  📄24行 | セッション未紐づけ (TODO: 5)
+│   └── Ｈ  テスト部  📄12行
+├── Ｓ  品質管理部  📄18行 | ⚪停止中
+└── Ｈ  調査部  📄15行 (TODO: 1)</code></pre>
+</div>
+
+<h3>7.2 取締役の横断レビュー（新規コマンド）</h3>
+<table>
+  <tr><th>コマンド</th><th>説明</th></tr>
+  <tr>
+    <td><code>claudeManager.showAllTodos</code></td>
+    <td>全エージェントのTODO.mdを横断的に集約して Webview で表示</td>
+  </tr>
+  <tr>
+    <td><code>claudeManager.openAgentTodo</code></td>
+    <td>選択エージェントの TODO.md をエディタで開く</td>
+  </tr>
+</table>
+
+<h4>横断レビュー Webview の表示案</h4>
+<pre><code>┌─────────────────────────────────────────────────────┐
+│  全エージェント TODO 横断ビュー                         │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  CSM開発部 (5件)                           [開く]    │
+│  ├── ■ SubagentStopフック実装         HIGH          │
+│  ├── ■ テストカバレッジ80%           MEDIUM          │
+│  └── □ HISTORY.md分離マイグレーション  LOW           │
+│                                                     │
+│  品質管理部 (0件)                                    │
+│  └── (タスクなし)                                    │
+│                                                     │
+│  調査部 (1件)                              [開く]    │
+│  └── ■ Xserverデプロイ手順の更新      MEDIUM          │
+│                                                     │
+│  ─── 合計: 6件 (HIGH: 1, MEDIUM: 2, LOW: 1) ───     │
+└─────────────────────────────────────────────────────┘</code></pre>
+
+<h3>7.3 FileSystemWatcher による自動更新 <span class="badge fixed">MEDIUM-4 対応</span></h3>
+<pre><code>// extension.ts — TODO.md 変更監視（プロジェクト + グローバル両方）
+function watchTodoFiles(context: vscode.ExtensionContext, ruleFolder: string, globalRuleFolder: string) {
+    // プロジェクトスコープ
+    const projectWatcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(ruleFolder, '*/TODO.md')
+    );
+    // グローバルスコープ（取締役等）
+    const globalWatcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(globalRuleFolder, '*/TODO.md')
+    );
+    const refresh = () => agentProvider.refresh();
+    for (const w of [projectWatcher, globalWatcher]) {
+        w.onDidChange(refresh);
+        w.onDidCreate(refresh);
+        w.onDidDelete(refresh);
+        context.subscriptions.push(w);
+    }
+}</code></pre>
+
+<!-- ===== 8. SubagentStop 統合 ===== -->
+<h2>8. SubagentStop フック統合（Issue #1）</h2>
+
+<h3>8.1 現状の SubagentDetector</h3>
+<p><code>subagentDetector.ts</code> は JSONL の <code>tool_use</code>/<code>tool_result</code> ペアで子エージェントの稼働を追跡している。
+<code>tool_result</code> 到着 = 子エージェント完了。</p>
+
+<h3>8.2 統合設計</h3>
+<div class="diagram">親セッション (取締役)
+    │
+    ├── tool_use: Agent (CSM開発部)
+    │       ↓
+    │   子セッション開始
+    │       ↓
+    │   ... 作業中 ...
+    │       ↓
+    │   子セッション完了
+    │       ↓
+    ├── tool_result ← SubagentDetector が検知
+    │       ↓
+    │   ┌─────────────────────────┐
+    │   │ SubagentStop コールバック │
+    │   │ 1. 子の JSONL から        │
+    │   │    TodoWrite 最終状態抽出 │
+    │   │ 2. 子の TODO.md 更新      │
+    │   │ 3. 親に通知:              │
+    │   │    「CSM開発部完了。       │
+    │   │     TODO残件: 3件」       │
+    │   └─────────────────────────┘
+    │
+    ▼ 親セッション継続</div>
+
+<h3>8.3 AgentWatcher への追加 <span class="badge fixed">MEDIUM-6 対応</span></h3>
+<pre><code>// agentWatcher.ts — onSubagentComplete イベント追加
+
+// 新規イベント
+private readonly _onSubagentComplete = new vscode.EventEmitter&lt;SubagentCompleteEvent&gt;();
+readonly onSubagentComplete = this._onSubagentComplete.event;
+
+// hasChanged() 拡張: 前回の activeSubagentIds との差分で完了を検知
+private previousSubagentIds = new Set&lt;string&gt;();
+
+private detectCompletedSubagents(current: SubagentInfo[]): void {
+    const currentIds = new Set(current.map(s =&gt; s.toolUseId));
+    for (const prevId of this.previousSubagentIds) {
+        if (!currentIds.has(prevId)) {
+            // prevId が消えた = 完了
+            this._onSubagentComplete.fire({
+                parentSessionId: this.sessionId,
+                childSessionId: '', // tool_result から取得
+                childAgentName: this.previousSubagentMap.get(prevId)?.name ?? '',
+                todoRemaining: 0,   // TODO.md パース後に設定
+                completedTodos: [],
+                result: '',
+            });
+        }
+    }
+    this.previousSubagentIds = currentIds;
+}</code></pre>
+
+<!-- ===== 9. 移行計画 ===== -->
+<h2>9. 既存構造からの移行</h2>
+
+<h3>9.1 移行スクリプトの責務</h3>
+<table>
+  <tr><th>#</th><th>処理</th><th>詳細</th><th>冪等性</th></tr>
+  <tr><td>1</td><td>フォルダ作成</td><td><code>.agent-rules/&lt;部署名&gt;/</code> を各エージェントごとに作成</td><td>既存なら skip</td></tr>
+  <tr><td>2</td><td>ルールファイル移動</td><td><code>.agent-rules/CSM開発部.md</code> → <code>.agent-rules/CSM開発部/CSM開発部.md</code></td><td>移動先が既存なら skip</td></tr>
+  <tr><td>3</td><td>HISTORY.md 分離</td><td>ルールファイル内の <code>## 歴代セッションの記録</code> セクションを <code>HISTORY.md</code> に切り出し</td><td>HISTORY.md 既存なら skip</td></tr>
+  <tr><td>4</td><td>TODO.md 作成</td><td>空テンプレートの <code>TODO.md</code> を生成</td><td>既存なら skip</td></tr>
+  <tr><td>5</td><td>共有ファイル移動</td><td><code>役割.md</code>, <code>エージェント一覧.md</code> → <code>_shared/</code></td><td>移動先が既存なら skip</td></tr>
+  <tr><td>6</td><td>session-manager.json 更新</td><td>各エージェントの <code>ruleFile</code> パスを新パスに更新</td><td>既に新パスなら skip</td></tr>
+  <tr><td>7</td><td>旧ファイルを .trash/ に移動</td><td>元のフラットなファイルを <code>.trash/</code> に退避（復元可能）</td><td>ファイル不在なら skip</td></tr>
+</table>
+
+<h3>9.2 移行のアトミック性とロールバック <span class="badge fixed">HIGH-3 対応</span></h3>
+<div class="callout" style="border-left-color: var(--error);">
+  <strong>設計方針:</strong> 移行は完全にアトミックにはできないが、各ステップを冪等に設計する。
+  <ul>
+    <li>各ステップは「既に完了済みならスキップ」で実装。中断後に再実行すれば途中から継続</li>
+    <li>ステップ実行前に <code>.agent-rules/.migration-state.json</code> に進行状況を記録</li>
+    <li>ロールバックコマンド <code>claudeManager.rollbackMigration</code> を提供:
+      <ul>
+        <li><code>.trash/</code> からフラット構造の旧ファイルを復元</li>
+        <li><code>session-manager.json</code> の <code>ruleFile</code> パスを旧パスに復元</li>
+        <li>新規作成したフォルダ構造は <code>.trash/</code> に移動</li>
+      </ul>
+    </li>
+    <li>移行完了後、<code>.migration-state.json</code> に <code>"status": "completed"</code> を記録</li>
+  </ul>
+</div>
+
+<h3>9.3 CSM コード変更箇所 <span class="badge fixed">HIGH-4 対応</span></h3>
+<table>
+  <tr><th>ファイル</th><th>変更内容</th><th>影響度</th></tr>
+  <tr>
+    <td><code>extension.ts</code></td>
+    <td>ルールファイル生成ロジック: フォルダ作成 + TODO.md/HISTORY.md テンプレ生成</td>
+    <td><span class="badge high">HIGH</span></td>
+  </tr>
+  <tr>
+    <td><code>extension.ts</code></td>
+    <td><code>appendSessionHistoryToRuleFile</code> → HISTORY.md への書き込みに変更</td>
+    <td><span class="badge high">HIGH</span></td>
+  </tr>
+  <tr>
+    <td><code>agentTreeProvider.ts</code></td>
+    <td>getTreeItem の description に TODO バッジ追加</td>
+    <td><span class="badge medium">MEDIUM</span></td>
+  </tr>
+  <tr>
+    <td><code>agentManager.ts</code></td>
+    <td><code>resolveRuleFilePath()</code>（行30-39）をフォルダ構造対応に拡張。<code>fs.stat</code> でディレクトリ判定し <code>&lt;dir&gt;/&lt;dirname&gt;.md</code> に解決</td>
+    <td><span class="badge medium">MEDIUM</span></td>
+  </tr>
+  <tr>
+    <td><code>agentWatcher.ts</code></td>
+    <td><code>onSubagentComplete</code> イベント追加 + <code>detectCompletedSubagents()</code> 実装</td>
+    <td><span class="badge medium">MEDIUM</span></td>
+  </tr>
+  <tr>
+    <td><code>package.json</code></td>
+    <td>新コマンド <code>showAllTodos</code>, <code>openAgentTodo</code>, <code>migrateToFolderStructure</code>, <code>rollbackMigration</code> 追加</td>
+    <td><span class="badge low">LOW</span></td>
+  </tr>
+</table>
+
+<div class="callout callout-fixed">
+  <strong>HIGH-4 修正:</strong> パス解決ロジックは <code>dataStore.ts</code> ではなく <code>agentManager.ts</code> の <code>resolveRuleFilePath()</code>（行30-39）にある。
+  フォルダ構造判定: <code>fs.stat(ruleFile)</code> がディレクトリの場合は <code>path.join(ruleFile, path.basename(ruleFile) + '.md')</code> として解決。
+</div>
+
+<div class="callout callout-fixed">
+  <strong>MEDIUM-2 対応:</strong> <code>AgentConfig</code> に <code>todoFile</code> / <code>historyFile</code> フィールドは追加しない。
+  TODO.md / HISTORY.md のパスは <code>ruleFile</code> の親フォルダから自動解決する（<code>path.join(path.dirname(ruleFile), 'TODO.md')</code>）。
+  フォルダ構造以外の場所に配置するユースケースは現時点で不要。
+</div>
+
+<h3>9.4 後方互換性</h3>
+<div class="callout">
+  <strong>重要:</strong> 移行は段階的に行う。
+  <ul>
+    <li>CSMはフラット構造（<code>.agent-rules/X.md</code>）とフォルダ構造（<code>.agent-rules/X/X.md</code>）の<strong>両方</strong>を認識する</li>
+    <li><code>ruleFile</code> パスが直接ファイルを指していればそのまま使用（フラット構造）</li>
+    <li><code>ruleFile</code> パスがディレクトリを指していれば <code>&lt;dir&gt;/&lt;dirname&gt;.md</code> をルールファイルとして解決（<code>fs.stat</code> で判定）</li>
+    <li>移行コマンド <code>claudeManager.migrateToFolderStructure</code> を提供（手動実行）</li>
+  </ul>
+</div>
+
+<!-- ===== 10. session-leader 連携 ===== -->
+<h2>10. session-leader スキルとの連携</h2>
+
+<h3>10.1 構造の対応関係</h3>
+<table>
+  <tr><th>CSM TODO管理</th><th>session-leader</th><th>統一方針</th></tr>
+  <tr>
+    <td><code>.agent-rules/X/TODO.md</code></td>
+    <td><code>sessions/X/TODO.md</code></td>
+    <td>同一フォーマット（GFMチェックボックス + 3セクション）</td>
+  </tr>
+  <tr>
+    <td><code>.agent-rules/X/HISTORY.md</code></td>
+    <td><code>HISTORY.md</code>（共有）</td>
+    <td>CSMはエージェント単位、session-leaderはプロジェクト単位</td>
+  </tr>
+  <tr>
+    <td>セッション状態: AgentConfig.status</td>
+    <td>INDEX.md の状態カラム</td>
+    <td><code>active/completed/archived</code> を統一</td>
+  </tr>
+</table>
+
+<h3>10.2 CSM renewAgentSession 時の連携</h3>
+<ol>
+  <li>CSM が <code>renewAgentSession</code> を実行</li>
+  <li>遺言を <code>HISTORY.md</code> に追記（現在のルールファイル内蓄積から変更）</li>
+  <li>TODO.md の未完了タスクはそのまま引き継ぎ（新セッションで自動読み込み）</li>
+  <li>完了タスクは HISTORY.md のセッション終了エントリに含める</li>
+</ol>
+
+<!-- ===== 11. テスト戦略 ===== -->
+<h2>11. テスト戦略 <span class="badge fixed">HIGH-5 対応</span></h2>
+
+<div class="section">
+  <h3>11.1 単体テスト（scripts/todo-flush.test.js）</h3>
+  <p><code>todo-flush.js</code> は VSCode 拡張外の Node.js スクリプトのため、Mocha で独立テスト可能。</p>
+  <table>
+    <tr><th>テストケース</th><th>優先度</th></tr>
+    <tr><td>JSONL から TodoWrite 最終状態を正しく抽出する</td><td>HIGH</td></tr>
+    <tr><td>TODO.md マージ: id照合で既存タスクを更新（上書きではなく）</td><td>HIGH</td></tr>
+    <tr><td>TODO.md マージ: 新規タスクを追加</td><td>HIGH</td></tr>
+    <tr><td>TODO.md マージ: 完了タスクを「完了」セクションに移動</td><td>HIGH</td></tr>
+    <tr><td>重複検出: id一致 → 更新、id不一致+先頭40文字一致 → 更新</td><td>HIGH</td></tr>
+    <tr><td>パスサニタイズ: <code>../../</code> を含むエージェント名を拒否</td><td>CRITICAL</td></tr>
+    <tr><td>完了セクション: 10件超過時に古いタスクを削除</td><td>MEDIUM</td></tr>
+    <tr><td>TODO.md が存在しない場合 → テンプレートから新規作成</td><td>MEDIUM</td></tr>
+    <tr><td>TODO.md が空/破損 → エラーログ出力、テンプレートで再生成</td><td>MEDIUM</td></tr>
+    <tr><td>セッションID取得失敗 → エラーログ出力、exit 0</td><td>MEDIUM</td></tr>
+    <tr><td>ロックファイル: スタレロック検出と強制解除</td><td>MEDIUM</td></tr>
+  </table>
+
+  <h3>11.2 CSM拡張テスト（VS Code Extension Test）</h3>
+  <table>
+    <tr><th>テストケース</th><th>優先度</th></tr>
+    <tr><td><code>resolveRuleFilePath</code>: フラット構造とフォルダ構造の両方を正しく解決</td><td>HIGH</td></tr>
+    <tr><td><code>getTodoCount</code>: TODO.md から未完了タスク数を正しくカウント</td><td>MEDIUM</td></tr>
+    <tr><td>移行コマンド: フラット → フォルダ構造の変換が正しく動作</td><td>HIGH</td></tr>
+    <tr><td>移行ロールバック: フォルダ → フラット構造に復元</td><td>HIGH</td></tr>
+    <tr><td>FileSystemWatcher: TODO.md 変更時にツリーがリフレッシュされる</td><td>LOW</td></tr>
+  </table>
+
+  <h3>11.3 カバレッジ目標</h3>
+  <ul>
+    <li><code>todo-flush.js</code>: 90%以上（最もバグが入りやすいパーサー+マージロジック）</li>
+    <li>CSM拡張の新規コード: 80%以上（プロジェクト標準）</li>
+  </ul>
+</div>
+
+<!-- ===== 12. 実装フェーズ ===== -->
+<h2>12. 実装フェーズ</h2>
+
+<div class="section">
+  <div class="phase-header"><span class="phase-num">1</span><h3>フォルダ構造移行 + TODO.md テンプレート</h3></div>
+  <ul>
+    <li>移行コマンド実装（<code>claudeManager.migrateToFolderStructure</code> + <code>rollbackMigration</code>）</li>
+    <li><code>agentManager.ts</code> の <code>resolveRuleFilePath()</code> をフォルダ構造対応に変更</li>
+    <li>ルールファイル生成ロジックをフォルダ構造対応に変更</li>
+    <li>TODO.md / HISTORY.md テンプレート自動生成</li>
+    <li>後方互換: フラット構造も引き続きサポート</li>
+    <li>テスト: 移行+ロールバック+パス解決の単体テスト</li>
+  </ul>
+  <p><strong>対象ファイル:</strong> extension.ts, agentManager.ts, package.json</p>
+
+  <div class="phase-header"><span class="phase-num">2</span><h3>Stop フック + TodoWrite フラッシュ</h3></div>
+  <ul>
+    <li><code>todo-flush.js</code> スクリプト作成（CSM リポジトリの <code>scripts/</code> に配置）</li>
+    <li>パスサニタイズ実装（CRITICAL-1 対応）</li>
+    <li>JSONL 末尾から TodoWrite 最終状態を抽出するパーサー</li>
+    <li>TODO.md マージロジック（id主キー照合 + テキストフォールバック）</li>
+    <li>ロックファイル実装（スタレロック対策込み）</li>
+    <li><code>todo-flush.test.js</code> — 90%カバレッジ目標</li>
+    <li>settings.json への Stop フック登録ガイド</li>
+  </ul>
+  <p><strong>対象ファイル:</strong> scripts/todo-flush.js（新規）, scripts/todo-flush.test.js（新規）, SPEC.md, README.md</p>
+
+  <div class="phase-header"><span class="phase-num">3</span><h3>UI 統合（バッジ + 横断ビュー）</h3></div>
+  <ul>
+    <li>AgentTreeProvider に TODO バッジ表示追加</li>
+    <li>FileSystemWatcher で TODO.md 変更を監視（プロジェクト + グローバル両方）</li>
+    <li><code>showAllTodos</code> コマンド + Webview 実装</li>
+    <li><code>openAgentTodo</code> コマンド実装</li>
+  </ul>
+  <p><strong>対象ファイル:</strong> agentTreeProvider.ts, extension.ts, package.json, todoWebview.ts（新規）</p>
+
+  <div class="phase-header"><span class="phase-num">4</span><h3>SubagentStop 統合 + HISTORY.md 分離</h3></div>
+  <ul>
+    <li>AgentWatcher に <code>onSubagentComplete</code> イベント + <code>detectCompletedSubagents()</code> 追加</li>
+    <li>子エージェント完了時の TODO.md 自動更新</li>
+    <li>appendSessionHistoryToRuleFile → HISTORY.md 書き込みに変更</li>
+    <li>session-leader スキルとの形式統一</li>
+  </ul>
+  <p><strong>対象ファイル:</strong> agentWatcher.ts, subagentDetector.ts, extension.ts</p>
+</div>
+
+<!-- ===== 13. リスクと対策 ===== -->
+<h2>13. リスクと対策</h2>
+<table>
+  <tr><th>リスク</th><th>影響</th><th>対策</th></tr>
+  <tr>
+    <td>Stop フックが発火しない場合がある（強制終了等）</td>
+    <td>TodoWrite の内容がフラッシュされない</td>
+    <td>セッション開始時に前回の JSONL を遡って TodoWrite を復元する「リカバリモード」を用意</td>
+  </tr>
+  <tr>
+    <td>TODO.md の同時書き込み競合</td>
+    <td>ファイル破損</td>
+    <td>ロックファイル使用（PID + 作成時刻記録、スタレロック自動解除）</td>
+  </tr>
+  <tr>
+    <td>移行時に既存のルールファイルが壊れる</td>
+    <td>エージェントが起動不能</td>
+    <td>冪等な移行ステップ + <code>.migration-state.json</code> で進行管理 + ロールバックコマンド</td>
+  </tr>
+  <tr>
+    <td>TodoWrite のフォーマットが変わる可能性</td>
+    <td>パーサーが動作しない</td>
+    <td>パーサーを緩く設計（未知フィールドは無視）。バージョン検出を入れる</td>
+  </tr>
+  <tr>
+    <td>TODO.md の肥大化</td>
+    <td>ルール読み込みコスト増大</td>
+    <td>完了タスクは直近10件のみ保持。超過分は HISTORY.md に転記</td>
+  </tr>
+  <tr>
+    <td>パストラバーサル攻撃</td>
+    <td>任意ファイルの上書き</td>
+    <td>エージェント名サニタイズ + <code>path.resolve()</code> 後のベースディレクトリ検証（CRITICAL-1）</td>
+  </tr>
+  <tr>
+    <td>HISTORY.md の無限成長</td>
+    <td>ディスク圧迫・コンテキスト圧迫</td>
+    <td>20世代 or 50KB の上限。超過分は古いエントリから削除</td>
+  </tr>
+</table>
+
+<!-- ===== 14. 型定義変更案 ===== -->
+<h2>14. 型定義変更案</h2>
+<pre><code>// types.ts — 追加・変更案
+// ※ AgentConfig に todoFile/historyFile は追加しない（ruleFile から自動解決）
+
+// TODO.md のパース結果
+export interface AgentTodo {
+    id: string;              // タスクID（TodoWrite の id またはハッシュ）
+    content: string;         // タスク内容
+    status: 'pending' | 'in_progress' | 'completed' | 'blocked';
+    priority?: 'HIGH' | 'MEDIUM' | 'LOW';
+    children?: AgentTodo[];  // サブタスク
+    completedAt?: string;    // 完了日時
+    sourceSession?: string;  // 発生元セッションID
+}
+
+// SubagentComplete イベント
+export interface SubagentCompleteEvent {
+    parentSessionId: string;
+    childSessionId: string;
+    childAgentName: string;
+    todoRemaining: number;
+    completedTodos: string[];
+    result: string;
+}</code></pre>
+
+<!-- ===== 15. 品質管理部レビュー対応表 ===== -->
+<h2>15. 品質管理部レビュー対応表</h2>
+<table>
+  <tr><th>ID</th><th>重要度</th><th>指摘</th><th>対応</th><th>セクション</th></tr>
+  <tr><td>CRITICAL-1</td><td><span class="badge high">CRITICAL</span></td><td>パストラバーサルリスク</td><td>サニタイズ仕様追加 + ベースディレクトリ検証</td><td>5.3</td></tr>
+  <tr><td>HIGH-1</td><td><span class="badge high">HIGH</span></td><td>SESSION_ID 環境変数の信頼性</td><td>JSONL主系 / 環境変数副系 / 失敗時はスキップ</td><td>5.1</td></tr>
+  <tr><td>HIGH-2</td><td><span class="badge high">HIGH</span></td><td>重複検出の衝突リスク</td><td>id主キー照合 + テキストフォールバック</td><td>5.1</td></tr>
+  <tr><td>HIGH-3</td><td><span class="badge high">HIGH</span></td><td>移行ロールバック未定義</td><td>冪等ステップ + .migration-state.json + rollbackコマンド</td><td>9.2</td></tr>
+  <tr><td>HIGH-4</td><td><span class="badge high">HIGH</span></td><td>変更対象ファイル誤り</td><td>dataStore.ts → agentManager.ts に修正</td><td>9.3</td></tr>
+  <tr><td>HIGH-5</td><td><span class="badge high">HIGH</span></td><td>テスト戦略欠如</td><td>テスト戦略セクション追加（11章）</td><td>11</td></tr>
+  <tr><td>MEDIUM-1</td><td><span class="badge medium">MEDIUM</span></td><td>スタレロック問題</td><td>PID+作成時刻記録、死活確認付きロック</td><td>5.7</td></tr>
+  <tr><td>MEDIUM-2</td><td><span class="badge medium">MEDIUM</span></td><td>todoFile/historyFile 不要</td><td>フィールド追加を取り消し</td><td>9.3, 14</td></tr>
+  <tr><td>MEDIUM-3</td><td><span class="badge medium">MEDIUM</span></td><td>方式Bの信頼性リスク</td><td>A+B併用に変更</td><td>6.1</td></tr>
+  <tr><td>MEDIUM-4</td><td><span class="badge medium">MEDIUM</span></td><td>Watcherがグローバル未対応</td><td>プロジェクト+グローバル両方の Watcher 設置</td><td>7.3</td></tr>
+  <tr><td>MEDIUM-5</td><td><span class="badge medium">MEDIUM</span></td><td>HISTORY.md上限未定義</td><td>20世代 or 50KB の初期上限を明記</td><td>2.2</td></tr>
+  <tr><td>MEDIUM-6</td><td><span class="badge medium">MEDIUM</span></td><td>SubagentComplete未設計</td><td>detectCompletedSubagents() の具体的実装案追加</td><td>8.3</td></tr>
+  <tr><td>LOW-1</td><td><span class="badge low">LOW</span></td><td>ステータスマッピング不整合</td><td>マッピング表追加</td><td>3.2</td></tr>
+  <tr><td>LOW-2</td><td><span class="badge low">LOW</span></td><td>_shared/ 参照方法未定義</td><td>実装フェーズ1で具体化（現時点はスコープ外）</td><td>—</td></tr>
+  <tr><td>LOW-3</td><td><span class="badge low">LOW</span></td><td>「直近10件」の定義曖昧</td><td>完了日時降順+親タスク単位カウントを明記</td><td>3.1</td></tr>
+  <tr><td>LOW-4</td><td><span class="badge low">LOW</span></td><td>インデント統一性</td><td>Markdownサブタスクは2スペースを明記</td><td>3.1</td></tr>
+</table>
+
+<footer>
+  <p>CSM開発部 — エージェント別TODO.md自動管理 設計仕様書 Draft 1.1（品質管理部レビュー反映済）</p>
+  <p>対象バージョン: CSM v0.4.0 | 作成日: 2026-04-05</p>
+</footer>
+
+</body>
+</html>
