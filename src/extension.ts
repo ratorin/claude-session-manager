@@ -1370,6 +1370,7 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 			);
 
+			await ensureSubagentHooks();
 			refreshAll();
 			const parts: string[] = [`移行完了: ${migrated.length}件成功`];
 			if (skipped.length > 0) { parts.push(`${skipped.length}件スキップ`); }
