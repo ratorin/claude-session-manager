@@ -1683,29 +1683,38 @@ export function activate(context: vscode.ExtensionContext) {
 				return;
 			}
 
-			// hooks 配列を取得
-			const hooks = (settings.hooks || []) as Array<Record<string, unknown>>;
+			// hooks はイベントタイプをキーとするオブジェクト（例: { Stop: [...], PreToolUse: [...] }）
+			const hooksObj = (settings.hooks && typeof settings.hooks === 'object' && !Array.isArray(settings.hooks))
+				? settings.hooks as Record<string, unknown>
+				: {};
+			if (!settings.hooks || typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) {
+				settings.hooks = hooksObj;
+			}
 			const CSM_SIGNAL_MARKER = 'csm/subagent-signal.js';
 
-			// 既に登録済みか確認
-			const hasStart = hooks.some((h: Record<string, unknown>) => {
-				const hooksArr = h.hooks as Array<Record<string, unknown>> | undefined;
-				return hooksArr?.some((hh: Record<string, unknown>) =>
-					typeof hh.command === 'string' && hh.command.includes(CSM_SIGNAL_MARKER) && hh.command.includes('start')
-				);
-			});
-			const hasStop = hooks.some((h: Record<string, unknown>) => {
-				const hooksArr = h.hooks as Array<Record<string, unknown>> | undefined;
-				return hooksArr?.some((hh: Record<string, unknown>) =>
-					typeof hh.command === 'string' && hh.command.includes(CSM_SIGNAL_MARKER) && hh.command.includes('stop')
-				);
-			});
+			// 指定イベントキー内にCSMシグナルフックが既に存在するか確認するヘルパー
+			const hasSignalHook = (eventKey: string, action: string): boolean => {
+				const entries = hooksObj[eventKey];
+				if (!Array.isArray(entries)) { return false; }
+				return entries.some((entry: Record<string, unknown>) => {
+					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+					if (!Array.isArray(innerHooks)) { return false; }
+					return innerHooks.some((hh: Record<string, unknown>) =>
+						typeof hh.command === 'string' && hh.command.includes(CSM_SIGNAL_MARKER) && hh.command.includes(action)
+					);
+				});
+			};
+
+			const hasStart = hasSignalHook('SubagentStart', 'start');
+			const hasStop = hasSignalHook('Stop', 'stop');
 
 			let changed = false;
 
 			if (!hasStart) {
-				hooks.push({
-					event: 'SubagentStart',
+				if (!Array.isArray(hooksObj['SubagentStart'])) {
+					hooksObj['SubagentStart'] = [];
+				}
+				(hooksObj['SubagentStart'] as Array<Record<string, unknown>>).push({
 					matcher: '*',
 					hooks: [{
 						type: 'command',
@@ -1718,8 +1727,10 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 
 			if (!hasStop) {
-				hooks.push({
-					event: 'SubagentStop',
+				if (!Array.isArray(hooksObj['Stop'])) {
+					hooksObj['Stop'] = [];
+				}
+				(hooksObj['Stop'] as Array<Record<string, unknown>>).push({
 					matcher: '*',
 					hooks: [{
 						type: 'command',
@@ -1732,7 +1743,6 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 
 			if (changed) {
-				settings.hooks = hooks;
 				// バックアップ作成
 				const backupPath = settingsPath + `.bak.${Date.now()}`;
 				try {
