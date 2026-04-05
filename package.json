@@ -12,10 +12,7 @@
 		"Other"
 	],
 	"activationEvents": [
-		"onStartupFinished",
-		"onView:claudeSessions",
-		"onView:claudeMemory",
-		"onView:claudeAgents"
+		"onStartupFinished"
 	],
 	"main": "./out/extension.js",
 	"contributes": {
@@ -32,23 +29,28 @@
 			"claude-manager": [
 				{
 					"id": "claudeSessions",
-					"name": "会話一覧（セッション）"
+					"name": "会話一覧（セッション）",
+					"icon": "$(comment-discussion)"
 				},
 				{
 					"id": "claudeBookmarks",
-					"name": "会話ブックマーク"
+					"name": "会話ブックマーク",
+					"icon": "$(star-full)"
 				},
 				{
 					"id": "claudeTags",
-					"name": "会話タグ"
+					"name": "会話タグ",
+					"icon": "$(tag)"
 				},
 				{
 					"id": "claudeAgents",
-					"name": "エージェント管理"
+					"name": "エージェント管理",
+					"icon": "$(person)"
 				},
 				{
 					"id": "claudeMemory",
-					"name": "メモリ管理"
+					"name": "メモリ管理",
+					"icon": "$(database)"
 				}
 			]
 		},
