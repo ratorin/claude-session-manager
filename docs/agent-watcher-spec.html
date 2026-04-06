@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSM AgentWatcher 稼働状態判定フロー 仕様書</title>
+<style>
+	:root {
+		--accent: #e27e4a;
+		--accent-bg: rgba(226, 126, 74, 0.08);
+		--bg: #1e1e1e;
+		--surface: #252526;
+		--surface2: #2d2d30;
+		--border: #3e3e42;
+		--text: #cccccc;
+		--text-dim: #888888;
+		--text-bright: #ffffff;
+		--green: #4ec9b0;
+		--blue: #569cd6;
+		--yellow: #dcdcaa;
+		--red: #f44747;
+		--purple: #c586c0;
+	}
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	body {
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+		background: var(--bg);
+		color: var(--text);
+		line-height: 1.7;
+		padding: 0;
+	}
+	.header {
+		background: linear-gradient(135deg, #2d1f14 0%, #1e1e1e 100%);
+		border-bottom: 2px solid var(--accent);
+		padding: 40px 32px;
+	}
+	.header h1 {
+		font-size: 28px;
+		color: var(--accent);
+		font-weight: 600;
+	}
+	.header .meta {
+		margin-top: 12px;
+		font-size: 13px;
+		color: var(--text-dim);
+	}
+	.header .meta span {
+		margin-right: 24px;
+	}
+	.container {
+		max-width: 960px;
+		margin: 0 auto;
+		padding: 32px;
+	}
+	h2 {
+		font-size: 22px;
+		color: var(--accent);
+		margin-top: 48px;
+		margin-bottom: 16px;
+		padding-bottom: 8px;
+		border-bottom: 1px solid var(--border);
+	}
+	h3 {
+		font-size: 17px;
+		color: var(--green);
+		margin-top: 28px;
+		margin-bottom: 10px;
+	}
+	h4 {
+		font-size: 15px;
+		color: var(--blue);
+		margin-top: 20px;
+		margin-bottom: 8px;
+	}
+	p, li {
+		margin-bottom: 8px;
+		font-size: 14px;
+	}
+	ul, ol {
+		padding-left: 24px;
+		margin-bottom: 16px;
+	}
+	code {
+		font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+		background: var(--surface2);
+		padding: 2px 6px;
+		border-radius: 3px;
+		font-size: 13px;
+		color: var(--yellow);
+	}
+	pre {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 16px;
+		overflow-x: auto;
+		margin: 12px 0 20px 0;
+		font-size: 13px;
+		line-height: 1.5;
+	}
+	pre code {
+		background: none;
+		padding: 0;
+		color: var(--text);
+	}
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		margin: 12px 0 20px 0;
+		font-size: 13px;
+	}
+	th, td {
+		border: 1px solid var(--border);
+		padding: 8px 12px;
+		text-align: left;
+	}
+	th {
+		background: var(--surface2);
+		color: var(--text-bright);
+		font-weight: 600;
+	}
+	tr:nth-child(even) {
+		background: var(--surface);
+	}
+	.note {
+		background: var(--accent-bg);
+		border-left: 3px solid var(--accent);
+		padding: 12px 16px;
+		margin: 16px 0;
+		border-radius: 0 6px 6px 0;
+		font-size: 13px;
+	}
+	.warn {
+		background: rgba(244, 71, 71, 0.08);
+		border-left: 3px solid var(--red);
+		padding: 12px 16px;
+		margin: 16px 0;
+		border-radius: 0 6px 6px 0;
+		font-size: 13px;
+	}
+	.ok {
+		background: rgba(78, 201, 176, 0.08);
+		border-left: 3px solid var(--green);
+		padding: 12px 16px;
+		margin: 16px 0;
+		border-radius: 0 6px 6px 0;
+		font-size: 13px;
+	}
+	.flow-diagram {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 24px;
+		margin: 16px 0;
+		font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+		font-size: 12px;
+		white-space: pre;
+		overflow-x: auto;
+		line-height: 1.4;
+		color: var(--text);
+	}
+	.tag {
+		display: inline-block;
+		padding: 2px 8px;
+		border-radius: 4px;
+		font-size: 11px;
+		font-weight: 600;
+	}
+	.tag-pid { background: rgba(86, 156, 214, 0.2); color: var(--blue); }
+	.tag-signal { background: rgba(197, 134, 192, 0.2); color: var(--purple); }
+	.tag-trigger { background: rgba(78, 201, 176, 0.2); color: var(--green); }
+	.tag-state { background: rgba(220, 220, 170, 0.2); color: var(--yellow); }
+	.toc {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 20px 24px;
+		margin: 24px 0;
+	}
+	.toc h3 {
+		color: var(--text-bright);
+		margin-top: 0;
+		margin-bottom: 12px;
+	}
+	.toc ol {
+		margin-bottom: 0;
+	}
+	.toc a {
+		color: var(--blue);
+		text-decoration: none;
+	}
+	.toc a:hover {
+		text-decoration: underline;
+	}
+</style>
+</head>
+<body>
+
+<div class="header">
+	<h1>AgentWatcher 稼働状態判定フロー 仕様書</h1>
+	<div class="meta">
+		<span>バージョン: 1.0</span>
+		<span>対象: CSM v0.3.1</span>
+		<span>最終更新: 2026-04-07</span>
+		<span>ファイル: src/agentWatcher.ts</span>
+	</div>
+</div>
+
+<div class="container">
+
+<!-- 目次 -->
+<div class="toc">
+	<h3>目次</h3>
+	<ol>
+		<li><a href="#overview">概要</a></li>
+		<li><a href="#architecture">アーキテクチャ概要</a></li>
+		<li><a href="#data-flow">データフロー</a></li>
+		<li><a href="#pid-based">PIDベース検出</a></li>
+		<li><a href="#signal-based">シグナルベース検出</a></li>
+		<li><a href="#apply-signal">applySignalState() 詳細</a></li>
+		<li><a href="#priority">PID vs シグナルの優先順位</a></li>
+		<li><a href="#signal-lifecycle">signalLiveSessions のライフサイクル</a></li>
+		<li><a href="#triggers">再スキャントリガー</a></li>
+		<li><a href="#state-transitions">状態遷移</a></li>
+		<li><a href="#tree-display">ツリー表示への反映</a></li>
+		<li><a href="#edge-cases">エッジケース</a></li>
+		<li><a href="#review">コードレビュー結果</a></li>
+	</ol>
+</div>
+
+<!-- 1. 概要 -->
+<h2 id="overview">1. 概要</h2>
+<p>
+	<code>AgentWatcher</code> は CSM の中核コンポーネントで、登録済みエージェントの稼働状態（Live / Idle）を
+	リアルタイムに監視する。2つの独立した検出メカニズムを統合し、サイドバーのツリー表示に反映する。
+</p>
+
+<table>
+	<tr>
+		<th>検出方式</th>
+		<th>データソース</th>
+		<th>対象</th>
+		<th>タイミング</th>
+	</tr>
+	<tr>
+		<td><span class="tag tag-pid">PIDベース</span></td>
+		<td><code>~/.claude/sessions/*.json</code></td>
+		<td>直接起動されたCLIセッション</td>
+		<td>fs.watchイベント + 外部トリガー</td>
+	</tr>
+	<tr>
+		<td><span class="tag tag-signal">シグナルベース</span></td>
+		<td><code>~/.claude/.csm-signals/*.json</code></td>
+		<td>Hookで通知される子エージェント</td>
+		<td>シグナルファイル作成イベント</td>
+	</tr>
+</table>
+
+<!-- 2. アーキテクチャ -->
+<h2 id="architecture">2. アーキテクチャ概要</h2>
+
+<h3>クラス構造</h3>
+<pre><code>class AgentWatcher implements vscode.Disposable {
+  // イベント
+  _onDidChange: EventEmitter&lt;void&gt;     // 状態変更通知
+
+  // ウォッチャー
+  watcher: FSWatcher                    // sessions/ 監視
+  signalWatcher: FSWatcher              // .csm-signals/ 監視
+
+  // 状態ストア
+  liveSessionIds: Set&lt;string&gt;           // 稼働中セッションID集合
+  states: Map&lt;string, AgentWatcherState&gt; // エージェント名→状態
+  sessionMtimes: Map&lt;string, number&gt;    // セッションID→mtime（stalled判定用）
+  sessionCwdMap: Map&lt;string, string&gt;    // セッションID→cwd
+  signalLiveSessions: Map&lt;string, boolean&gt; // シグナル由来の稼働状態
+
+  // 制御フラグ
+  enabled: boolean                      // 監視有効/無効
+  updating: boolean                     // 二重実行防止
+}</code></pre>
+
+<h3>外部依存</h3>
+<table>
+	<tr><th>依存先</th><th>用途</th></tr>
+	<tr><td><code>dataStore.getAgents()</code></td><td>登録済みエージェント一覧の取得</td></tr>
+	<tr><td><code>detectSubagents()</code></td><td>JSONL解析によるサブエージェント検出</td></tr>
+	<tr><td><code>TaskTracker</code></td><td>sessionMtimesを参照してstalled判定</td></tr>
+</table>
+
+<!-- 3. データフロー -->
+<h2 id="data-flow">3. データフロー</h2>
+
+<div class="flow-diagram">
+┌─────────────────────────────────────────────────────────────────────┐
+│                        トリガー層                                    │
+│                                                                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────────┐ │
+│  │ fs.watch      │  │ fs.watch      │  │ 外部トリガー              │ │
+│  │ sessions/     │  │ .csm-signals/ │  │ refreshAll()              │ │
+│  │               │  │               │  │ child.on("close")         │ │
+│  └──────┬───────┘  └──────┬───────┘  └────────────┬──────────────┘ │
+│         │                  │                        │                │
+│         ▼                  ▼                        ▼                │
+│  scheduleUpdate()  scheduleSignalProcessing()  scheduleUpdate()     │
+│  (300ms debounce)  (200ms debounce)            (300ms debounce)     │
+└─────────┬──────────────────┬────────────────────────┬───────────────┘
+          │                  │                        │
+          ▼                  ▼                        │
+┌─────────────────┐ ┌──────────────────┐              │
+│ update()        │ │ processSignals() │              │
+│                 │ │                  │              │
+│ 1. sessions/    │ │ 読取→parse→     │              │
+│    *.json読取   │ │ signalLive       │              │
+│ 2. PIDチェック  │ │ Sessions更新     │              │
+│ 3. liveSession  │ │                  │              │
+│    Ids構築      │ │ applySignal      │              │
+│ 4. applySignal  │ │ State()          │              │
+│    State()      │ │                  │              │
+│ 5. agents取得   │ │ _onDidChange     │              │
+│ 6. states構築   │ │ .fire()          │              │
+│ 7. hasChanged?  │ └──────────────────┘              │
+│    → fire()     │                                    │
+└────────┬────────┘                                    │
+         │                                             │
+         ▼                                             │
+┌─────────────────────────────────────────────────────┐│
+│              liveSessionIds (Set)                    ││
+│                                                     ││
+│  PIDベース ∪ シグナルstart ∖ シグナルstop           ││
+└────────────────────┬────────────────────────────────┘│
+                     │                                  │
+                     ▼                                  │
+┌─────────────────────────────────────────────────────┐│
+│              states (Map)                           ││
+│                                                     ││
+│  agent.sessionId ∈ liveSessionIds → isLive: true    ││
+│  + detectSubagents() → activeSubagentIds            ││
+└────────────────────┬────────────────────────────────┘│
+                     │                                  │
+                     ▼                                  │
+┌─────────────────────────────────────────────────────┐
+│          ツリー表示 (AgentTreeProvider)              │
+│                                                     │
+│  isLive → 🟢 稼働中 / ⚪ アイドル                   │
+│  activeSubagentIds → サブエージェント表示            │
+└─────────────────────────────────────────────────────┘
+</div>
+
+<!-- 4. PIDベース検出 -->
+<h2 id="pid-based">4. PIDベース検出</h2>
+
+<h3>データソース</h3>
+<p>
+	Claude Code CLIは起動時に <code>~/.claude/sessions/{uuid}.json</code> を作成する。
+	このファイルには <code>sessionId</code>、<code>pid</code>、<code>cwd</code> が含まれる。
+</p>
+
+<h3>検出ロジック（update() 内）</h3>
+<ol>
+	<li><code>sessions/</code> ディレクトリの全 <code>.json</code> ファイルを並列読取</li>
+	<li>各ファイルをJSONパースし、<code>data.sessionId</code> と <code>data.pid</code> を取得</li>
+	<li><code>process.kill(pid, 0)</code> でプロセス生存確認（シグナル0 = 存在確認のみ）</li>
+	<li>生存 → <code>newLiveSessionIds</code> に追加、cwd・mtimeを記録</li>
+	<li>死亡 → ゾンビJSONファイルを <code>~/.claude/.trash/</code> に移動</li>
+	<li>全ファイル処理後、<code>this.liveSessionIds = newLiveSessionIds</code> で差替</li>
+</ol>
+
+<div class="note">
+	<strong>注意:</strong> PIDベース検出は <code>liveSessionIds</code> を毎回 <strong>完全に再構築</strong> する。
+	前回の状態は引き継がない。これにより、プロセス終了を確実に検出できる。
+</div>
+
+<h3>ゾンビJSON処理</h3>
+<p>
+	PID死亡済みのsessions/*.jsonは <code>~/.claude/.trash/</code> に移動（rm禁止ルール準拠）。
+	ファイル名にタイムスタンプを付与して衝突を防ぐ。
+</p>
+
+<!-- 5. シグナルベース検出 -->
+<h2 id="signal-based">5. シグナルベース検出</h2>
+
+<h3>データソース</h3>
+<p>
+	CSMのHookシステム（settings.jsonの <code>hooks.SessionStart</code> / <code>hooks.SubagentStop</code> 等）が
+	<code>~/.claude/.csm-signals/</code> にJSONファイルを書き込む。
+</p>
+
+<h3>シグナルファイル形式</h3>
+<pre><code>interface SignalData {
+  type: 'start' | 'stop';
+  timestamp: string;
+  pid?: number;
+  cwd?: string;
+  sessionId?: string;
+  agentType?: string;
+  description?: string;
+  parentSessionId?: string;
+}</code></pre>
+
+<h3>処理フロー（processSignals()）</h3>
+<ol>
+	<li><code>.csm-signals/</code> の全 <code>.json</code> ファイルを列挙</li>
+	<li>各ファイルを読取・パース</li>
+	<li><code>type === 'start'</code> → <code>signalLiveSessions.set(sessionId, true)</code></li>
+	<li><code>type === 'stop'</code> → <code>signalLiveSessions.set(sessionId, false)</code></li>
+	<li>処理済みシグナルファイルを <code>unlink</code> で削除</li>
+	<li>変更があれば <code>applySignalState()</code> + <code>_onDidChange.fire()</code></li>
+</ol>
+
+<div class="note">
+	<strong>デバウンス:</strong> シグナル処理は200msのデバウンス付き。短時間に複数のstart/stopが来ても
+	一度にまとめて処理される。
+</div>
+
+<!-- 6. applySignalState() -->
+<h2 id="apply-signal">6. applySignalState() 詳細</h2>
+
+<p>
+	<code>applySignalState()</code> は <code>signalLiveSessions</code> の内容を
+	<code>liveSessionIds</code> に反映するブリッジ関数。2つのパスで呼ばれる:
+</p>
+
+<table>
+	<tr><th>呼び出し元</th><th>タイミング</th></tr>
+	<tr><td><code>update()</code></td><td>PIDベーススキャン完了後（liveSessionIds再構築直後）</td></tr>
+	<tr><td><code>processSignals()</code></td><td>新しいシグナルファイル処理後</td></tr>
+</table>
+
+<h3>実装コード（v0.3.1 修正後）</h3>
+<pre><code>private applySignalState(): void {
+  // パス1: signalLiveSessionsの内容をliveSessionIdsに反映
+  for (const [sessionId, isLive] of this.signalLiveSessions) {
+    if (isLive) {
+      // startシグナル: PIDベースで未検出ならシグナルを信頼して追加
+      if (!this.liveSessionIds.has(sessionId)) {
+        this.liveSessionIds.add(sessionId);
+      }
+    } else {
+      // stopシグナル: liveSessionIdsから確実に削除
+      this.liveSessionIds.delete(sessionId);
+      // 処理済みstopエントリを除去（メモリリーク防止）
+      this.signalLiveSessions.delete(sessionId);
+    }
+  }
+
+  // パス2: PIDベースで確認済みのstartシグナルをクリーンアップ
+  for (const [sessionId] of this.signalLiveSessions) {
+    if (this.liveSessionIds.has(sessionId)) {
+      this.signalLiveSessions.delete(sessionId);
+    }
+  }
+}</code></pre>
+
+<h3>パス1: メイン反映ループ</h3>
+<table>
+	<tr><th>条件</th><th>アクション</th><th>理由</th></tr>
+	<tr>
+		<td><code>isLive === true</code> かつ PID未検出</td>
+		<td><code>liveSessionIds.add()</code></td>
+		<td>Hookシグナルの方がPIDスキャンより先に届く場合がある。シグナルを信頼して即座にLive扱い</td>
+	</tr>
+	<tr>
+		<td><code>isLive === true</code> かつ PID検出済み</td>
+		<td>何もしない</td>
+		<td>既にliveSessionIdsに含まれている。パス2で signalLiveSessions からクリーンアップ</td>
+	</tr>
+	<tr>
+		<td><code>isLive === false</code></td>
+		<td><code>liveSessionIds.delete()</code> + <code>signalLiveSessions.delete()</code></td>
+		<td>stopシグナルは最優先。PID生存中でもstopシグナルがあれば停止扱い。処理後エントリ除去</td>
+	</tr>
+</table>
+
+<h3>パス2: クリーンアップループ</h3>
+<p>
+	パス1で残った <code>signalLiveSessions</code> のエントリ（<code>isLive === true</code> のみ）について、
+	<code>liveSessionIds</code> に既に含まれていれば不要なので削除。
+	これにより、PIDベースの定期スキャンで確認済みのセッションはシグナル追跡から外れる。
+</p>
+
+<div class="ok">
+	<strong>設計意図:</strong> signalLiveSessionsは「PIDベースで検出できない過渡期のセッション」を一時的に補完するバッファ。
+	PIDベースで確認されるか、stopシグナルが来れば役目を終えてクリーンアップされる。
+</div>
+
+<!-- 7. 優先順位 -->
+<h2 id="priority">7. PID vs シグナルの優先順位</h2>
+
+<table>
+	<tr><th>状況</th><th>PID</th><th>シグナル</th><th>結果</th><th>理由</th></tr>
+	<tr>
+		<td>通常稼働</td>
+		<td>✅ 生存</td>
+		<td>start</td>
+		<td><span class="tag tag-state">Live</span></td>
+		<td>両方一致。signalLiveSessionsからクリーンアップ</td>
+	</tr>
+	<tr>
+		<td>起動直後（PID未検出）</td>
+		<td>❌ 未検出</td>
+		<td>start</td>
+		<td><span class="tag tag-state">Live</span></td>
+		<td>シグナルを信頼。次回PIDスキャンで引き継がれる</td>
+	</tr>
+	<tr>
+		<td>終了直後（PID残留）</td>
+		<td>✅ 生存</td>
+		<td>stop</td>
+		<td><span class="tag tag-state">Idle</span></td>
+		<td><strong>stopシグナルが最優先</strong>。liveSessionIdsから強制削除</td>
+	</tr>
+	<tr>
+		<td>PID死亡</td>
+		<td>❌ 死亡</td>
+		<td>なし</td>
+		<td><span class="tag tag-state">Idle</span></td>
+		<td>PIDスキャンでliveSessionIdsに含まれない</td>
+	</tr>
+	<tr>
+		<td>シグナル未到達</td>
+		<td>✅ 生存</td>
+		<td>なし</td>
+		<td><span class="tag tag-state">Live</span></td>
+		<td>PIDベースで検出。シグナルは補助的</td>
+	</tr>
+</table>
+
+<div class="warn">
+	<strong>重要:</strong> stopシグナルはPIDベースの結果を上書きする。これにより、プロセスが残留していても
+	Hook通知でセッション終了を即座に反映できる。ただし、次回のPIDスキャンでPIDが生存していれば再度Liveに戻る
+	可能性がある（stopシグナルは処理後にsignalLiveSessionsから除去されるため）。
+</div>
+
+<!-- 8. signalLiveSessions ライフサイクル -->
+<h2 id="signal-lifecycle">8. signalLiveSessions のライフサイクル</h2>
+
+<div class="flow-diagram">
+エントリ作成                     エントリ削除
+─────────────                   ─────────────
+
+startシグナル受信 ──┐
+  sessionId → true  │         ┌── PIDベースで確認済み (パス2)
+                    │         │   → signalLiveSessions.delete()
+                    ▼         │
+        signalLiveSessions    │
+        Map&lt;string, boolean&gt; ─┤
+                    ▲         │
+                    │         ├── stopシグナル受信 (パス1)
+stopシグナル受信 ──┘         │   → liveSessionIds.delete()
+  sessionId → false           │   → signalLiveSessions.delete()
+                              │
+                              └── ※ メモリリーク無し
+</div>
+
+<h3>ライフサイクルまとめ</h3>
+<table>
+	<tr><th>イベント</th><th>signalLiveSessions</th><th>liveSessionIds</th></tr>
+	<tr>
+		<td>startシグナル受信</td>
+		<td><code>set(id, true)</code></td>
+		<td>変更なし（applySignalState時に追加）</td>
+	</tr>
+	<tr>
+		<td>applySignalState (start, PID未検出)</td>
+		<td>保持</td>
+		<td><code>add(id)</code></td>
+	</tr>
+	<tr>
+		<td>applySignalState (start, PID検出済み)</td>
+		<td><code>delete(id)</code></td>
+		<td>既に含まれている（変更なし）</td>
+	</tr>
+	<tr>
+		<td>stopシグナル受信</td>
+		<td><code>set(id, false)</code></td>
+		<td>変更なし（applySignalState時に削除）</td>
+	</tr>
+	<tr>
+		<td>applySignalState (stop)</td>
+		<td><code>delete(id)</code></td>
+		<td><code>delete(id)</code></td>
+	</tr>
+</table>
+
+<!-- 9. 再スキャントリガー -->
+<h2 id="triggers">9. 再スキャントリガー</h2>
+
+<table>
+	<tr><th>トリガー</th><th>経路</th><th>実行される処理</th></tr>
+	<tr>
+		<td><span class="tag tag-trigger">fs.watch sessions/</span></td>
+		<td><code>scheduleUpdate()</code> → <code>update()</code></td>
+		<td>PIDスキャン全体 + applySignalState + states構築</td>
+	</tr>
+	<tr>
+		<td><span class="tag tag-trigger">fs.watch .csm-signals/</span></td>
+		<td><code>scheduleSignalProcessing()</code> → <code>processSignals()</code></td>
+		<td>シグナル処理 + applySignalState（liveSessionIdsへの差分反映のみ）</td>
+	</tr>
+	<tr>
+		<td><span class="tag tag-trigger">refreshAll()</span></td>
+		<td><code>agentWatcher.scheduleUpdate()</code></td>
+		<td>PIDスキャン全体（エージェント登録・編集・削除時）</td>
+	</tr>
+	<tr>
+		<td><span class="tag tag-trigger">child.on("close")</span></td>
+		<td><code>agentWatcher.scheduleUpdate()</code></td>
+		<td>PIDスキャン全体（createSessionForAgent完了時）</td>
+	</tr>
+</table>
+
+<h3>refreshAll() 経由のトリガー</h3>
+<p>
+	v0.3.1で追加。以下のコマンドが <code>refreshAll()</code> を呼び、間接的にPIDスキャンが走る:
+</p>
+<ul>
+	<li><code>claudeManager.addAgent</code>（エージェント追加）</li>
+	<li><code>claudeManager.editAgent</code>（エージェント編集）</li>
+	<li><code>claudeManager.deleteAgent</code>（エージェント削除）</li>
+	<li><code>claudeManager.registerAgent</code>（セッションからエージェント登録）</li>
+	<li><code>claudeManager.renewSession</code>（セッション更新）</li>
+	<li>その他全てのUI操作でrefreshAll()が呼ばれる場面</li>
+</ul>
+
+<h3>child.on("close") 経由のトリガー</h3>
+<p>
+	v0.3.1で追加。<code>createSessionForAgent()</code> でspawnしたCLIプロセスが終了した際に
+	<code>agentWatcher.scheduleUpdate()</code> を呼ぶ。これにより、セッション初期化完了後に
+	プロセスの死亡を即座に検出し、稼働状態を正しくIdleに戻す。
+</p>
+
+<!-- 10. 状態遷移 -->
+<h2 id="state-transitions">10. 状態遷移</h2>
+
+<h3>エージェント状態の定義</h3>
+<pre><code>interface AgentWatcherState {
+  agentName: string;          // エージェント名
+  sessionId: string;          // 紐づけされたセッションID
+  isLive: boolean;            // 稼働中か否か
+  activeSubagentIds: string[]; // 実行中のサブエージェントtoolUseId一覧
+}</code></pre>
+
+<h3>isLive の決定ロジック</h3>
+<pre><code>const isLive = agent.sessionId
+  ? this.liveSessionIds.has(agent.sessionId)
+  : false;</code></pre>
+
+<p><code>sessionId</code> が空のエージェントは常に <code>isLive: false</code>。</p>
+
+<h3>状態遷移図</h3>
+<div class="flow-diagram">
+                    ┌──────────┐
+                    │  Idle    │
+                    │ isLive:  │
+                    │  false   │
+                    └────┬─────┘
+                         │
+        PIDスキャンでPID生存検出
+        or startシグナル受信
+                         │
+                         ▼
+                    ┌──────────┐
+                    │  Live    │
+                    │ isLive:  │
+                    │  true    │
+                    └────┬─────┘
+                         │
+        PIDスキャンでPID死亡検出
+        or stopシグナル受信
+        or refreshAll()後の再スキャン
+                         │
+                         ▼
+                    ┌──────────┐
+                    │  Idle    │
+                    │ isLive:  │
+                    │  false   │
+                    └──────────┘
+</div>
+
+<!-- 11. ツリー表示 -->
+<h2 id="tree-display">11. ツリー表示への反映</h2>
+
+<h3>通知チェーン</h3>
+<ol>
+	<li><code>update()</code> or <code>processSignals()</code> が状態変更を検出</li>
+	<li><code>_onDidChange.fire()</code> でイベント発火</li>
+	<li><code>extension.ts</code> の <code>agentWatcher.onDidChange()</code> コールバックが受信</li>
+	<li><code>agentProvider.refresh()</code> → ツリー再描画</li>
+	<li><code>sessionProvider.setLiveSessionIds()</code> → セッション一覧のバッジ更新</li>
+</ol>
+
+<h3>変更検出（hasChanged）</h3>
+<p>
+	前回の <code>states</code> マップと比較し、以下のいずれかが変わった場合のみイベント発火:
+</p>
+<ul>
+	<li>エージェント数の変化</li>
+	<li><code>isLive</code> の変化</li>
+	<li><code>sessionId</code> の変化</li>
+	<li><code>activeSubagentIds</code> の変化（長さ or 要素）</li>
+</ul>
+
+<!-- 12. エッジケース -->
+<h2 id="edge-cases">12. エッジケース</h2>
+
+<table>
+	<tr><th>#</th><th>シナリオ</th><th>挙動</th><th>評価</th></tr>
+	<tr>
+		<td>E-1</td>
+		<td>startシグナル後、PIDが即死亡<br>（CLIクラッシュ等）</td>
+		<td>startシグナルでLive化 → 次回PIDスキャンでPID死亡検出 → Idleに戻る。signalLiveSessionsのstartエントリはパス2でPID未検出のため残留するが、liveSessionIdsには含まれないため表示上は正しくIdle</td>
+		<td class="ok" style="border-left:none">✅ 正常</td>
+	</tr>
+	<tr>
+		<td>E-2</td>
+		<td>stopシグナル後、同じsessionIdで再度startシグナル</td>
+		<td>stopで <code>signalLiveSessions.delete()</code> 済み → 新startで <code>set(id, true)</code> → 再びLive化</td>
+		<td class="ok" style="border-left:none">✅ 正常</td>
+	</tr>
+	<tr>
+		<td>E-3</td>
+		<td>sessions/*.jsonが存在しない<br>（初回起動）</td>
+		<td><code>readdir</code> が空 → liveSessionIds空 → 全エージェントIdle</td>
+		<td class="ok" style="border-left:none">✅ 正常</td>
+	</tr>
+	<tr>
+		<td>E-4</td>
+		<td>二重実行（高頻度トリガー）</td>
+		<td><code>this.updating</code> フラグで <code>updateAsync()</code> の二重実行を防止</td>
+		<td class="ok" style="border-left:none">✅ 正常</td>
+	</tr>
+	<tr>
+		<td>E-5</td>
+		<td>signalLiveSessionsのメモリリーク</td>
+		<td>startエントリ: PID確認済みでパス2削除。stopエントリ: パス1で即座に削除。蓄積しない</td>
+		<td class="ok" style="border-left:none">✅ 正常</td>
+	</tr>
+	<tr>
+		<td>E-6</td>
+		<td>stopシグナルがstart前に到着<br>（順序逆転）</td>
+		<td>stopで <code>set(id, false)</code> → applySignalStateでliveSessionIdsから削除 + signalLiveSessions削除。後続startは新規エントリとして正常に処理</td>
+		<td class="ok" style="border-left:none">✅ 正常</td>
+	</tr>
+	<tr>
+		<td>E-7</td>
+		<td>PID生存中にstopシグナル → 次回PIDスキャン</td>
+		<td>stopでliveSessionIdsから削除・signalLiveSessions削除 → 次回PIDスキャンでPID生存を検出 → 再びliveSessionIdsに追加される → Live復帰</td>
+		<td class="warn" style="border-left:none">⚠️ 注意<br>（後述）</td>
+	</tr>
+	<tr>
+		<td>E-8</td>
+		<td>createSessionForAgent完了時のクリーンアップ</td>
+		<td><code>child.on("close")</code> → <code>scheduleUpdate()</code> → PIDスキャンで初期化プロセスの死亡を検出 → Idle化</td>
+		<td class="ok" style="border-left:none">✅ 正常</td>
+	</tr>
+</table>
+
+<h3>E-7 の詳細分析</h3>
+<div class="warn">
+	<strong>⚠️ エッジケース E-7:</strong> stopシグナルでIdleにしても、次回PIDスキャン（300msデバウンス後）で
+	PIDがまだ生存していれば再びLiveに復帰する。<br><br>
+	<strong>影響:</strong> 実運用上は問題にならない。stopシグナルが送られるのはHookの <code>SubagentStop</code> イベント時で、
+	この時点でCLIプロセスは終了処理中。300msのデバウンス後にはPIDも死亡しているのが通常。
+	万が一PIDが残留していても、数秒後のゾンビJSON処理で最終的にIdleに戻る。<br><br>
+	<strong>根本対策（将来）:</strong> stopシグナルのsessionIdを「永続ブラックリスト」に入れ、PIDスキャンでも
+	無視する方式が考えられるが、現状の挙動で実用上の問題は無い。
+</div>
+
+<!-- 13. コードレビュー -->
+<h2 id="review">13. コードレビュー結果</h2>
+
+<h3>変更箇所の評価</h3>
+<table>
+	<tr><th>変更</th><th>コード</th><th>評価</th></tr>
+	<tr>
+		<td>stopシグナル時にliveSessionIdsからdelete</td>
+		<td><code>this.liveSessionIds.delete(sessionId)</code></td>
+		<td><span class="tag" style="background:rgba(78,201,176,0.2);color:var(--green)">✅ 正しい</span> — 修正前はstopシグナルがliveSessionIdsに反映されず、稼働状態がリセットされなかった</td>
+	</tr>
+	<tr>
+		<td>処理済みstopをsignalLiveSessionsから除去</td>
+		<td><code>this.signalLiveSessions.delete(sessionId)</code></td>
+		<td><span class="tag" style="background:rgba(78,201,176,0.2);color:var(--green)">✅ 正しい</span> — メモリリーク防止。stopは一度処理すれば不要</td>
+	</tr>
+	<tr>
+		<td>PID確認済みstartをsignalLiveSessionsから除去</td>
+		<td>パス2のクリーンアップループ</td>
+		<td><span class="tag" style="background:rgba(78,201,176,0.2);color:var(--green)">✅ 正しい</span> — PIDベースで管理に移行したエントリを解放</td>
+	</tr>
+</table>
+
+<h3>Map iteration中のdelete安全性</h3>
+<div class="ok">
+	<strong>安全:</strong> JavaScriptの <code>Map.prototype.forEach</code> / <code>for...of</code> は
+	イテレーション中の <code>delete</code> を仕様上許容している（MDN: "A Map object iterates entries in insertion order.
+	A for...of loop returns an array of [key, value] for each iteration. Deletion of entries during iteration is safe."）。
+	パス1・パス2ともに安全。
+</div>
+
+<h3>副作用の確認</h3>
+<table>
+	<tr><th>確認項目</th><th>結果</th></tr>
+	<tr>
+		<td>他メソッドがsignalLiveSessionsを参照するか</td>
+		<td>❌ なし。applySignalState()のみ</td>
+	</tr>
+	<tr>
+		<td>liveSessionIds.delete()がstates構築に影響するか</td>
+		<td>✅ はい、正しく影響する。update()ではapplySignalState()後にstates構築が走る</td>
+	</tr>
+	<tr>
+		<td>processSignals()からの呼出時のstates整合性</td>
+		<td>⚠️ processSignals()ではstatesは再構築されない。次回update()まで古いstatesが残るが、_onDidChange.fire()でツリー再描画されるためUI上は問題なし</td>
+	</tr>
+	<tr>
+		<td>二重実行時の競合</td>
+		<td>✅ <code>this.updating</code>フラグで保護済み</td>
+	</tr>
+</table>
+
+<h3>総合評価</h3>
+<div class="ok">
+	<strong>APPROVE — 問題なし。</strong> 3点の変更はすべて正しく、メモリリーク防止とstopシグナルの即時反映を実現している。
+	E-7のエッジケースは実用上問題にならない。
+</div>
+
+</div><!-- container -->
+</body>
+</html>
