@@ -270,7 +270,7 @@ export function activate(context: vscode.ExtensionContext) {
 				'--verbose',
 				'--output-format', 'stream-json',
 				'--max-turns', '1',
-				'-p', `セッション初期化: ${config.name}`,
+				'-p', `あなたは「${config.name}」です。${config.role || '指示された業務'}を担当します。ルールファイルを確認して準備完了を報告してください。`,
 			];
 
 			// ルールファイルがあれば付与
