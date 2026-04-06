@@ -286,6 +286,7 @@ export function activate(context: vscode.ExtensionContext) {
 				env,
 				cwd: config.workDir || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir(),
 				stdio: ['ignore', 'pipe', 'pipe'],
+				shell: true,
 				windowsHide: true,
 			});
 
