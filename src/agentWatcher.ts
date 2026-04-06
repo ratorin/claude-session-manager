@@ -308,10 +308,20 @@ export class AgentWatcher implements vscode.Disposable {
 	private applySignalState(): void {
 		for (const [sessionId, isLive] of this.signalLiveSessions) {
 			if (isLive) {
-				this.liveSessionIds.add(sessionId);
+				// PIDベースで既に確認済みでなければシグナルを信頼
+				if (!this.liveSessionIds.has(sessionId)) {
+					this.liveSessionIds.add(sessionId);
+				}
+			} else {
+				this.liveSessionIds.delete(sessionId);
+				this.signalLiveSessions.delete(sessionId); // 処理済みstopシグナルを除去
 			}
-			// stop の場合は liveSessionIds から除去しない（PIDベースが正なので）
-			// stop シグナルは states の更新トリガーとして使うだけ
+		}
+		// startシグナルもPIDベースで確認済みなら除去（重複防止）
+		for (const [sessionId] of this.signalLiveSessions) {
+			if (this.liveSessionIds.has(sessionId)) {
+				this.signalLiveSessions.delete(sessionId);
+			}
 		}
 	}
 
