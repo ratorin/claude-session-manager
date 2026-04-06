@@ -267,6 +267,7 @@ export function activate(context: vscode.ExtensionContext) {
 			// CLI引数を構築
 			const args: string[] = [
 				'--model', config.model,
+				'--verbose',
 				'--output-format', 'stream-json',
 				'--max-turns', '1',
 				'-p', `セッション初期化: ${config.name}`,
