@@ -258,6 +258,119 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}
 
+	// セッション自動作成: claude CLIをspawnしてセッションIDを取得
+	// 固定セッション（sessionMode !== 'disposable'）かつsessionIdが空の場合のみ実行
+	async function createSessionForAgent(config: AgentConfig): Promise<string> {
+		const { spawn } = require('child_process') as typeof import('child_process');
+
+		return new Promise<string>((resolve, reject) => {
+			// CLI引数を構築
+			const args: string[] = [
+				'--model', config.model,
+				'--output-format', 'stream-json',
+				'--max-turns', '1',
+				'-p', `セッション初期化: ${config.name}`,
+			];
+
+			// ルールファイルがあれば付与
+			if (config.ruleFile) {
+				args.push('--append-system-prompt-file', config.ruleFile);
+			}
+
+			// 環境変数: ネストセッション検出を回避
+			const env = { ...process.env };
+			delete env.CLAUDE_CODE;
+			delete env.CLAUDECODE;
+
+			const child = spawn('claude', args, {
+				env,
+				cwd: config.workDir || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir(),
+				stdio: ['ignore', 'pipe', 'pipe'],
+				windowsHide: true,
+			});
+
+			let output = '';
+			let sessionId = '';
+			const timeout = setTimeout(() => {
+				child.kill('SIGTERM');
+				reject(new Error('セッション作成がタイムアウトしました（60秒）'));
+			}, 60000);
+
+			child.stdout?.on('data', (data: Buffer) => {
+				output += data.toString('utf-8');
+				// stream-json形式: 各行が独立したJSON
+				const lines = output.split('\n');
+				for (const line of lines) {
+					if (!line.trim()) { continue; }
+					try {
+						const parsed = JSON.parse(line);
+						// セッションIDは init / system / result メッセージに含まれる
+						if (parsed.session_id) {
+							sessionId = parsed.session_id;
+						}
+					} catch {
+						// 不完全な行は次回に持ち越し
+					}
+				}
+			});
+
+			child.stderr?.on('data', (data: Buffer) => {
+				extensionOutputChannel.appendLine(`[createSession stderr] ${data.toString('utf-8').trim()}`);
+			});
+
+			child.on('close', (code: number | null) => {
+				clearTimeout(timeout);
+				if (sessionId) {
+					resolve(sessionId);
+				} else if (code === 0) {
+					// 終了コード0でもsessionIdが取れなかった場合: 出力からフォールバック検索
+					const match = output.match(/"session_id"\s*:\s*"([a-f0-9-]{36})"/);
+					if (match) {
+						resolve(match[1]);
+					} else {
+						reject(new Error('セッションIDを取得できませんでした'));
+					}
+				} else {
+					reject(new Error(`claude CLI がエラーコード ${code} で終了しました`));
+				}
+			});
+
+			child.on('error', (err: Error) => {
+				clearTimeout(timeout);
+				reject(err);
+			});
+		});
+	}
+
+	// エージェント保存時にセッションを自動作成（固定セッション＋sessionId未設定の場合）
+	async function autoCreateSessionIfNeeded(config: AgentConfig): Promise<AgentConfig> {
+		// 使い捨てセッション or 既にsessionIdがある場合はスキップ
+		if (config.sessionMode === 'disposable' || config.sessionId) {
+			return config;
+		}
+
+		try {
+			const sessionId = await vscode.window.withProgress(
+				{
+					location: vscode.ProgressLocation.Notification,
+					title: `「${config.name}」のセッションを作成中...`,
+					cancellable: false,
+				},
+				async () => createSessionForAgent(config)
+			);
+
+			extensionOutputChannel.appendLine(`[INFO] ${config.name} のセッションを自動作成: ${sessionId}`);
+			return { ...config, sessionId };
+		} catch (err) {
+			// エラー時はsessionId無しで保存（従来と同じ動作にフォールバック）
+			extensionOutputChannel.appendLine(`[WARN] ${config.name} のセッション自動作成に失敗: ${err}`);
+			vscode.window.showWarningMessage(
+				`セッションの自動作成に失敗しました。エージェントはセッション未紐づけで保存されます。`
+			);
+			return config;
+		}
+	}
+
 	// ruleFileが未設定の場合にルールファイルを自動生成するヘルパー（子エージェント用）— 非同期
 	// v0.3.1: YAML フロントマター形式（CSM:AUTOマーカー廃止）
 	async function autoGenerateRuleFile(config: AgentConfig): Promise<AgentConfig> {
@@ -856,7 +969,9 @@ export function activate(context: vscode.ExtensionContext) {
 			showAgentFormPanel(undefined, '', async (config) => {
 				// sessionIdが空文字の場合は空文字のまま保持（undefinedにしない）
 				if (!config.sessionId) { config.sessionId = ''; }
-				const finalConfig = await autoGenerateRuleFile(config);
+				const ruleConfig = await autoGenerateRuleFile(config);
+				// 固定セッションかつsessionId未設定なら自動作成
+				const finalConfig = await autoCreateSessionIfNeeded(ruleConfig);
 				await dataStore.addAgent(finalConfig);
 				await syncParentRuleFile(finalConfig.parentAgent, getExtensionOutputChannel());
 				refreshAll();
