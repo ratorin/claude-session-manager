@@ -70,7 +70,7 @@ export class AgentWatcher implements vscode.Disposable {
 	}
 
 	// デバウンス付き更新スケジュール（300ms）
-	private scheduleUpdate(): void {
+	public scheduleUpdate(): void {
 		if (this.debounceTimer) {
 			clearTimeout(this.debounceTimer);
 		}

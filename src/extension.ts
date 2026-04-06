@@ -322,6 +322,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 			child.on('close', (code: number | null) => {
 				clearTimeout(timeout);
+				// セッション初期化プロセス終了時にagentWatcherを再スキャン
+				agentWatcher.scheduleUpdate();
 				if (sessionId) {
 					resolve(sessionId);
 				} else if (code === 0) {
@@ -642,6 +644,7 @@ export function activate(context: vscode.ExtensionContext) {
 		tagProvider.refresh();
 		agentProvider.refresh();
 		sessionDecoProvider.refresh();
+		agentWatcher.scheduleUpdate();
 		updateStatusBar();
 		updateHasAgentsContext();
 	}
