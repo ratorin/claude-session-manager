@@ -18,6 +18,7 @@ import * as dataStore from './dataStore';
 import { AgentConfig } from './types';
 import { loadMemoryFiles, deleteMemoryFile, mergeMemoryFiles, extractFromMemory, addToIndex } from './memoryManager';
 import { resolveRuleFilePath } from './agentManager';
+import { syncParentRuleFile, syncAllParentRuleFiles, hasCircularRef } from './parentChildSync';
 import {
 	parseFrontmatter, generateFrontmatter, updateFrontmatterInContent,
 	migrateAutoToYaml, isLegacyAutoFormat, hasFrontmatter, sanitizeForYaml,
@@ -218,7 +219,7 @@ export function activate(context: vscode.ExtensionContext) {
 		const safeRole = sanitizeForYaml(config.role || '（役割未設定）');
 		const lines: string[] = [
 			`あなたは${safeName}所属のエンジニアです。`,
-			`- ${safeRole}を担当する`,
+			`- ${safeRole}`,
 			`- 変更前に既存コードを確認し、既存の設計方針を尊重する`,
 			`- セッション開始時にMEMORY.md（自動メモリ）を確認し、組織図・行動規範・プロジェクト情報を把握すること`,
 			`- session-manager.json の agents 一覧から自分の位置づけ・他エージェントとの関係を把握すること`,
@@ -803,9 +804,15 @@ export function activate(context: vscode.ExtensionContext) {
 				// 設定ボタン → 編集フォームを開く
 				(a) => {
 					const oldName = a.name;
-					showAgentFormPanel(a, a.sessionId, (config) => {
-						if (config.name !== oldName) { dataStore.removeAgent(oldName); }
-						dataStore.addAgent(config);
+					const oldParent = a.parentAgent;
+					showAgentFormPanel(a, a.sessionId, async (config) => {
+						if (config.name !== oldName) { await dataStore.removeAgent(oldName); }
+						await dataStore.addAgent(config);
+						const ch = getExtensionOutputChannel();
+						if (oldParent && oldParent !== config.parentAgent) {
+							await syncParentRuleFile(oldParent, ch);
+						}
+						await syncParentRuleFile(config.parentAgent, ch);
 						refreshAll();
 						vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
 					});
@@ -835,7 +842,8 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.commands.registerCommand('claudeManager.registerAgent', (item: SessionItem) => {
 			showAgentFormPanel(undefined, item.session.id, async (config) => {
 				const finalConfig = await autoGenerateRuleFile(config);
-				dataStore.addAgent(finalConfig);
+				await dataStore.addAgent(finalConfig);
+				await syncParentRuleFile(finalConfig.parentAgent, getExtensionOutputChannel());
 				refreshAll();
 				vscode.window.showInformationMessage(`「${finalConfig.name}」をエージェントとして登録しました`);
 			});
@@ -849,7 +857,8 @@ export function activate(context: vscode.ExtensionContext) {
 				// sessionIdが空文字の場合は空文字のまま保持（undefinedにしない）
 				if (!config.sessionId) { config.sessionId = ''; }
 				const finalConfig = await autoGenerateRuleFile(config);
-				dataStore.addAgent(finalConfig);
+				await dataStore.addAgent(finalConfig);
+				await syncParentRuleFile(finalConfig.parentAgent, getExtensionOutputChannel());
 				refreshAll();
 				vscode.window.showInformationMessage(`「${finalConfig.name}」をエージェントとして登録しました`);
 			});
@@ -874,11 +883,18 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 
 			const oldName = existing.name;
+			const oldParent = existing.parentAgent;
 			showAgentFormPanel(existing, sessionId, async (config) => {
 				if (config.name !== oldName) {
 					await dataStore.removeAgent(oldName);
 				}
 				await dataStore.addAgent(config);
+				// 親子同期: 旧親≠新親なら両方、同じなら1回
+				const ch = getExtensionOutputChannel();
+				if (oldParent && oldParent !== config.parentAgent) {
+					await syncParentRuleFile(oldParent, ch);
+				}
+				await syncParentRuleFile(config.parentAgent, ch);
 				refreshAll();
 				vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
 			});
@@ -891,9 +907,15 @@ export function activate(context: vscode.ExtensionContext) {
 			const existing = await dataStore.getAgentBySessionId(sessionId);
 			if (!existing) { return; }
 			const oldName = existing.name;
+			const oldParent = existing.parentAgent;
 			showAgentFormPanel(existing, sessionId, async (config) => {
 				if (config.name !== oldName) { await dataStore.removeAgent(oldName); }
 				await dataStore.addAgent(config);
+				const ch = getExtensionOutputChannel();
+				if (oldParent && oldParent !== config.parentAgent) {
+					await syncParentRuleFile(oldParent, ch);
+				}
+				await syncParentRuleFile(config.parentAgent, ch);
 				refreshAll();
 				vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
 			});
@@ -1129,7 +1151,9 @@ export function activate(context: vscode.ExtensionContext) {
 			);
 			if (confirm !== '削除') { return; }
 
-			dataStore.removeAgent(item.agent.name);
+			const parentName = item.agent.parentAgent;
+			await dataStore.removeAgent(item.agent.name);
+			await syncParentRuleFile(parentName, getExtensionOutputChannel());
 			refreshAll();
 			vscode.window.showInformationMessage(`「${item.agent.name}」を削除しました`);
 		})
@@ -1141,6 +1165,14 @@ export function activate(context: vscode.ExtensionContext) {
 			agentProvider.refresh();
 			updateStatusBar();
 			vscode.window.showInformationMessage('エージェント管理を更新しました');
+		})
+	);
+
+	// 全親ルールファイルの配下エージェントセクションを一括再生成
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.syncAllParentRules', async () => {
+			await syncAllParentRuleFiles(getExtensionOutputChannel());
+			vscode.window.showInformationMessage('全ての親ルールファイルの配下エージェントセクションを再生成しました');
 		})
 	);
 
@@ -1725,43 +1757,44 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 				return false;
 			};
-			// Stop イベントに csm-signal.js があれば除去（SubagentStop に正しく移す）
+			// Stop / SessionStart イベントに誤登録された csm-signal.js を除去
 			const removedFromStop = removeStaleSignalHooks('Stop');
+			const removedFromSessionStart = removeStaleSignalHooks('SessionStart');
 
 			const hasStart = hasSignalHook('SubagentStart', 'start');
 			const hasStop = hasSignalHook('SubagentStop', 'stop');
 
-			let changed = removedFromStop;
+			let changed = removedFromStop || removedFromSessionStart;
+
+			// イベントキーにCSMシグナルフックを追加するヘルパー
+			// 既存の matcher:"*" エントリがあればその hooks 配列にマージ、なければ新規作成
+			const addSignalHook = (eventKey: string, action: string): void => {
+				if (!Array.isArray(hooksObj[eventKey])) {
+					hooksObj[eventKey] = [];
+				}
+				const entries = hooksObj[eventKey] as Array<Record<string, unknown>>;
+				const hook = {
+					type: 'command',
+					command: `node "${signalScript.replace(/\\/g, '/')}" ${action}`,
+					timeout: 10,
+					async: true,
+				};
+				// 既存の matcher:"*" エントリを探してマージ
+				const existing = entries.find((e: Record<string, unknown>) => e.matcher === '*');
+				if (existing && Array.isArray(existing.hooks)) {
+					(existing.hooks as Array<Record<string, unknown>>).push(hook);
+				} else {
+					entries.push({ matcher: '*', hooks: [hook] });
+				}
+			};
 
 			if (!hasStart) {
-				if (!Array.isArray(hooksObj['SubagentStart'])) {
-					hooksObj['SubagentStart'] = [];
-				}
-				(hooksObj['SubagentStart'] as Array<Record<string, unknown>>).push({
-					matcher: '*',
-					hooks: [{
-						type: 'command',
-						command: `node "${signalScript.replace(/\\/g, '/')}" start`,
-						timeout: 10,
-						async: true,
-					}],
-				});
+				addSignalHook('SubagentStart', 'start');
 				changed = true;
 			}
 
 			if (!hasStop) {
-				if (!Array.isArray(hooksObj['SubagentStop'])) {
-					hooksObj['SubagentStop'] = [];
-				}
-				(hooksObj['SubagentStop'] as Array<Record<string, unknown>>).push({
-					matcher: '*',
-					hooks: [{
-						type: 'command',
-						command: `node "${signalScript.replace(/\\/g, '/')}" stop`,
-						timeout: 10,
-						async: true,
-					}],
-				});
+				addSignalHook('SubagentStop', 'stop');
 				changed = true;
 			}
 

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { AgentConfig } from './types';
 import * as dataStore from './dataStore';
+import { getDescendants } from './parentChildSync';
 
 // フォームパネルの参照
 let formPanel: vscode.WebviewPanel | undefined;
@@ -72,10 +73,13 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	const globalFolder = await dataStore.getRuleFolderForScope('global');
 	const projectFolder = await dataStore.getRuleFolderForScope('project');
 
-	// 親エージェント候補
+	// 親エージェント候補（自身 + 全子孫を除外 → 循環参照防止）
 	const agents = await dataStore.getAgents();
+	const excludeNames = existing?.name
+		? new Set([existing.name, ...getDescendants(existing.name, agents)])
+		: new Set<string>();
 	const parentOptions = agents
-		.filter((a) => a.name !== existing?.name)
+		.filter((a) => !excludeNames.has(a.name))
 		.map((a) => `<option value="${escapeHtml(a.name)}" ${existing?.parentAgent === a.name ? 'selected' : ''}>${escapeHtml(a.name)} — ${escapeHtml(a.role)}</option>`)
 		.join('');
 

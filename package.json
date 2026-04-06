@@ -322,6 +322,12 @@
 				"title": "ルールファイルを一括移行（YAML + フォルダ構造）",
 				"icon": "$(arrow-up)",
 				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.syncAllParentRules",
+				"title": "配下エージェント情報を一括再生成",
+				"icon": "$(sync)",
+				"category": "Claude Session Manager"
 			}
 		],
 		"menus": {

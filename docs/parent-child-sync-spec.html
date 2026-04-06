@@ -1,0 +1,1100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSM 親子エージェント同期 設計仕様書</title>
+<style>
+	:root {
+		--accent: #e27e4a;
+		--accent-bg: rgba(226, 126, 74, 0.08);
+		--bg: #1e1e1e;
+		--surface: #252526;
+		--surface2: #2d2d30;
+		--border: #3e3e42;
+		--text: #cccccc;
+		--text-dim: #888888;
+		--text-bright: #ffffff;
+		--green: #4ec9b0;
+		--blue: #569cd6;
+		--yellow: #dcdcaa;
+		--red: #f44747;
+		--purple: #c586c0;
+	}
+	* { margin: 0; padding: 0; box-sizing: border-box; }
+	body {
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+		background: var(--bg);
+		color: var(--text);
+		line-height: 1.7;
+		padding: 0;
+	}
+	.header {
+		background: linear-gradient(135deg, #2d1f14 0%, #1e1e1e 100%);
+		border-bottom: 2px solid var(--accent);
+		padding: 40px 32px;
+	}
+	.header h1 {
+		font-size: 28px;
+		color: var(--accent);
+		font-weight: 600;
+	}
+	.header .meta {
+		margin-top: 12px;
+		font-size: 13px;
+		color: var(--text-dim);
+	}
+	.header .meta span {
+		margin-right: 24px;
+	}
+	.container {
+		max-width: 960px;
+		margin: 0 auto;
+		padding: 32px;
+	}
+	h2 {
+		color: var(--accent);
+		font-size: 20px;
+		margin: 40px 0 16px;
+		padding-bottom: 8px;
+		border-bottom: 1px solid var(--border);
+	}
+	h3 {
+		color: var(--green);
+		font-size: 16px;
+		margin: 24px 0 12px;
+	}
+	h4 {
+		color: var(--blue);
+		font-size: 14px;
+		margin: 16px 0 8px;
+	}
+	p, li {
+		font-size: 14px;
+		margin-bottom: 8px;
+	}
+	ul, ol {
+		padding-left: 24px;
+		margin-bottom: 16px;
+	}
+	code {
+		background: var(--surface2);
+		padding: 2px 6px;
+		border-radius: 3px;
+		font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+		font-size: 13px;
+		color: var(--yellow);
+	}
+	pre {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 16px;
+		overflow-x: auto;
+		margin: 12px 0 20px;
+		font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--text);
+	}
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		margin: 12px 0 20px;
+		font-size: 13px;
+	}
+	th, td {
+		border: 1px solid var(--border);
+		padding: 8px 12px;
+		text-align: left;
+	}
+	th {
+		background: var(--surface2);
+		color: var(--text-bright);
+		font-weight: 600;
+	}
+	tr:hover {
+		background: var(--accent-bg);
+	}
+	.card {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 20px;
+		margin: 16px 0;
+	}
+	.card-title {
+		color: var(--accent);
+		font-weight: 600;
+		margin-bottom: 8px;
+	}
+	.badge {
+		display: inline-block;
+		padding: 2px 10px;
+		border-radius: 12px;
+		font-size: 11px;
+		font-weight: 600;
+	}
+	.badge-critical { background: var(--red); color: #fff; }
+	.badge-high { background: var(--yellow); color: #1e1e1e; }
+	.badge-medium { background: var(--blue); color: #fff; }
+	.badge-low { background: var(--green); color: #1e1e1e; }
+	.warning {
+		background: rgba(244, 71, 71, 0.1);
+		border-left: 3px solid var(--red);
+		padding: 12px 16px;
+		margin: 16px 0;
+		border-radius: 0 6px 6px 0;
+	}
+	.info {
+		background: rgba(86, 156, 214, 0.1);
+		border-left: 3px solid var(--blue);
+		padding: 12px 16px;
+		margin: 16px 0;
+		border-radius: 0 6px 6px 0;
+	}
+	.success {
+		background: rgba(78, 201, 176, 0.1);
+		border-left: 3px solid var(--green);
+		padding: 12px 16px;
+		margin: 16px 0;
+		border-radius: 0 6px 6px 0;
+	}
+	.flow-diagram {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 20px;
+		margin: 16px 0;
+		font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+		font-size: 12px;
+		line-height: 1.8;
+		white-space: pre;
+		overflow-x: auto;
+	}
+	.toc {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 20px 20px 20px 16px;
+		margin: 24px 0;
+	}
+	.toc ol {
+		padding-left: 20px;
+	}
+	.toc a {
+		color: var(--blue);
+		text-decoration: none;
+	}
+	.toc a:hover {
+		text-decoration: underline;
+	}
+	.review-badge {
+		display: inline-block;
+		padding: 4px 12px;
+		border-radius: 4px;
+		font-size: 11px;
+		font-weight: 600;
+		margin-left: 8px;
+	}
+	.review-fixed { background: var(--green); color: #1e1e1e; }
+</style>
+</head>
+<body>
+
+<div class="header">
+	<h1>親子エージェント同期 設計仕様書</h1>
+	<div class="meta">
+		<span>バージョン: 1.1</span>
+		<span>対象: CSM v0.4.0</span>
+		<span>作成日: 2026-04-06</span>
+		<span>ステータス: レビュー指摘修正済み</span>
+	</div>
+</div>
+
+<div class="container">
+
+	<!-- レビュー対応サマリー -->
+	<div class="success">
+		<strong>品質管理部レビュー対応 (v1.1)</strong><br>
+		HIGH 4件・MEDIUM 4件・LOW 2件の指摘を受け、以下を修正:
+		<ul style="margin-top: 8px; margin-bottom: 0;">
+			<li>名前変更時の呼び出しシーケンスを追記（セクション5.2, 8.3）</li>
+			<li>全テーブルセルのエスケープ処理を統一（セクション5.3）</li>
+			<li>排他制御のメモリリーク対策を追加（セクション13）</li>
+			<li>クロススコープ親子関係ポリシーを明確化（セクション5.5）</li>
+			<li>マイグレーション実行条件を明確化（セクション12）</li>
+			<li>関数名を <code>hasCircularRef</code> に変更（セクション6）</li>
+			<li>マーカー破損チェックの責務レイヤーを統一（セクション7）</li>
+			<li>テストケース追加（セクション11）</li>
+		</ul>
+	</div>
+
+	<!-- 目次 -->
+	<div class="toc">
+		<strong>目次</strong>
+		<ol>
+			<li><a href="#background">背景と課題</a></li>
+			<li><a href="#overview">設計概要</a></li>
+			<li><a href="#marker-format">マーカー形式とセクション構造</a></li>
+			<li><a href="#trigger-events">トリガーイベント</a></li>
+			<li><a href="#sync-logic">同期ロジック詳細</a></li>
+			<li><a href="#circular-ref">循環参照防止</a></li>
+			<li><a href="#custom-protection">カスタム部分の保護</a></li>
+			<li><a href="#api-design">API設計</a></li>
+			<li><a href="#file-structure">ファイル構成</a></li>
+			<li><a href="#error-handling">エラーハンドリング</a></li>
+			<li><a href="#testing">テスト方針</a></li>
+			<li><a href="#migration">マイグレーション</a></li>
+			<li><a href="#risks">リスクと対策</a></li>
+		</ol>
+	</div>
+
+	<!-- 1. 背景と課題 -->
+	<h2 id="background">1. 背景と課題</h2>
+
+	<p>現在のCSMでは、エージェント間の親子関係は <code>session-manager.json</code> の <code>parentAgent</code> フィールドで管理されている。しかし、子エージェントを追加しても親のルールファイルには子の情報が反映されない。</p>
+
+	<div class="card">
+		<div class="card-title">具体的な問題</div>
+		<ul>
+			<li>親エージェント（例: 取締役）は、配下にどの子エージェントがいるか<strong>ルールファイルから知ることができない</strong></li>
+			<li>Claude Codeはセッション開始時にルールファイルを読むため、子の存在を知らないまま動作する</li>
+			<li>結果、タスク委任ができず、全てを自分で処理してしまう</li>
+			<li>手動でルールファイルに子エージェント情報を書いても、子の追加・削除・変更時に同期が壊れる</li>
+		</ul>
+	</div>
+
+	<!-- 2. 設計概要 -->
+	<h2 id="overview">2. 設計概要</h2>
+
+	<h3>方針: マーカーセクション方式</h3>
+
+	<p>親のルールファイル本文（YAMLフロントマター以降）に、HTMLコメントマーカーで囲んだ<strong>自動管理セクション</strong>を設ける。このセクション内のみCSMが自動更新し、マーカー外の手動記述は一切触れない。</p>
+
+	<div class="info">
+		<strong>設計判断: なぜフロントマターではなく本文か？</strong><br>
+		<ul style="margin-top: 8px; margin-bottom: 0;">
+			<li>フロントマターの <code>description</code> はClaude Codeのsystem promptに注入される重要な領域。ここに子リストを入れると肥大化する</li>
+			<li>本文はユーザーが自由にカスタマイズできる領域であり、マーカーで区切ることでCSM管理部分と共存できる</li>
+			<li>既存の <code>buildDescription()</code> テンプレートとの干渉を避けられる</li>
+		</ul>
+	</div>
+
+	<!-- 3. マーカー形式 -->
+	<h2 id="marker-format">3. マーカー形式とセクション構造</h2>
+
+	<h3>3.1 マーカー定義</h3>
+
+<pre>
+&lt;!-- CSM:CHILDREN:START --&gt;
+## 配下エージェント
+
+| 部署名 | モデル | 役割 | セッションモード |
+|--------|--------|------|-----------------|
+| CSM開発部 | opus | Claude Session Managerの開発・改善 | 固定 |
+| テスト部 | sonnet | 品質管理・テスト実行 | 固定 |
+| 調査部 | haiku | 調査・リサーチ | 使い捨て |
+
+必要に応じて上記エージェントにタスクを委任してください。
+&lt;!-- CSM:CHILDREN:END --&gt;
+</pre>
+
+	<h3>3.2 セクション構成ルール</h3>
+
+	<table>
+		<tr>
+			<th>要素</th>
+			<th>内容</th>
+			<th>備考</th>
+		</tr>
+		<tr>
+			<td>開始マーカー</td>
+			<td><code>&lt;!-- CSM:CHILDREN:START --&gt;</code></td>
+			<td>行頭一致で検索</td>
+		</tr>
+		<tr>
+			<td>見出し</td>
+			<td><code>## 配下エージェント</code></td>
+			<td>固定テキスト</td>
+		</tr>
+		<tr>
+			<td>テーブル</td>
+			<td>Markdownテーブル（4列）</td>
+			<td>部署名 / モデル / 役割 / セッションモード</td>
+		</tr>
+		<tr>
+			<td>委任案内</td>
+			<td>委任を促すテキスト</td>
+			<td>子が1件以上の場合のみ</td>
+		</tr>
+		<tr>
+			<td>終了マーカー</td>
+			<td><code>&lt;!-- CSM:CHILDREN:END --&gt;</code></td>
+			<td>行頭一致で検索</td>
+		</tr>
+	</table>
+
+	<h3>3.3 子が0件の場合</h3>
+
+	<p>子エージェントが全て削除された場合、セクション自体を削除する（マーカーも含めて完全除去）。空のセクションを残さない。</p>
+
+	<h3>3.4 挿入位置</h3>
+
+	<div class="card">
+		<div class="card-title">挿入位置の決定ロジック（優先順）</div>
+		<ol>
+			<li>既にマーカーが存在する場合 → マーカー間を置換</li>
+			<li>本文末尾に追加（改行2つ + マーカーセクション）</li>
+		</ol>
+	</div>
+
+	<!-- 4. トリガーイベント -->
+	<h2 id="trigger-events">4. トリガーイベント</h2>
+
+	<table>
+		<tr>
+			<th>イベント</th>
+			<th>トリガー箇所</th>
+			<th>同期内容</th>
+		</tr>
+		<tr>
+			<td>子エージェント追加</td>
+			<td><code>addAgent()</code> 完了後</td>
+			<td>新しい親のルールファイルに子を追記</td>
+		</tr>
+		<tr>
+			<td>子エージェント削除</td>
+			<td><code>removeAgent()</code> 完了後</td>
+			<td>親のルールファイルから該当行を削除。子が0件になったらセクション除去</td>
+		</tr>
+		<tr>
+			<td>子の名前変更</td>
+			<td><code>onSave</code>（名前変更検出時）</td>
+			<td>旧名で <code>removeAgent</code> → 新名で <code>addAgent</code> → 親を1回同期</td>
+		</tr>
+		<tr>
+			<td>子のモデル変更</td>
+			<td><code>onSave</code>（編集時）</td>
+			<td>親のテーブル行を更新</td>
+		</tr>
+		<tr>
+			<td>子の役割変更</td>
+			<td><code>onSave</code>（編集時）</td>
+			<td>親のテーブル行を更新</td>
+		</tr>
+		<tr>
+			<td>親変更（移動）</td>
+			<td><code>onSave</code>（parentAgent変更検出時）</td>
+			<td>旧親から削除 + 新親に追加</td>
+		</tr>
+		<tr>
+			<td>一括再生成</td>
+			<td>手動コマンド</td>
+			<td>全ての親ルールファイルを再生成（リペア用）</td>
+		</tr>
+	</table>
+
+	<!-- 5. 同期ロジック詳細 -->
+	<h2 id="sync-logic">5. 同期ロジック詳細</h2>
+
+	<h3>5.1 全体フロー</h3>
+
+	<div class="flow-diagram">
+エージェント操作（追加/編集/削除）
+    │
+    ▼
+dataStore.addAgent() / removeAgent()
+    │
+    ▼
+parentChildSync.syncParentRuleFile(parentName)  ← <span style="color: var(--accent);">新規追加</span>
+    │
+    ├── 1. parentName のエージェント設定を取得
+    │       dataStore.getAgents() → find(a => a.name === parentName)
+    │
+    ├── 2. ルールファイルパスを解決
+    │       resolveRuleFilePath(parent.ruleFile)
+    │
+    ├── 3. ルールファイルを読み込み
+    │       fs.readFile(resolvedPath)
+    │
+    ├── 4. 子エージェント一覧を取得（★全スコープ統合）
+    │       agents.filter(a => a.parentAgent === parentName)
+    │
+    ├── 5. CHILDRENセクションを生成
+    │       buildChildrenSection(children)
+    │
+    ├── 6. マーカー破損チェック
+    │       validateMarkers(content) → 'valid' | 'corrupted' | 'absent'
+    │
+    ├── 7. マーカー状態で分岐
+    │   ├── valid → マーカー間を置換
+    │   ├── absent → 本文末尾に追加
+    │   └── corrupted → 変更せず警告出力
+    │
+    └── 8. ファイルに書き戻し
+            fs.writeFile(resolvedPath, newContent)
+	</div>
+
+	<h3>5.2 名前変更時のフロー <span class="review-badge review-fixed">レビュー指摘対応</span></h3>
+
+	<div class="info">
+		<strong>背景:</strong> <code>extension.ts</code> の名前変更処理は <code>removeAgent(oldName)</code> → <code>addAgent(newConfig)</code> の2ステップ。同期は <code>addAgent</code> 完了後の1回で十分（<code>syncParentRuleFile</code> は子一覧を再取得してセクション全体を再生成するため）。
+	</div>
+
+	<div class="flow-diagram">
+<span style="color: var(--yellow)">■ 子エージェント名前変更</span>
+extension.ts: onSave(newConfig), oldName !== newConfig.name
+  → dataStore.removeAgent(oldName)        // 旧名を削除
+  → autoGenerateRuleFile(newConfig)        // 子のルールファイル更新
+  → dataStore.addAgent(newConfig)          // 新名で保存
+  → syncParentRuleFile(newConfig.parentAgent)  // ★1回の同期で旧名行が消え新名行が入る
+	</div>
+
+	<h3>5.3 セクション生成ロジック <span class="review-badge review-fixed">レビュー指摘対応</span></h3>
+
+<pre>
+// Markdownテーブルのセル値をエスケープ（パイプ・改行）
+function escapeTableCell(value: string): string {
+    return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+}
+
+function buildChildrenSection(children: AgentConfig[]): string {
+    if (children.length === 0) return '';  // セクション自体を生成しない
+
+    const header = '&lt;!-- CSM:CHILDREN:START --&gt;\n## 配下エージェント\n';
+    const tableHeader = '| 部署名 | モデル | 役割 | セッションモード |\n|--------|--------|------|------------------|\n';
+
+    const rows = children
+        .sort((a, b) => a.name.localeCompare(b.name, 'ja'))
+        .map(c =&gt; {
+            const name = escapeTableCell(c.name);        // ★全フィールドをエスケープ
+            const model = escapeTableCell(c.model);
+            const mode = c.sessionMode === 'disposable' ? '使い捨て' : '固定';
+            const role = escapeTableCell(c.role || '未設定');
+            return `| ${name} | ${model} | ${role} | ${mode} |`;
+        })
+        .join('\n');
+
+    const footer = '\n\n必要に応じて上記エージェントにタスクを委任してください。\n&lt;!-- CSM:CHILDREN:END --&gt;';
+
+    return header + tableHeader + rows + footer;
+}
+</pre>
+
+	<h3>5.4 マーカー検証・置換ロジック <span class="review-badge review-fixed">レビュー指摘対応</span></h3>
+
+	<p>マーカー破損チェックは <code>replaceChildrenSection</code> 内部で統一的に行う。</p>
+
+<pre>
+type MarkerState = 'valid' | 'corrupted' | 'absent';
+
+interface ReplaceResult {
+    content: string;
+    state: MarkerState;
+}
+
+function replaceChildrenSection(content: string, newSection: string): ReplaceResult {
+    const startMarker = '&lt;!-- CSM:CHILDREN:START --&gt;';
+    const endMarker = '&lt;!-- CSM:CHILDREN:END --&gt;';
+
+    const startIdx = content.indexOf(startMarker);
+    const endIdx = content.indexOf(endMarker);
+
+    // マーカー破損チェック（片方のみ存在）
+    if ((startIdx !== -1) !== (endIdx !== -1)) {
+        return { content, state: 'corrupted' };
+    }
+    // 開始が終了より後ろ（逆順）
+    if (startIdx !== -1 &amp;&amp; startIdx &gt; endIdx) {
+        return { content, state: 'corrupted' };
+    }
+
+    if (startIdx !== -1 &amp;&amp; endIdx !== -1) {
+        // マーカー間を置換
+        const before = content.substring(0, startIdx);
+        const after = content.substring(endIdx + endMarker.length);
+
+        if (newSection === '') {
+            // 子が0件: セクションごと削除
+            // before末尾とafter先頭の空行を1つの改行に正規化
+            const trimmedBefore = before.replace(/\n{2,}$/, '\n');
+            const trimmedAfter = after.replace(/^\n{2,}/, '\n');
+            return {
+                content: trimmedBefore + trimmedAfter,
+                state: 'valid'
+            };
+        }
+        return { content: before + newSection + after, state: 'valid' };
+    }
+
+    // マーカーなし
+    if (newSection === '') return { content, state: 'absent' };  // 追加不要
+    return {
+        content: content.trimEnd() + '\n\n' + newSection + '\n',
+        state: 'absent'
+    };
+}
+</pre>
+
+	<h3>5.5 クロススコープ親子関係ポリシー <span class="review-badge review-fixed">レビュー指摘対応</span></h3>
+
+	<div class="card">
+		<div class="card-title">スコープをまたいだ親子関係の扱い</div>
+
+		<p><code>dataStore.getAgents()</code> はグローバル+ローカルのマージ済みリストを返す（ローカル優先）。<code>syncParentRuleFile</code> は常にこのマージ済みリストを使用する。</p>
+
+		<table>
+			<tr>
+				<th>親のスコープ</th>
+				<th>子のスコープ</th>
+				<th>同期可否</th>
+				<th>理由</th>
+			</tr>
+			<tr>
+				<td>グローバル</td>
+				<td>グローバル</td>
+				<td style="color: var(--green);">○ 同期する</td>
+				<td>同一スコープ、問題なし</td>
+			</tr>
+			<tr>
+				<td>グローバル</td>
+				<td>ローカル</td>
+				<td style="color: var(--green);">○ 同期する</td>
+				<td>グローバル親のルールファイルにローカル子の情報を追記。他プロジェクトでは不可視だが、CSMの子一覧は動的に再生成されるため問題なし</td>
+			</tr>
+			<tr>
+				<td>ローカル</td>
+				<td>グローバル</td>
+				<td style="color: var(--green);">○ 同期する</td>
+				<td>ローカル親のルールファイルにグローバル子の情報を追記</td>
+			</tr>
+			<tr>
+				<td>ローカル</td>
+				<td>ローカル</td>
+				<td style="color: var(--green);">○ 同期する</td>
+				<td>同一スコープ、問題なし</td>
+			</tr>
+		</table>
+
+		<p><strong>方針:</strong> スコープに関わらず全て同期する。<code>syncParentRuleFile</code> は子一覧を毎回 <code>getAgents()</code> から取得して全体を再生成するため、スコープの差異は自動的に解消される。</p>
+	</div>
+
+	<h3>5.6 親変更時のフロー（子の parentAgent が変更された場合）</h3>
+
+	<div class="flow-diagram">
+editAgent 検出: oldParent !== newParent
+    │
+    ├── syncParentRuleFile(oldParent)  ← 旧親から削除
+    │
+    └── syncParentRuleFile(newParent)  ← 新親に追加
+	</div>
+
+	<!-- 6. 循環参照防止 -->
+	<h2 id="circular-ref">6. 循環参照防止</h2>
+
+	<div class="warning">
+		<strong>CRITICAL:</strong> 循環参照は無限ループやデータ破損を引き起こす可能性がある。エージェント追加・編集時に必ず検証すること。
+	</div>
+
+	<h3>6.1 検証ロジック <span class="review-badge review-fixed">レビュー指摘対応</span></h3>
+
+	<p>関数名を <code>hasCircularRef</code> に変更（返り値の意味を直感的に）。</p>
+
+<pre>
+/**
+ * 循環参照を検出する。
+ * childName を parentName の子として設定する場合に、
+ * parentName の祖先チェーンに childName が含まれていないか検証。
+ *
+ * @returns true = 循環あり（設定不可）, false = 安全（設定可能）
+ */
+function hasCircularRef(
+    childName: string,
+    parentName: string,
+    agents: AgentConfig[]
+): boolean {
+    const agentMap = new Map(agents.map(a =&gt; [a.name, a]));
+    const visited = new Set&lt;string&gt;();
+    let current = parentName;
+
+    while (current) {
+        if (current === childName) return true;  // 循環検出
+        if (visited.has(current)) return true;    // 既訪問（別の循環）
+        visited.add(current);
+        const agent = agentMap.get(current);
+        current = agent?.parentAgent || '';
+    }
+    return false;
+}
+</pre>
+
+	<h3>6.2 検証タイミング</h3>
+
+	<table>
+		<tr>
+			<th>タイミング</th>
+			<th>検証内容</th>
+			<th>ブロック方法</th>
+		</tr>
+		<tr>
+			<td>フォーム送信時（フロントエンド）</td>
+			<td>parentAgent候補リストから自身と全子孫を除外（<code>getDescendants()</code>使用）</td>
+			<td>selectタグのoption無効化</td>
+		</tr>
+		<tr>
+			<td>onSaveコールバック（バックエンド）</td>
+			<td><code>hasCircularRef()</code> 実行</td>
+			<td>エラーメッセージ表示 + 保存中止</td>
+		</tr>
+	</table>
+
+	<div class="info">
+		<strong>既存実装の状態:</strong> 現在の <code>agentFormPanel.ts</code> では、parentAgent候補から自分自身を除外する処理のみ。子孫の除外と循環検出は未実装。
+	</div>
+
+	<!-- 7. カスタム部分の保護 -->
+	<h2 id="custom-protection">7. カスタム部分の保護</h2>
+
+	<h3>7.1 保護原則</h3>
+
+	<div class="card">
+		<div class="card-title">絶対に変更しない領域</div>
+		<ol>
+			<li><strong>YAMLフロントマター</strong> — <code>updateFrontmatterInContent()</code> の管轄。本機能は触れない</li>
+			<li><strong>マーカー外の本文</strong> — ユーザーが手動で書いた全ての記述</li>
+		</ol>
+	</div>
+
+	<h3>7.2 保護メカニズム <span class="review-badge review-fixed">レビュー指摘対応</span></h3>
+
+	<ul>
+		<li>マーカー検索は <code>indexOf()</code> で正確にマッチ</li>
+		<li>マーカー破損チェックは <code>replaceChildrenSection()</code> 内部で統一（返り値の <code>state</code> で呼び出し元に通知）</li>
+		<li>マーカー内にユーザーが手動で追記した内容は上書きされる（マーカー内はCSM管理領域であることをコメントで明記）</li>
+		<li><strong>2重マーカー問題:</strong> <code>indexOf()</code> は最初のマーカーペアを検出。2つ目以降のマーカーが存在する場合は無視される。テストケースで検証する</li>
+	</ul>
+
+	<h3>7.3 破損時の処理</h3>
+
+<pre>
+// replaceChildrenSection が 'corrupted' を返した場合
+const result = replaceChildrenSection(content, newSection);
+if (result.state === 'corrupted') {
+    outputChannel.appendLine(
+        `[WARN] ${parentName} のルールファイルでCHILDRENマーカーが破損しています。` +
+        `手動で修正するか、一括再生成コマンドを実行してください。`
+    );
+    return;  // 変更しない
+}
+</pre>
+
+	<!-- 8. API設計 -->
+	<h2 id="api-design">8. API設計</h2>
+
+	<h3>8.1 新規モジュール: <code>parentChildSync.ts</code></h3>
+
+	<table>
+		<tr>
+			<th>関数</th>
+			<th>引数</th>
+			<th>説明</th>
+		</tr>
+		<tr>
+			<td><code>syncParentRuleFile</code></td>
+			<td><code>(parentName: string)</code></td>
+			<td>指定した親エージェントのルールファイルにある子エージェントセクションを再生成する。子が0件ならセクション削除</td>
+		</tr>
+		<tr>
+			<td><code>syncAllParentRuleFiles</code></td>
+			<td><code>()</code></td>
+			<td>全エージェントの親ルールファイルを<strong>逐次</strong>再生成（リペア用コマンド）</td>
+		</tr>
+		<tr>
+			<td><code>buildChildrenSection</code></td>
+			<td><code>(children: AgentConfig[])</code></td>
+			<td>子エージェント一覧からマーカー付きMarkdownセクションを生成</td>
+		</tr>
+		<tr>
+			<td><code>replaceChildrenSection</code></td>
+			<td><code>(content, newSection)</code></td>
+			<td>既存ファイル内容のマーカーセクションを置換。破損検出含む。<code>ReplaceResult</code> を返す</td>
+		</tr>
+		<tr>
+			<td><code>escapeTableCell</code></td>
+			<td><code>(value: string)</code></td>
+			<td>Markdownテーブルセル用エスケープ</td>
+		</tr>
+		<tr>
+			<td><code>hasCircularRef</code></td>
+			<td><code>(childName, parentName, agents)</code></td>
+			<td>循環参照を検出。<code>true</code> = 循環あり（設定不可）、<code>false</code> = 安全</td>
+		</tr>
+		<tr>
+			<td><code>getDescendants</code></td>
+			<td><code>(agentName, agents)</code></td>
+			<td>指定エージェントの全子孫名を返す（フォームのUI用）</td>
+		</tr>
+	</table>
+
+	<h3>8.2 既存モジュールへの変更</h3>
+
+	<table>
+		<tr>
+			<th>ファイル</th>
+			<th>変更内容</th>
+		</tr>
+		<tr>
+			<td><code>extension.ts</code></td>
+			<td>
+				<ul>
+					<li><code>onSave</code> コールバック内、<code>addAgent()</code> 完了後に <code>syncParentRuleFile()</code> を呼び出す</li>
+					<li>名前変更時: <code>removeAgent(oldName)</code> → <code>addAgent(newConfig)</code> → <code>syncParentRuleFile(parentName)</code> を1回</li>
+					<li>parentAgent変更時: 旧親・新親の両方を同期</li>
+					<li><code>deleteAgent</code> 完了後に <code>syncParentRuleFile()</code> を呼び出す</li>
+					<li>一括再生成コマンド <code>claudeManager.syncAllParentRules</code> を登録</li>
+				</ul>
+			</td>
+		</tr>
+		<tr>
+			<td><code>agentFormPanel.ts</code></td>
+			<td>
+				<ul>
+					<li>parentAgent候補リストから自身 + 全子孫を除外（<code>getDescendants()</code> 使用）</li>
+				</ul>
+			</td>
+		</tr>
+		<tr>
+			<td><code>package.json</code></td>
+			<td>
+				<ul>
+					<li><code>claudeManager.syncAllParentRules</code> コマンド追加</li>
+				</ul>
+			</td>
+		</tr>
+	</table>
+
+	<h3>8.3 呼び出しシーケンス <span class="review-badge review-fixed">レビュー指摘対応</span></h3>
+
+	<div class="flow-diagram">
+<span style="color: var(--green)">■ 子エージェント追加</span>
+extension.ts: onSave(config)
+  → autoGenerateRuleFile(config)       // 子のルールファイル生成
+  → dataStore.addAgent(config)          // JSONに保存
+  → syncParentRuleFile(config.parentAgent)  // <span style="color: var(--accent);">★新規</span>
+
+<span style="color: var(--red)">■ 子エージェント削除</span>
+extension.ts: deleteAgent(agent)
+  → const parentName = agent.parentAgent  // 削除前に親名を保持
+  → dataStore.removeAgent(agent.name)     // JSONから削除
+  → syncParentRuleFile(parentName)        // <span style="color: var(--accent);">★新規</span>
+
+<span style="color: var(--yellow)">■ 子エージェント名前変更</span>  ← レビュー指摘で追加
+extension.ts: onSave(newConfig), oldName !== newConfig.name
+  → dataStore.removeAgent(oldName)        // 旧名を削除（JSONから消える）
+  → autoGenerateRuleFile(newConfig)       // 新名でルールファイル生成
+  → dataStore.addAgent(newConfig)         // 新名でJSON保存
+  → syncParentRuleFile(newConfig.parentAgent)  // <span style="color: var(--accent);">★1回で十分</span>
+  // ↑ getAgents()で最新の子一覧を取得 → セクション全体を再生成
+  //   旧名はJSON上に存在しないのでテーブルに含まれない
+
+<span style="color: var(--blue)">■ 子エージェント編集（親変更あり）</span>
+extension.ts: onSave(newConfig)
+  → const oldAgent = findByName(newConfig.name)
+  → const oldParent = oldAgent?.parentAgent
+  → autoGenerateRuleFile(newConfig)
+  → dataStore.addAgent(newConfig)
+  → if (oldParent &amp;&amp; oldParent !== newConfig.parentAgent) {
+      syncParentRuleFile(oldParent)              // 旧親更新 <span style="color: var(--accent);">★</span>
+    }
+  → if (newConfig.parentAgent) {
+      syncParentRuleFile(newConfig.parentAgent)  // 新親更新 <span style="color: var(--accent);">★</span>
+    }
+
+<span style="color: var(--purple)">■ 子エージェント編集（親変更なし、名前/モデル/役割変更）</span>
+extension.ts: onSave(newConfig)
+  → autoGenerateRuleFile(newConfig)
+  → dataStore.addAgent(newConfig)
+  → if (newConfig.parentAgent) {
+      syncParentRuleFile(newConfig.parentAgent)  // <span style="color: var(--accent);">★</span>
+    }
+	</div>
+
+	<!-- 9. ファイル構成 -->
+	<h2 id="file-structure">9. ファイル構成</h2>
+
+<pre>
+src/
+├── parentChildSync.ts    ← <span style="color: var(--accent);">新規作成</span>
+│   ├── syncParentRuleFile()
+│   ├── syncAllParentRuleFiles()
+│   ├── buildChildrenSection()
+│   ├── replaceChildrenSection()
+│   ├── escapeTableCell()
+│   ├── hasCircularRef()
+│   └── getDescendants()
+├── extension.ts          ← 変更（同期呼び出し追加）
+├── agentFormPanel.ts     ← 変更（候補リスト絞り込み）
+└── package.json          ← 変更（コマンド追加）
+</pre>
+
+	<p>予想コード量: <code>parentChildSync.ts</code> 約180〜230行</p>
+
+	<!-- 10. エラーハンドリング -->
+	<h2 id="error-handling">10. エラーハンドリング</h2>
+
+	<table>
+		<tr>
+			<th>エラー状況</th>
+			<th>処理</th>
+			<th>ユーザー通知</th>
+		</tr>
+		<tr>
+			<td>親のルールファイルが存在しない</td>
+			<td>同期をスキップ（エラーにしない）</td>
+			<td>OutputChannelに情報ログ</td>
+		</tr>
+		<tr>
+			<td>親にruleFileが未設定</td>
+			<td>同期をスキップ</td>
+			<td>なし（正常動作）</td>
+		</tr>
+		<tr>
+			<td>ファイル書き込み権限エラー</td>
+			<td>例外をcatchし、元の内容を保持</td>
+			<td>VS Code通知（warning）</td>
+		</tr>
+		<tr>
+			<td>マーカー破損（片方のみ存在/逆順）</td>
+			<td>変更しない</td>
+			<td>OutputChannelに警告</td>
+		</tr>
+		<tr>
+			<td>循環参照検出</td>
+			<td>保存を中止</td>
+			<td>VS Code通知（error）+ フォームに戻る</td>
+		</tr>
+		<tr>
+			<td>parentAgent が agents に存在しない</td>
+			<td>同期をスキップ</td>
+			<td>OutputChannelに警告</td>
+		</tr>
+	</table>
+
+	<!-- 11. テスト方針 -->
+	<h2 id="testing">11. テスト方針</h2>
+
+	<h3>11.1 ユニットテスト</h3>
+
+	<table>
+		<tr>
+			<th>テストケース</th>
+			<th>検証内容</th>
+		</tr>
+		<tr>
+			<td>buildChildrenSection: 子1件</td>
+			<td>マーカー + テーブル1行 + 委任案内の正しい生成</td>
+		</tr>
+		<tr>
+			<td>buildChildrenSection: 子3件</td>
+			<td>名前順ソート、全行出力</td>
+		</tr>
+		<tr>
+			<td>buildChildrenSection: 子0件</td>
+			<td>空文字列を返す</td>
+		</tr>
+		<tr>
+			<td>escapeTableCell: パイプ含む名前</td>
+			<td><code>開発部|テスト部</code> → <code>開発部\|テスト部</code></td>
+		</tr>
+		<tr>
+			<td>escapeTableCell: 改行含む役割</td>
+			<td>改行がスペースに置換されること</td>
+		</tr>
+		<tr>
+			<td>replaceChildrenSection: マーカーあり → 置換</td>
+			<td>マーカー外の本文が保持されること</td>
+		</tr>
+		<tr>
+			<td>replaceChildrenSection: マーカーなし → 末尾追加</td>
+			<td>既存本文 + 改行2つ + セクション</td>
+		</tr>
+		<tr>
+			<td>replaceChildrenSection: 子0件 → セクション削除</td>
+			<td>マーカーと内容が完全除去。前後の空行が正規化されること</td>
+		</tr>
+		<tr>
+			<td>replaceChildrenSection: 末尾にセクションがある場合の削除</td>
+			<td>末尾の余分な改行が発生しないこと</td>
+		</tr>
+		<tr>
+			<td>replaceChildrenSection: 本文がセクションのみの場合の削除</td>
+			<td>空の本文が正しく返ること</td>
+		</tr>
+		<tr>
+			<td>replaceChildrenSection: マーカー破損（開始のみ）</td>
+			<td><code>state: 'corrupted'</code> を返し、内容が変更されないこと</td>
+		</tr>
+		<tr>
+			<td>replaceChildrenSection: マーカー破損（終了のみ）</td>
+			<td>同上</td>
+		</tr>
+		<tr>
+			<td>replaceChildrenSection: マーカー逆順</td>
+			<td>同上</td>
+		</tr>
+		<tr>
+			<td>replaceChildrenSection: 2重マーカー</td>
+			<td>最初のマーカーペアのみ置換。2つ目は不変</td>
+		</tr>
+		<tr>
+			<td>replaceChildrenSection: Windows改行（\r\n）</td>
+			<td>改行コードに関わらず正しく動作すること</td>
+		</tr>
+		<tr>
+			<td>replaceChildrenSection: フロントマターにHTMLコメント含む</td>
+			<td>フロントマター内のコメントがマーカーと誤検出されないこと</td>
+		</tr>
+		<tr>
+			<td>hasCircularRef: A→B→C、CにAを親設定</td>
+			<td><code>true</code> を返す</td>
+		</tr>
+		<tr>
+			<td>hasCircularRef: 正常な階層</td>
+			<td><code>false</code> を返す</td>
+		</tr>
+		<tr>
+			<td>hasCircularRef: 自分自身を親に設定</td>
+			<td><code>true</code> を返す</td>
+		</tr>
+		<tr>
+			<td>getDescendants: 3階層ツリー</td>
+			<td>全子孫名が返ること</td>
+		</tr>
+	</table>
+
+	<h3>11.2 統合テスト</h3>
+
+	<ul>
+		<li>子エージェント追加後、親のルールファイルにテーブル行が追加されること</li>
+		<li>子エージェント削除後、親のルールファイルからテーブル行が除去されること</li>
+		<li>名前変更時、旧名行が消え新名行が追加されること（1回の同期で）</li>
+		<li>親変更時、旧親・新親の両方が正しく更新されること</li>
+		<li>フロントマターやカスタム本文が一切変更されないこと</li>
+		<li>一括再生成コマンドで全親が正しく同期されること</li>
+		<li>ルールファイルのないエージェントが親の場合、エラーにならないこと</li>
+	</ul>
+
+	<!-- 12. マイグレーション -->
+	<h2 id="migration">12. マイグレーション <span class="review-badge review-fixed">レビュー指摘対応</span></h2>
+
+	<h3>12.1 既存環境への導入</h3>
+
+	<p>既存のルールファイルにはCHILDRENマーカーが存在しない。以下の方式で対応:</p>
+
+	<div class="card">
+		<div class="card-title">方式: マーカー不在時の毎回同期</div>
+		<p><code>syncParentRuleFile</code> は「マーカーなし + 子あり → 末尾に追加」の動作をする。つまり、<strong>エージェント操作のたびに自動的にマーカーが追加される</strong>。特別なマイグレーション処理は不要。</p>
+
+		<ul>
+			<li>子エージェントを追加・編集すれば、その時点で親にマーカーが入る</li>
+			<li>既存環境を一気に全て更新したい場合は <code>claudeManager.syncAllParentRules</code> コマンドを手動実行</li>
+			<li>ユーザーがマーカーを手動削除した場合: 次回のエージェント操作で再追加される（意図的な動作）</li>
+		</ul>
+	</div>
+
+	<div class="info">
+		<strong>activate()時の自動実行は行わない。</strong> 理由: 起動のたびに全ルールファイルを走査するのはパフォーマンスに影響する。ユーザーが必要と判断した場合に手動コマンドで実行する。
+	</div>
+
+	<h3>12.2 手動記述との共存</h3>
+
+	<p>既に手動で子エージェント情報を書いているユーザーがいる可能性がある。マーカー追加時に既存の手動記述は<strong>そのまま残す</strong>（マーカー外なので影響しない）。ユーザーが手動記述を不要と判断したら自分で削除してもらう。</p>
+
+	<!-- 13. リスクと対策 -->
+	<h2 id="risks">13. リスクと対策</h2>
+
+	<table>
+		<tr>
+			<th>リスク</th>
+			<th><span class="badge badge-critical">深刻度</span></th>
+			<th>対策</th>
+		</tr>
+		<tr>
+			<td>ルールファイルのカスタム記述を上書き</td>
+			<td><span class="badge badge-critical">CRITICAL</span></td>
+			<td>マーカー内のみ操作。マーカー外は一切触れない。破損時は変更しない</td>
+		</tr>
+		<tr>
+			<td>循環参照による無限ループ</td>
+			<td><span class="badge badge-critical">CRITICAL</span></td>
+			<td><code>hasCircularRef()</code> でフォーム送信時 + 保存時の二重チェック</td>
+		</tr>
+		<tr>
+			<td>同時編集によるファイル競合</td>
+			<td><span class="badge badge-high">HIGH</span></td>
+			<td>親名単位のasync mutex排他制御（下記実装参照）</td>
+		</tr>
+		<tr>
+			<td>大量の子エージェントでセクションが肥大化</td>
+			<td><span class="badge badge-low">LOW</span></td>
+			<td>テーブル形式で1行1エージェント。20件程度なら問題なし</td>
+		</tr>
+		<tr>
+			<td>ルールファイルがUTF-8以外</td>
+			<td><span class="badge badge-low">LOW</span></td>
+			<td>CSMは全てUTF-8前提。他エンコーディングは非対応</td>
+		</tr>
+	</table>
+
+	<h3>排他制御の実装方針 <span class="review-badge review-fixed">レビュー指摘対応</span></h3>
+
+<pre>
+// 親名ごとにロックを管理（同じ親への同時書き込み防止）
+// ★解決済みPromiseは自動クリーンアップ（メモリリーク対策）
+const syncLocks = new Map&lt;string, Promise&lt;void&gt;&gt;();
+
+async function syncParentRuleFile(parentName: string): Promise&lt;void&gt; {
+    if (!parentName) return;
+
+    // 前回の同期が完了するまで待つ
+    const prev = syncLocks.get(parentName) || Promise.resolve();
+    const current = prev
+        .then(() =&gt; doSync(parentName))
+        .catch((err) =&gt; {
+            // エラーをOutputChannelに出力（飲み込まない）
+            outputChannel.appendLine(
+                `[ERROR] ${parentName} の親ルール同期に失敗: ${err.message}`
+            );
+        })
+        .finally(() =&gt; {
+            // ★完了後にMapから削除（メモリリーク防止）
+            if (syncLocks.get(parentName) === current) {
+                syncLocks.delete(parentName);
+            }
+        });
+    syncLocks.set(parentName, current);
+    await current;
+}
+
+// syncAllParentRuleFiles は逐次実行（同一ファイルへの並行書き込み防止）
+async function syncAllParentRuleFiles(): Promise&lt;void&gt; {
+    const agents = await dataStore.getAgents();
+    const parentNames = new Set(
+        agents.filter(a =&gt; a.parentAgent).map(a =&gt; a.parentAgent!)
+    );
+    for (const parentName of parentNames) {
+        await syncParentRuleFile(parentName);  // 逐次実行
+    }
+}
+</pre>
+
+	<!-- フッター -->
+	<div style="margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--text-dim); font-size: 12px;">
+		<p>CSM 親子エージェント同期 設計仕様書 v1.1 | Claude Session Manager</p>
+		<p>作成: CSM開発部 | レビュー: 品質管理部 (2026-04-06)</p>
+	</div>
+
+</div>
+</body>
+</html>
