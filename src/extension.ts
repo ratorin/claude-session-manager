@@ -285,7 +285,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 			const child = spawn('claude', args, {
 				env,
-				cwd: config.workDir || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir(),
+				cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir(),
 				stdio: ['ignore', 'pipe', 'pipe'],
 				shell: true,
 				windowsHide: true,
