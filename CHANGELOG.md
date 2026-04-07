@@ -1,5 +1,34 @@
 # 更新履歴
 
+## v0.3.2 (2026-04-07)
+
+### 親子ルール自動同期
+- `parentChildSync.ts` 新設 — 子エージェント追加/削除/変更時に親ルールファイルの配下エージェントセクションを自動更新
+
+### maxThinkingTokens 完全削除
+- `maxThinkingTokens` フィールドを AgentConfig・フォーム・CLI Builder・frontmatter から完全削除
+- 推論制御は effort に一本化
+
+### エージェント作成時のセッション自動紐づけ
+- `spawn` + `stream-json` でセッションを自動作成し、紐づけまでワンステップ完了
+- Windows 環境の `spawn ENOENT` を `shell: true` で修正
+- セッション初期化メッセージに役割情報を含める
+- 自動作成セッションの cwd をワークスペースルートに統一
+
+### バグ修正
+- description テンプレートの「を担当する」重複を解消
+- `SessionStart` フック重複登録防止（`ensureSubagentHooks` 改善）
+- 稼働状態リセットバグ修正（`refreshAll` + `child.close` 時に再スキャン）
+- stop シグナルで `liveSessionIds` から即除去
+- ステータスバーとツリーの同期修正
+- `package.json` 警告修正
+
+### ドキュメント・公開
+- agentWatcher 仕様書追加
+- VS Code Marketplace + Open VSX に公開
+
+---
+
 ## v0.3.1 (2026-04-05)
 
 ### YAML Frontmatter 移行

@@ -1,8 +1,8 @@
-# Claude Session Manager v0.3.1 仕様書
+# Claude Session Manager v0.3.2 仕様書
 
 ## 概要
 
-v0.2.0 でエージェント管理の基盤を再設計し、v0.3.0 で監視アーキテクチャ刷新・タスク管理・利用制限モニター・メモリ拡張・フォーム拡張を追加。v0.3.1 で YAML Frontmatter 移行・SubagentStart/Stop フック・マイグレーションバナー・セッション引き継ぎ改善を実施。
+v0.2.0 でエージェント管理の基盤を再設計し、v0.3.0 で監視アーキテクチャ刷新・タスク管理・利用制限モニター・メモリ拡張・フォーム拡張を追加。v0.3.1 で YAML Frontmatter 移行・SubagentStart/Stop フック・マイグレーションバナー・セッション引き継ぎ改善を実施。v0.3.2 で親子ルール自動同期・セッション自動紐づけ・maxThinkingTokens削除・稼働状態修正・Marketplace公開を実施。
 
 ---
 
@@ -1359,7 +1359,77 @@ description: |
 
 ---
 
+## 57. v0.3.2 — 親子ルール自動同期 + セッション自動紐づけ + maxThinkingTokens削除
+
+### 親子ルール自動同期（parentChildSync.ts）
+
+子エージェント追加/削除/変更時に親ルールファイルの配下エージェントセクションを自動更新:
+
+- `syncParentRuleFile(parentAgent, allAgents)` — 親のルールファイルに配下エージェント一覧を書き込み
+- 子エージェントの追加・削除・名前変更に連動
+- YAML Frontmatter の `description` フィールド内に配下セクションを挿入
+
+### maxThinkingTokens 完全削除
+
+推論制御を effort に一本化:
+
+- `AgentConfig.maxThinkingTokens` フィールド削除
+- `agentFormPanel.ts` から MaxThinkingTokens 数値入力欄削除
+- `cliBuilder.ts` から `MAX_THINKING_TOKENS` 環境変数出力削除
+- `frontmatterUtils.ts` から maxThinkingTokens マッピング削除
+
+### エージェント作成時のセッション自動紐づけ
+
+エージェント登録後に自動でセッションを作成・紐づけ:
+
+- `spawn` + `stream-json` で Claude CLI を実行し、セッションIDを取得
+- 初期化メッセージに役割情報を含めることで、セッション開始時からコンテキストを保持
+- cwd をワークスペースルートに統一（プロジェクト配下に正しくセッションが作成される）
+- Windows 環境の `spawn ENOENT` を `shell: true` で解決
+
+### descriptionテンプレート文言バグ修正
+
+- ルールファイル自動生成時の「を担当する」重複を解消
+
+### SessionStart重複防止
+
+- `ensureSubagentHooks()` で SessionStart フックの重複登録を検出・スキップ
+
+### 稼働状態リセットバグ修正
+
+- `refreshAll` 時 + `child.close` 時に再スキャンを実行し、ステータスバーとツリーの同期を確保
+- stop シグナル受信時に `liveSessionIds` から即除去
+
+### package.json 警告修正
+
+- VS Code Marketplace バリデーション警告を修正
+
+### agentWatcher 仕様書
+
+- `docs/agentWatcher-spec.md` 追加 — SignalWatcher・PIDスキャン・デバウンスの動作仕様を文書化
+
+### Marketplace + Open VSX 公開
+
+- VS Code Marketplace（ratorin.claude-session-manager）に公開
+- Open VSX Registry にも公開
+
+### 影響範囲
+
+| ファイル | 変更 |
+|---|---|
+| `parentChildSync.ts` | **新規作成** — 親子ルールファイル同期 |
+| `types.ts` | `maxThinkingTokens` フィールド削除 |
+| `agentFormPanel.ts` | MaxThinkingTokens入力欄削除 |
+| `cliBuilder.ts` | MAX_THINKING_TOKENS環境変数出力削除 |
+| `frontmatterUtils.ts` | maxThinkingTokens マッピング削除 |
+| `extension.ts` | セッション自動紐づけ、SessionStart重複防止、稼働状態再スキャン |
+| `agentWatcher.ts` | stopシグナル即除去、refreshAll再スキャン |
+| `package.json` | v0.3.2、警告修正 |
+
+---
+
 ## バージョン
+- **0.3.2** — 親子ルール自動同期 + セッション自動紐づけ + maxThinkingTokens削除 + Marketplace公開
 - **0.3.1** — YAML Frontmatter 移行 + SubagentStart/Stop フック + マイグレーションバナー + SignalWatcher
 - **0.3.0** — 監視アーキテクチャ刷新 + メモリ拡張 + フォーム拡張 + CLI Builder + タスク管理 + パフォーマンス改善
 - **0.2.8** — ルールファイル管理改善（スコープ分離・自動生成強化・MEMORY.mdポインタ方式）

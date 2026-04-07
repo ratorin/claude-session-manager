@@ -149,6 +149,16 @@ description: |
 - クリックで YAML Frontmatter 変換 + フォルダ構造移行を一括実行
 - 移行完了後バナーは自動非表示
 
+### 親子ルール自動同期
+
+- 子エージェント追加/削除/変更時に親ルールファイルの配下エージェントセクションを自動更新
+- 手動でルールファイルを編集する必要なし
+
+### セッション自動紐づけ
+
+- エージェント登録時にセッションを自動作成・紐づけ（ワンステップ完了）
+- 初期化メッセージに役割情報を含め、セッション開始時から文脈を保持
+
 ### エージェントフォーム拡張
 
 - **推論努力レベル（Effort）** — Low / Medium / High / Max の4段階（MaxはOpus専用でグレーアウト連動）
@@ -388,6 +398,16 @@ VS Code の設定画面（`Ctrl+,`）から `claudeManager` で検索して変�
 | `trash.folder` | string | "" | ゴミ箱フォルダパス |
 
 ---
+
+## インストール
+
+### Marketplace から（推奨）
+VS Code Marketplace または Open VSX Registry で「Claude Session Manager」を検索してインストール。
+
+### VSIX から
+```bash
+code --install-extension claude-session-manager-0.3.2.vsix
+```
 
 ## 動作要件
 
