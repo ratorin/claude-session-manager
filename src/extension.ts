@@ -644,8 +644,14 @@ export function activate(context: vscode.ExtensionContext) {
 		tagProvider.refresh();
 		agentProvider.refresh();
 		sessionDecoProvider.refresh();
+		// agentWatcher.scheduleUpdate() → onDidChange → updateStatusBar() の順で実行
+		// updateStatusBar()を直接呼ぶとstates再構築前の古いデータを表示するため、
+		// onDidChangeイベント経由に統一する
 		agentWatcher.scheduleUpdate();
-		updateStatusBar();
+		// 監視無効時はonDidChangeが発火しないため直接更新
+		if (!agentWatcher.isEnabled()) {
+			updateStatusBar();
+		}
 		updateHasAgentsContext();
 	}
 

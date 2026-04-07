@@ -295,9 +295,9 @@ export class AgentWatcher implements vscode.Disposable {
 			}
 
 			if (changed) {
-				// シグナルベースの変更をライブセッションに反映し、ツリー更新
-				this.applySignalState();
-				this._onDidChange.fire();
+				// シグナルベースの変更を反映 → 全体再スキャンでstatesも再構築
+				// （applySignalState + _onDidChange.fire だけでは states が古いまま残る）
+				this.scheduleUpdate();
 			}
 		} catch {
 			// readdir失敗は無視
