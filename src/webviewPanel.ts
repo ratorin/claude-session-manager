@@ -178,8 +178,8 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 			<span class="agent-name">${escapeHtml(agent.name)}</span>
 			<span class="agent-role">${escapeHtml(agent.role)}</span>
 			<span class="agent-actions">
-				<a class="agent-link" onclick="editAgent()">設定編集</a>
-				${agent.ruleFile ? '<a class="agent-link" onclick="editRuleFile()">ルールファイル</a>' : ''}
+				<a class="agent-link" id="editAgentBtn">設定編集</a>
+				${agent.ruleFile ? '<a class="agent-link" id="editRuleFileBtn">ルールファイル</a>' : ''}
 			</span>
 		</div>`
 		: '';
@@ -213,7 +213,7 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 	}).join('\n');
 
 	const displayName = session.customName || session.claudeTitle || session.firstMessage;
-	const tagsHtml = tags.map((t) => `<span class="tag">${escapeHtml(t)}<span class="tag-remove" onclick="removeTag('${escapeHtml(t)}')">×</span></span>`).join('');
+	const tagsHtml = tags.map((t) => `<span class="tag">${escapeHtml(t)}<span class="tag-remove" data-tag="${escapeHtml(t)}">×</span></span>`).join('');
 	const dateRange = `${session.firstTimestamp.toLocaleString('ja-JP')} 〜 ${session.lastTimestamp.toLocaleString('ja-JP')}`;
 	const nonce = crypto.randomBytes(16).toString('hex');
 
@@ -516,7 +516,7 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 					${session.gitBranch ? `<span class="meta-item">🔀 ${escapeHtml(session.gitBranch)}</span>` : ''}
 					<span class="meta-item">📅 ${dateRange}</span>
 				</div>
-				<div class="tags">${tagsHtml}<span class="tag tag-add" onclick="addTag()">+ タグ追加</span></div>
+				<div class="tags">${tagsHtml}<span class="tag tag-add" id="addTagBtn">+ タグ追加</span></div>
 			</div>
 		</div>
 		<div class="note-area">
@@ -531,7 +531,7 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 	<!-- 下部: 会話 -->
 	<div class="chat-panel">
 		<div class="search-bar">
-			<input type="text" id="searchInput" placeholder="会話内を検索..." oninput="filterMessages(this.value)">
+			<input type="text" id="searchInput" placeholder="会話内を検索...">
 		</div>
 		<div id="messages">
 			${messagesHtml}
@@ -553,33 +553,52 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 			}, 500);
 		});
 
-		function addTag() {
-			vscode.postMessage({ type: 'addTag' });
-		}
-		function removeTag(tag) {
-			vscode.postMessage({ type: 'removeTag', tag: tag });
-		}
-
-		function editAgent() {
-			vscode.postMessage({ type: 'editAgent' });
-		}
-		function editRuleFile() {
-			vscode.postMessage({ type: 'editRuleFile' });
+		// タグ追加ボタン
+		const addTagBtn = document.getElementById('addTagBtn');
+		if (addTagBtn) {
+			addTagBtn.addEventListener('click', () => {
+				vscode.postMessage({ type: 'addTag' });
+			});
 		}
 
-		function filterMessages(keyword) {
+		// タグ削除ボタン（イベント委譲）
+		document.querySelector('.tags').addEventListener('click', (e) => {
+			const btn = e.target.closest('.tag-remove');
+			if (!btn) { return; }
+			vscode.postMessage({ type: 'removeTag', tag: btn.dataset.tag });
+		});
+
+		// エージェント設定編集ボタン
+		const editAgentBtn = document.getElementById('editAgentBtn');
+		if (editAgentBtn) {
+			editAgentBtn.addEventListener('click', () => {
+				vscode.postMessage({ type: 'editAgent' });
+			});
+		}
+
+		// ルールファイル編集ボタン
+		const editRuleFileBtn = document.getElementById('editRuleFileBtn');
+		if (editRuleFileBtn) {
+			editRuleFileBtn.addEventListener('click', () => {
+				vscode.postMessage({ type: 'editRuleFile' });
+			});
+		}
+
+		// 検索フィルター
+		document.getElementById('searchInput').addEventListener('input', (e) => {
+			const keyword = e.target.value;
 			const messages = document.querySelectorAll('.message');
 			const lower = keyword.toLowerCase();
 			messages.forEach(msg => {
 				const text = msg.textContent.toLowerCase();
 				msg.style.display = (!keyword || text.includes(lower)) ? '' : 'none';
 			});
-		}
+		});
 
 		// リンクのクリックハンドラー（ファイルパス→エディタ、URL→ブラウザ）
 		document.addEventListener('click', (e) => {
 			const link = e.target.closest('.md-link');
-			if (!link) return;
+			if (!link) { return; }
 			e.preventDefault();
 			vscode.postMessage({
 				type: 'openLink',
