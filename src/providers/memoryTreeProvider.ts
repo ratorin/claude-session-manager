@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { MemoryFile } from './types';
-import { loadMemoryFiles, loadGlobalMemoryFiles, getMemoryStats, getSettingsFilePaths } from './memoryManager';
+import { MemoryFile } from '../models/types';
+import { loadMemoryFiles, loadGlobalMemoryFiles, getMemoryStats, getSettingsFilePaths } from '../utils/memoryManager';
 
 type MemoryTreeNode = MemoryTopGroupItem | MemoryGroupItem | MemoryFileItem | MemoryStatsItem | MemoryIndexItem | SettingsFileItem;
 

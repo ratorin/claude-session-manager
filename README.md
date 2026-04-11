@@ -2,6 +2,48 @@
 
 [Claude Code](https://claude.com/claude-code) の会話履歴・メモリ・エージェントを管理する VS Code 拡張機能。
 
+---
+
+## ⚠️ 取締役セッション運用者へ（重要）
+
+### エージェント運用について（v0.4.1 更新）
+
+v0.4.0 よりエージェント定義は **`~/.claude/agents/*.md`**（Claude Code CLI 標準）が **Single Source of Truth** です。
+CSM はエージェント定義ファイルを自動検出・GUI管理し、`session-manager.json` にはブックマーク・タグ等の CSM 独自データのみを保持します。
+
+v0.4.1 では旧形式 `agents[]` からの自動マイグレーションを実施し、`agentSessions` に統一しました。
+
+#### 起動方式
+
+部署への指示は `claude --agent <name> -p` で **別プロセス** として起動してください:
+
+```bash
+# 部署に指示（標準）
+echo "指示内容" | claude --agent <部署名> -p > .agent-rules/tmp/agent_{部署名}_{タスク}.txt 2>&1
+
+# 同じ部署に並行タスク
+echo "タスクA" | claude --agent <部署名> -p > .agent-rules/tmp/agent_{部署名}_taskA.txt 2>&1 &
+echo "タスクB" | claude --agent <部署名> -p > .agent-rules/tmp/agent_{部署名}_taskB.txt 2>&1 &
+```
+
+> **Agent ツール（subagent_type）は使い捨て調査のみ許可。** 並行タスクには使わないでください（親コンテキスト漏洩の問題があります — Issue #14118）。
+
+#### セッション跨ぎの記憶（memory: project）
+
+`agents/*.md` の frontmatter に `memory: project` を設定すると、セッションをまたいでエージェントが記憶を保持します。ルールファイルに遺言を蓄積する旧方式と異なり、Claude Code 本体の機能として自然に動作します。
+
+#### 旧方式からの移行
+
+`--resume <セッションID>` や `session-manager.json` の `agents[]` を使っていた場合は、移行スクリプトで一括変換できます:
+
+```bash
+python c:/xampp/.agent-rules/temp/migrate_agents.py
+```
+
+移行後は `--agent <name> -p` での起動に切り替えてください。`session-manager.json` の旧 `agents[]` は読み取り専用で後方互換を維持しますが、新規追加はすべて `agents/*.md` に対して行われます。
+
+---
+
 ブックマーク、タグ付け、メモ、Markdownプレビュー、エージェント管理、組織図など、Claude Code本体にない会話・エージェント管理機能を提供します。
 
 ---
@@ -37,10 +79,12 @@
 
 ### エージェント管理
 
+> v0.4.0 より `~/.claude/agents/*.md`（CLI標準）が Single Source of Truth です。CSM のフォームは agents/*.md を直接読み書きします。
+
 - **エージェント登録** — セッションを右クリック → 「エージェントとして登録」
   - Webviewフォームで部署名・役割・モデル・セッション運用（固定/使い捨て）・スコープ・上司・作業フォルダを一括入力
   - カード型ラジオボタンでモデル・運用モード・スコープを選択、フォルダ選択ダイアログ連携
-  - ルールファイルはスコープ（プロジェクト/グローバル）に基づいて保存時に自動生成
+  - 登録すると `~/.claude/agents/<name>.md` が自動生成される（`agentFileManager.ts` 経由）
 - **エージェントプレビュー** — エージェント一覧でクリックすると読み取り専用プレビューを表示
   - 名前・モデル・上司・役割・子エージェント一覧・ルールファイル内容を確認
   - 「設定」ボタンで編集フォームに切り替え
@@ -71,8 +115,9 @@
 
 ### 組織図・ステータスバー
 
+- **組織階層は `parentAgent` フィールドで構築** — 各 `agents/*.md` の frontmatter に `parentAgent: director` のように上司を指定すると、自動的にツリー構造が構築される
 - ステータスバー（左下）に常時 `👥 M`（登録総数）を表示。`enableAgentMonitor: true` 時は `🟢 N 👥 M`（動作中数+登録総数）をリアルタイム更新し、動作中エージェントがいるときは背景色で強調表示（デフォルトOFF）
-- **AgentWatcher統合監視** — PIDベースのライブセッション検出 + JSONL解析によるサブエージェント検出を1モジュールに統合。EventEmitter方式で変更時のみUIを更新
+- **AgentWatcher統合監視** — fswatch + jsonlMtime の2方式でエージェント稼働状況を検出。EventEmitter方式で変更時のみUIを更新
 - エージェント一覧は稼働中が自動で上にソートされる
 - ホバーで動作中エージェント名リストをツールチップ表示
 - クリックすると Webview パネルで組織図を表示
@@ -118,23 +163,34 @@
 
 - ビュータイトルバーのフィルターアイコンでプロジェクト内のセッションのみ / すべてのセッションを切替表示
 
-### ルールファイル（YAML Frontmatter）
+### エージェント定義ファイル（agents/*.md）
 
-- エージェントの設定情報をルールファイル冒頭の YAML Frontmatter に格納
-- `description` フィールドに自動生成テキスト、`---` 以下はユーザーが自由に編集可能
-- 旧形式（`<!-- CSM:AUTO -->` マーカー）は更新時に自動移行
+v0.4.0 より、エージェント定義は `~/.claude/agents/*.md` に格納されます。YAML Frontmatter に設定情報、本文がシステムプロンプトです。
 
 ```yaml
 ---
-name: CSM開発部
-model: sonnet
-effort: high
-description: |
-  あなたはCSM開発部所属のエンジニアです。
+name: csm-dev                    # CLI識別子（英数字）
+description: CSM開発部のエンジニア  # 役割説明
+model: sonnet                    # 短縮名: opus / sonnet / haiku
+                                 # 1M: claude-sonnet-4-6[1m] / claude-opus-4-6[1m]
+                                 # 継承: inherit（親セッションのモデルを引き継ぐ）
+                                 # ※ sonnet[1m] は使わない（Sonnet 4.5 旧版になるため）
+memory: project                  # セッション跨ぎ記憶（user/project/local）
+tools: ["Read", "Edit", "Write", "Bash", "Grep", "Glob"]
+permissionMode: default          # default / acceptEdits / plan / auto
+parentAgent: director            # 組織階層（CSM独自フィールド）
+workDir: c:/xampp/Project/csm    # 作業ディレクトリ（CSM独自フィールド）
 ---
 
+あなたはCSM開発部所属のエンジニアです。
 （ここから自由に記述）
 ```
+
+- CSM のエージェント設定フォームは `agentFileManager.ts` 経由で agents/*.md を直接読み書き
+- YAML フロントマター拡張パーサー（JSON配列 `tools: [...]` 対応）
+- TTLキャッシュ（2秒間有効）でパフォーマンス最適化
+- グローバル（`~/.claude/agents/`）＋プロジェクト（`.claude/agents/`）の両スコープ対応
+- 旧形式（`<!-- CSM:AUTO -->` マーカー）は更新時に自動移行
 
 ### SubagentStart/Stop フック
 
@@ -149,10 +205,12 @@ description: |
 - クリックで YAML Frontmatter 変換 + フォルダ構造移行を一括実行
 - 移行完了後バナーは自動非表示
 
-### 親子ルール自動同期
+### 親子エージェント同期
 
+- 各 `agents/*.md` の `parentAgent` フィールドから親子関係を自動構築
 - 子エージェント追加/削除/変更時に親ルールファイルの配下エージェントセクションを自動更新
-- 手動でルールファイルを編集する必要なし
+- 組織図・エージェントツリーの階層表示も `parentAgent` から動的に生成
+
 
 ### セッション自動紐づけ
 
@@ -186,7 +244,7 @@ VS Code 左のアクティビティバーに 💬 アイコンが表示されま
 3. フォームに従って入力:
    - **部署名** — エージェントの識別名（例: CSM開発部）
    - **役割** — 担当業務（例: TypeScript開発・品質管理）
-   - **モデル** — opus / sonnet / haiku から選択
+   - **モデル** — `opus` / `sonnet` / `haiku`（短縮名）、1Mコンテキストは `claude-sonnet-4-6[1m]` / `claude-opus-4-6[1m]`（フルIDで指定）、`inherit`（親セッション継承）
    - **セッション運用** — 固定（同じセッションを使い続ける）/ 使い捨て（タスクごとに新セッション）
    - **スコープ** — プロジェクト（ワークスペース内）/ グローバル（~/.claude/配下）
    - **親エージェント** — 階層構造がある場合に親を選択
@@ -328,14 +386,15 @@ VS Code 左のアクティビティバーに 💬 アイコンが表示されま
 | 調査部 | Sonnet | 技術調査・情報収集 |
 | 雑務部 | Haiku | ドキュメント生成・定型作業 |
 
-### 3. ルールファイルの育成
+### 3. エージェント定義ファイルの育成
 
-各エージェントにルールファイル（.md）を設定し、役割・行動規範・ノウハウを蓄積します。
+各エージェントの `agents/*.md` を育てて、役割・行動規範・ノウハウを蓄積します。
 
-- エージェントを右クリック → 「ルールファイルを編集」で直接編集
-- 初期はひな形を自動生成し、運用しながら育てる
-- フィードバックやノウハウを追記して成長させる
-- ルールファイルはセッションをまたいで引き継がれる **長期記憶** として機能する
+- エージェントを右クリック → 「ルールファイルを編集」で直接エディタで開く
+- 初期はCSMのフォームからひな形を自動生成し、運用しながら育てる
+- フィードバックやノウハウを本文に追記して成長させる
+- `memory: project` を設定すると、セッションをまたいでエージェントが記憶を保持（Claude Code 本体機能）
+- ルールファイル本文はセッションに依存しない **長期記憶** として機能する
 
 ### 4. セッションの引き継ぎ
 
@@ -345,7 +404,7 @@ VS Code 左のアクティビティバーに 💬 アイコンが表示されま
 - 遺言の生成方法を選択: **簡易（即時）** または **詳細（AI要約）**
 - 生成された遺言をInputBoxで確認・編集
 - 遺言はルールファイルの「歴代セッションの記録」に自動蓄積（直近3世代）
-- 新セッションはルールファイル経由で過去の経緯を自動的に把握
+- `memory: project` 有効時は Claude Code 本体の記憶機能も併用され、セッション間の引き継ぎがよりスムーズ
 
 ### 5. おすすめ構成例
 
@@ -406,7 +465,7 @@ VS Code Marketplace または Open VSX Registry で「Claude Session Manager」�
 
 ### VSIX から
 ```bash
-code --install-extension claude-session-manager-0.3.2.vsix
+code --install-extension claude-session-manager-0.4.0.vsix
 ```
 
 ## 動作要件

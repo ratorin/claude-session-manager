@@ -1,28 +1,70 @@
-# Claude Session Manager v0.3.2 仕様書
+# Claude Session Manager v0.4.1 仕様書
 
 ## 概要
 
-v0.2.0 でエージェント管理の基盤を再設計し、v0.3.0 で監視アーキテクチャ刷新・タスク管理・利用制限モニター・メモリ拡張・フォーム拡張を追加。v0.3.1 で YAML Frontmatter 移行・SubagentStart/Stop フック・マイグレーションバナー・セッション引き継ぎ改善を実施。v0.3.2 で親子ルール自動同期・セッション自動紐づけ・maxThinkingTokens削除・稼働状態修正・Marketplace公開を実施。
+v0.4.0 でアーキテクチャを大幅刷新。エージェント定義を `~/.claude/agents/*.md`（CLI標準形式）に統一し、検知エンジンを簡素化、ソースファイルを機能別サブディレクトリに再配置した。
+
+v0.4.1 でセキュリティ強化（パストラバーサル・コマンドインジェクション・YAMLインジェクション・CSP・パス検証）とフロントマターパーサー統合、agents[]→agentSessionsマイグレーションを実施。
 
 ---
 
-## 1. データソース統一
+## 1. データソース構成（v0.4.0 リビルド後）
 
-### 目的
-組織図とステータスバーで参照するデータソースが異なる問題を解消する。
+### エージェント定義
+- **Single Source of Truth: `~/.claude/agents/*.md`**
+- `agentFileManager.ts` が読み書きを担当（TTLキャッシュ2秒）
+- グローバル（`~/.claude/agents/`）＋プロジェクト（`.claude/agents/`）の両スコープ対応
+- プロジェクトスコープの同名エージェントがグローバルを上書き
 
-### 変更内容
-- **`session-manager.json` の `agents[]` 配列に一本化**
-- `agentManager.ts` の `parseAgentListMd()` と MD パース処理を完全削除
-- `loadAgents()` → `dataStore.getAgents()` に置き換え
-- `enrichAgentsWithSessions()` はセッションタイトル付与用に維持
+### セッション紐づけ
+- **session-manager.json の `agentSessions`** — エージェント名→セッション紐づけ
+- 旧形式 `agents[]` は v0.4.1 で自動マイグレーション（activate時に `agentSessions` に変換し `agents[]` を除去）
 
-### 影響範囲
-| ファイル | 変更 |
-|---|---|
-| `agentManager.ts` | MD パース削除、`getAgents()` は dataStore 直結 |
-| `orgChartPanel.ts` | `loadAgents()` → `dataStore.getAgents()` |
-| `extension.ts` | `updateStatusBar()` は変更なし（既に dataStore 使用） |
+### セキュリティ対策（v0.4.1）
+- エージェント名バリデーション: `^[\p{L}\p{N}_\-]+$` パターン + パス境界チェック
+- spawn の shell:false 固定（コマンドインジェクション防止）
+- YAMLフロントマター出力時の全文字列フィールドクォート
+- Webview パネルの nonce 付き CSP（agentPreviewPanel / orgChartPanel）
+- openLink ハンドラのファイルパス検証（ワークスペース・tmp・.claude 配下のみ）
+
+### ディレクトリ構造
+```
+src/
+├── extension.ts          # エントリポイント（activate/deactivate）
+├── agents/               # エージェント管理
+│   ├── agentFileManager.ts  # agents/*.md の読み書き（SoT）
+│   ├── agentManager.ts      # エージェント情報取得ヘルパー
+│   └── parentChildSync.ts   # 親子ルール自動同期
+├── providers/            # TreeDataProvider
+│   ├── sessionTreeProvider.ts
+│   ├── agentTreeProvider.ts
+│   ├── tagTreeProvider.ts
+│   ├── bookmarkTreeProvider.ts
+│   └── memoryTreeProvider.ts
+├── watchers/             # 監視エンジン
+│   ├── agentWatcher.ts      # PID+fswatch監視
+│   └── taskTracker.ts       # タスク状態追跡
+├── panels/               # Webview パネル
+│   ├── agentFormPanel.ts
+│   ├── agentPreviewPanel.ts
+│   ├── orgChartPanel.ts
+│   └── webviewPanel.ts
+├── models/               # データモデル
+│   ├── dataStore.ts
+│   └── types.ts
+├── utils/                # ユーティリティ
+│   ├── sessionLoader.ts
+│   ├── cliBuilder.ts
+│   ├── frontmatterUtils.ts
+│   ├── memoryManager.ts
+│   ├── usageMonitor.ts
+│   └── subagentDetector.ts
+└── commands/             # コマンド（今後抽出予定）
+```
+
+### 検知モード
+- **fswatch 固定** — `fs.watch()` で `~/.claude/sessions/` を監視（デバウンス300ms）
+- `.csm-signals/` ディレクトリも補助監視（デバウンス200ms）
 
 ---
 
@@ -72,7 +114,7 @@ v0.2.0 でエージェント管理の基盤を再設計し、v0.3.0 で監視ア
 |---|---|---|---|
 | 部署名 | InputBox | ✅ | エージェントの名前（例: CSM開発部） |
 | 役割の説明 | InputBox | | 担当業務（例: デバッグ・品質確認） |
-| モデル選択 | QuickPick | ✅ | opus / sonnet / haiku |
+| モデル選択 | QuickPick | ✅ | `opus` / `sonnet` / `haiku`（短縮名）/ `claude-sonnet-4-6[1m]` / `claude-opus-4-6[1m]`（1M）/ `inherit` |
 | セッション運用 | QuickPick | ✅ | 固定 / 使い捨て |
 | 親エージェント | QuickPick | | 既存エージェントから選択 / なし |
 | 作業フォルダ | FolderPicker | | フォルダ選択ダイアログ / なし |
@@ -185,7 +227,7 @@ export interface AgentConfig {
     name: string;                // 部署名（例: CSM開発部）
     sessionId: string;           // 紐づけセッションID
     role: string;                // 役割（例: デバッグ・品質確認）
-    model: 'opus' | 'sonnet' | 'haiku';
+    model: 'opus' | 'sonnet' | 'haiku' | 'claude-sonnet-4-6[1m]' | 'claude-opus-4-6[1m]' | 'inherit';
     sessionMode?: 'fixed' | 'disposable';
     ruleFile?: string;           // ルールファイルパス
     parentAgent?: string;        // 親エージェント名

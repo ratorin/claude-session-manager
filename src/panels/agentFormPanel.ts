@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
-import { AgentConfig } from './types';
-import * as dataStore from './dataStore';
-import { getDescendants } from './parentChildSync';
+import { AgentConfig } from '../models/types';
+import * as dataStore from '../models/dataStore';
+import { getDescendants } from '../agents/parentChildSync';
+import { shouldShowInOrgChart } from '../utils/agentUtils';
 
 // フォームパネルの参照
 let formPanel: vscode.WebviewPanel | undefined;
@@ -57,8 +58,78 @@ export function showAgentFormPanel(
 			if (folders && folders.length > 0) {
 				formPanel?.webview.postMessage({ type: 'folderSelected', path: folders[0].fsPath });
 			}
+		} else if (message.type === 'loadFromSession') {
+			// セッションJSONLから実際のモデルとcwdを読み取る
+			const sessionId = message.sessionId;
+			if (!sessionId) { return; }
+			try {
+				const { loadSessionFull } = await import('../utils/sessionLoader');
+				const { buildProjectPathMap, getSessionFileInfos } = await import('../utils/sessionLoader');
+				const fileInfos = await getSessionFileInfos();
+				const info = fileInfos.find(f => f.filePath.includes(sessionId));
+				if (info) {
+					const session = await loadSessionFull(info.filePath);
+					if (session) {
+						// モデルを内部名に変換（日付付きモデルID対応: includes で部分一致）
+						function resolveModelName(rawModel: string): string {
+							if (rawModel.includes('[1m]')) {
+								if (rawModel.includes('sonnet')) { return 'sonnet-1m'; }
+								return 'opus'; // opus[1m]
+							}
+							if (rawModel.includes('opus')) { return 'opus'; }
+							if (rawModel.includes('sonnet')) { return 'sonnet'; }
+							if (rawModel.includes('haiku')) { return 'haiku'; }
+							return rawModel;
+						}
+						const model = session.model ? resolveModelName(session.model) : undefined;
+						formPanel?.webview.postMessage({
+							type: 'sessionDataLoaded',
+							model,
+							cwd: session.project,
+							rawModel: session.model,
+						});
+					}
+				}
+			} catch { /* 読み取り失敗は無視 */ }
+		} else if (message.type === 'translate') {
+			// Google Translate 無料API経由で翻訳
+			const results = await translateFieldsToJapanese(
+				message.name || '',
+				message.role || '',
+				message.description || ''
+			);
+			formPanel?.webview.postMessage({ type: 'translateResult', ...results });
 		}
 	});
+}
+
+// Google Translate 無料エンドポイント経由で英→日翻訳
+async function translateText(text: string): Promise<string> {
+	if (!text.trim()) { return ''; }
+	try {
+		const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ja&dt=t&q=${encodeURIComponent(text)}`;
+		const response = await fetch(url);
+		if (!response.ok) { return ''; }
+		const data = await response.json() as unknown[][];
+		// Google Translate APIのレスポンス形式: [[["翻訳文","原文",null,null,10]],null,"en",...]
+		const sentences = data[0] as unknown[][];
+		return sentences.map((s: unknown[]) => String(s[0])).join('');
+	} catch {
+		return '';
+	}
+}
+
+async function translateFieldsToJapanese(
+	name: string,
+	role: string,
+	description: string
+): Promise<{ displayName: string; displayRole: string; displayDescription: string }> {
+	const [displayName, displayRole, displayDescription] = await Promise.all([
+		translateText(name),
+		translateText(role),
+		translateText(description),
+	]);
+	return { displayName, displayRole, displayDescription };
 }
 
 function escapeHtml(text: string): string {
@@ -304,6 +375,117 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 		font-size: 12px;
 	}
 	.btn-generate:hover { background: rgba(226, 126, 74, 0.08); }
+
+	/* セクション区切り */
+	.section-header {
+		font-size: 14px;
+		font-weight: 600;
+		color: var(--accent);
+		margin: 24px 0 12px;
+		padding-bottom: 6px;
+		border-bottom: 1px solid var(--border);
+	}
+
+	/* テキストエリア */
+	textarea {
+		width: 100%;
+		padding: 6px 10px;
+		border: 1px solid var(--input-border);
+		background: var(--input-bg);
+		color: var(--input-fg);
+		border-radius: 4px;
+		font-size: 13px;
+		font-family: var(--vscode-font-family);
+		resize: vertical;
+		min-height: 60px;
+	}
+	textarea:focus {
+		outline: none;
+		border-color: var(--focus);
+	}
+
+	/* 日本語フィールド（常に表示） */
+	.jp-field-always {
+		margin-top: 6px;
+		padding: 6px 8px;
+		border-left: 2px solid var(--vscode-textLink-foreground);
+		background: rgba(0,120,212,0.04);
+	}
+	.jp-field-always input, .jp-field-always textarea {
+		margin-top: 2px;
+	}
+	/* 日本語フィールド（トグル表示） */
+	.jp-field {
+		margin-top: 6px;
+		padding: 6px 8px;
+		border-left: 2px solid var(--vscode-textLink-foreground);
+		background: rgba(0,120,212,0.04);
+	}
+	.form-label-sub {
+		font-size: 11px;
+		opacity: 0.7;
+		margin-bottom: 2px;
+	}
+	.jp-field input, .jp-field textarea {
+		margin-top: 2px;
+	}
+	/* 翻訳ボタン */
+	.btn-translate {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 14px;
+		background: transparent;
+		color: var(--accent);
+		border: 1px solid var(--accent);
+		border-radius: 4px;
+		cursor: pointer;
+		font-size: 12px;
+		margin-top: 8px;
+	}
+	.btn-translate:hover { background: rgba(226, 126, 74, 0.08); }
+	.btn-translate:disabled { opacity: 0.5; cursor: not-allowed; }
+	.btn-translate .spinner {
+		display: inline-block;
+		width: 12px;
+		height: 12px;
+		border: 2px solid var(--accent);
+		border-top-color: transparent;
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+	}
+	@keyframes spin { to { transform: rotate(360deg); } }
+
+	/* チェックボックス行 */
+	.checkbox-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.checkbox-row input[type="checkbox"] {
+		width: 16px;
+		height: 16px;
+		accent-color: var(--accent);
+		cursor: pointer;
+	}
+	.checkbox-label {
+		font-size: 13px;
+		cursor: pointer;
+	}
+
+	/* バリデーションエラー */
+	input.invalid {
+		border-color: #f44336;
+	}
+	.error-text {
+		font-size: 11px;
+		color: #f44336;
+		margin-top: 4px;
+		display: none;
+	}
+	.error-text.visible {
+		display: block;
+	}
 </style>
 </head>
 <body>
@@ -311,14 +493,48 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 
 <div class="form-group">
 	<label class="form-label">部署名<span class="required">*</span></label>
-	<div class="form-desc">エージェントの識別名（例: CSM開発部、テスト部）</div>
-	<input type="text" id="name" value="${escapeHtml(v.name || '')}" placeholder="CSM開発部">
+	<div class="form-desc">エージェントの識別名（英数字・ハイフン・アンダースコアのみ）</div>
+	<input type="text" id="name" value="${escapeHtml(v.name || '')}" placeholder="code-reviewer">
+	<div class="error-text" id="nameError">英数字、ハイフン（-）、アンダースコア（_）のみ使用できます</div>
+	<div class="jp-field-always">
+		<label class="form-label-sub">表示名（日本語）</label>
+		<input type="text" id="displayName" value="${escapeHtml(v.displayName || '')}" placeholder="例: CSM開発部">
+	</div>
 </div>
 
 <div class="form-group">
 	<label class="form-label">役割の説明</label>
 	<div class="form-desc">このエージェントが担当する業務内容</div>
-	<input type="text" id="role" value="${escapeHtml(v.role || '')}" placeholder="TypeScript開発・品質管理">
+	<textarea id="role" rows="2" placeholder="TypeScript開発・品質管理">${escapeHtml(v.role || '')}</textarea>
+	<div class="jp-field" style="display:none">
+		<label class="form-label-sub">役割（日本語）</label>
+		<textarea id="displayRole" rows="2" placeholder="例: コード品質確保">${escapeHtml(v.displayRole || '')}</textarea>
+	</div>
+</div>
+
+<div class="form-group">
+	<label class="form-label">説明</label>
+	<div class="form-desc">エージェントの詳しい説明（description）</div>
+	<textarea id="description" rows="2" placeholder="Handles code review and quality assurance">${escapeHtml(v.displayDescription || v.role || '')}</textarea>
+	<div class="jp-field" style="display:none">
+		<label class="form-label-sub">説明（日本語）</label>
+		<textarea id="displayDescription" rows="2" placeholder="例: コードの品質と安全性を保証します">${escapeHtml(v.displayDescription || '')}</textarea>
+	</div>
+</div>
+
+<div class="form-group">
+	<button class="btn-translate" id="btnToggleJp">
+		<span>🌐</span>
+		<span id="toggleJpText">日本語入力欄を表示</span>
+	</button>
+	<button class="btn-translate" id="btnTranslate" style="display:none;margin-left:8px">
+		<span id="translateIcon">🔄</span>
+		<span id="translateText">英語 → 日本語に翻訳</span>
+	</button>
+	${sessionId ? `<button class="btn-translate" id="btnLoadSession" style="margin-left:8px">
+		<span>📥</span>
+		<span id="loadSessionText">セッションから読み込む</span>
+	</button>` : ''}
 </div>
 
 <div class="form-group">
@@ -334,10 +550,19 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 			<label for="model-sonnet">Sonnet<div class="radio-sub">定型作業・補助（コスト効率◎）</div></label>
 		</div>
 		<div class="radio-option">
+			<input type="radio" name="model" id="model-sonnet-1m" value="sonnet-1m" ${v.model === 'sonnet-1m' ? 'checked' : ''}>
+			<label for="model-sonnet-1m">Sonnet 1M<div class="radio-sub">長文コンテキスト（5倍）・定型作業</div></label>
+		</div>
+		<div class="radio-option">
 			<input type="radio" name="model" id="model-haiku" value="haiku" ${v.model === 'haiku' ? 'checked' : ''}>
 			<label for="model-haiku">Haiku<div class="radio-sub">軽量タスク・高速応答</div></label>
 		</div>
 	</div>
+</div>
+
+<div style="margin: 12px 0 8px; padding: 10px 12px; border: 1px solid rgba(255,200,50,0.4); border-radius: 4px; background: rgba(255,200,50,0.06); font-size: 0.85em;">
+	<strong>💡 起動時パラメータ</strong><br>
+	以下の設定はセッション内には保存されません。<code>/ask-agent</code> や「ターミナルで開く」で起動する際のCLIオプションとして使用されます。
 </div>
 
 <div class="form-group">
@@ -363,16 +588,17 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	</div>
 </div>
 
+
 <div class="form-group">
-	<label class="form-label">Extended Thinking</label>
-	<div class="form-desc">拡張思考モード（Haikuでは利用不可）</div>
-	<div class="toggle-row" id="thinkingToggleRow">
-		<div class="toggle-switch" id="thinkingSwitch">
-			<input type="checkbox" id="thinkingEnabled" ${v.thinkingEnabled !== false ? 'checked' : ''}>
-			<span class="toggle-slider"></span>
-		</div>
-		<span class="toggle-label" id="thinkingLabel">${v.thinkingEnabled !== false ? 'ON' : 'OFF'}</span>
-	</div>
+	<label class="form-label">権限モード（Permission Mode）</label>
+	<div class="form-desc">/ask-agent で呼び出す時の権限レベル。-p モードでは acceptEdits か auto を推奨</div>
+	<select id="permissionMode">
+		<option value="acceptEdits" ${(v as any).permissionMode === 'acceptEdits' || !(v as any).permissionMode ? 'selected' : ''}>acceptEdits（編集自動許可・推奨）</option>
+		<option value="auto" ${(v as any).permissionMode === 'auto' ? 'selected' : ''}>auto（ほぼ全自動）</option>
+		<option value="plan" ${(v as any).permissionMode === 'plan' ? 'selected' : ''}>plan（計画のみ・対話用）</option>
+		<option value="default" ${(v as any).permissionMode === 'default' ? 'selected' : ''}>default（毎回確認・対話用）</option>
+		<option value="bypassPermissions" ${(v as any).permissionMode === 'bypassPermissions' ? 'selected' : ''}>bypassPermissions（全自動・危険）</option>
+	</select>
 </div>
 
 <div class="form-group">
@@ -426,6 +652,7 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	${v.ruleFile ? '<div class="form-desc" style="margin-top: 4px; opacity: 0.7;">現在のルールファイル: ' + escapeHtml(v.ruleFile) + '</div>' : ''}
 </div>
 
+
 <div class="form-actions">
 	<button class="btn-save" id="btnSave">保存</button>
 	<button class="btn-cancel" id="btnCancel">キャンセル</button>
@@ -452,14 +679,16 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	}
 
 	function getFormData() {
-		const thinkingOn = document.getElementById('thinkingEnabled').checked;
 		return {
 			name: document.getElementById('name').value.trim(),
+			displayName: document.getElementById('displayName').value.trim() || undefined,
 			sessionId: sessionId,
 			role: document.getElementById('role').value.trim(),
+			displayRole: document.getElementById('displayRole').value.trim() || undefined,
+			displayDescription: document.getElementById('displayDescription').value.trim() || undefined,
 			model: document.querySelector('input[name="model"]:checked')?.value || 'opus',
 			effort: document.querySelector('input[name="effort"]:checked')?.value || 'high',
-			thinkingEnabled: thinkingOn,
+			permissionMode: document.getElementById('permissionMode').value || 'acceptEdits',
 			sessionMode: document.querySelector('input[name="sessionMode"]:checked')?.value || 'fixed',
 			scope: document.querySelector('input[name="scope"]:checked')?.value || 'project',
 			parentAgent: document.getElementById('parentAgent').value || undefined,
@@ -467,13 +696,34 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 			ruleFile: existingRuleFile || undefined,
 			allowedTools: ${JSON.stringify(v.allowedTools || undefined)},
 			status: ${JSON.stringify(v.status || 'idle')},
+			// showInOrgChart は parentAgent ベースの自動判定に移行済み
 		};
+	}
+
+	// 部署名バリデーション: 英数字・ハイフン・アンダースコアのみ
+	function isValidName(name) {
+		return /^[a-zA-Z0-9_-]+$/.test(name);
+	}
+
+	function validateName() {
+		const nameInput = document.getElementById('name');
+		const nameError = document.getElementById('nameError');
+		const val = nameInput.value.trim();
+		const valid = val === '' || isValidName(val);
+		nameInput.classList.toggle('invalid', !valid);
+		nameError.classList.toggle('visible', !valid);
+		return valid;
 	}
 
 	function save() {
 		const data = getFormData();
 		if (!data.name) {
 			document.getElementById('name').focus();
+			return;
+		}
+		if (!isValidName(data.name)) {
+			document.getElementById('name').focus();
+			validateName();
 			return;
 		}
 		vscode.postMessage({ type: 'save', config: data });
@@ -487,49 +737,86 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 		vscode.postMessage({ type: 'browseFolder' });
 	}
 
+	// 日本語入力欄のトグル
+	let jpFieldsVisible = !!(${JSON.stringify(v.displayName || '')} || ${JSON.stringify(v.displayRole || '')} || ${JSON.stringify(v.displayDescription || '')});
+	function toggleJpFields() {
+		jpFieldsVisible = !jpFieldsVisible;
+		document.querySelectorAll('.jp-field').forEach(el => el.style.display = jpFieldsVisible ? 'block' : 'none');
+		document.getElementById('toggleJpText').textContent = jpFieldsVisible ? '日本語入力欄を隠す' : '日本語入力欄を表示';
+		document.getElementById('btnTranslate').style.display = jpFieldsVisible ? 'inline-flex' : 'none';
+	}
+	// 初期状態：既にdisplayName等がある場合は表示
+	if (jpFieldsVisible) {
+		document.querySelectorAll('.jp-field').forEach(el => el.style.display = 'block');
+		document.getElementById('toggleJpText').textContent = '日本語入力欄を隠す';
+		document.getElementById('btnTranslate').style.display = 'inline-flex';
+	}
+
+	// 翻訳実行
+	function requestTranslate() {
+		const btn = document.getElementById('btnTranslate');
+		const icon = document.getElementById('translateIcon');
+		const text = document.getElementById('translateText');
+		btn.disabled = true;
+		icon.innerHTML = '<span class="spinner"></span>';
+		text.textContent = '翻訳中...';
+		vscode.postMessage({
+			type: 'translate',
+			name: document.getElementById('name').value.trim(),
+			role: document.getElementById('role').value.trim(),
+			description: document.getElementById('role').value.trim(),
+		});
+	}
+
 	// 拡張機能からのメッセージ受信
 	window.addEventListener('message', (event) => {
 		const msg = event.data;
 		if (msg.type === 'folderSelected') {
 			document.getElementById('workDir').value = msg.path;
+		} else if (msg.type === 'translateResult') {
+			// 翻訳結果を反映
+			if (msg.displayName) { document.getElementById('displayName').value = msg.displayName; }
+			if (msg.displayRole) { document.getElementById('displayRole').value = msg.displayRole; }
+			if (msg.displayDescription) { document.getElementById('displayDescription').value = msg.displayDescription; }
+			// ボタンを戻す
+			const btn = document.getElementById('btnTranslate');
+			const icon = document.getElementById('translateIcon');
+			const text = document.getElementById('translateText');
+			btn.disabled = false;
+			icon.textContent = '🔄';
+			text.textContent = '英語 → 日本語に翻訳';
+		} else if (msg.type === 'sessionDataLoaded') {
+			// セッションから読み込んだデータをフォームに反映
+			if (msg.model) {
+				const radio = document.getElementById('model-' + msg.model);
+				if (radio) { radio.checked = true; onModelChange(msg.model); }
+			}
+			if (msg.cwd) {
+				document.getElementById('workDir').value = msg.cwd;
+				updateRuleFilePath();
+			}
+			// ボタンを戻す
+			const loadBtn = document.getElementById('btnLoadSession');
+			if (loadBtn) {
+				loadBtn.disabled = false;
+				document.getElementById('loadSessionText').textContent =
+					'読み込み完了' + (msg.rawModel ? '（' + msg.rawModel + '）' : '');
+			}
 		}
 	});
 
 	// モデル変更時のグレーアウト連動
 	function onModelChange(model) {
 		const maxOption = document.getElementById('effort-option-max');
-		const thinkingSwitch = document.getElementById('thinkingSwitch');
-		const thinkingCheckbox = document.getElementById('thinkingEnabled');
-		const thinkingLabel = document.getElementById('thinkingLabel');
-
 		if (model === 'opus') {
-			// Opus: 全4択有効、thinking有効
 			maxOption.classList.remove('disabled');
-			thinkingSwitch.classList.remove('disabled');
-		} else if (model === 'sonnet') {
-			// Sonnet: maxグレーアウト、thinking有効
+		} else {
 			maxOption.classList.add('disabled');
 			if (document.getElementById('effort-max').checked) {
 				document.getElementById('effort-high').checked = true;
 			}
-			thinkingSwitch.classList.remove('disabled');
-		} else if (model === 'haiku') {
-			// Haiku: maxグレーアウト、thinking OFF固定
-			maxOption.classList.add('disabled');
-			if (document.getElementById('effort-max').checked) {
-				document.getElementById('effort-high').checked = true;
-			}
-			thinkingSwitch.classList.add('disabled');
-			thinkingCheckbox.checked = false;
-			thinkingLabel.textContent = 'OFF';
 		}
 	}
-
-	// Thinkingトグル変更時の連動
-	document.getElementById('thinkingEnabled').addEventListener('change', function() {
-		const label = document.getElementById('thinkingLabel');
-		label.textContent = this.checked ? 'ON' : 'OFF';
-	});
 
 	// モデルラジオ変更イベント
 	document.querySelectorAll('input[name="model"]').forEach(el => {
@@ -538,9 +825,12 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 		});
 	});
 
-	// 部署名・スコープ変更時にパスプレビューを更新
+	// 部署名・スコープ変更時にパスプレビューを更新 + バリデーション
 	document.getElementById('name').addEventListener('input', () => {
-		document.getElementById('btnSave').disabled = !document.getElementById('name').value.trim();
+		const nameVal = document.getElementById('name').value.trim();
+		const valid = nameVal === '' || isValidName(nameVal);
+		document.getElementById('btnSave').disabled = !nameVal || !valid;
+		validateName();
 		updateRuleFilePath();
 	});
 	document.querySelectorAll('input[name="scope"]').forEach(el => {
@@ -553,6 +843,16 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 
 	// インラインonclickの代わりにaddEventListenerでイベントを登録（CSP対応）
 	document.getElementById('btnBrowseFolder').addEventListener('click', browseFolder);
+	document.getElementById('btnToggleJp').addEventListener('click', toggleJpFields);
+	document.getElementById('btnTranslate').addEventListener('click', requestTranslate);
+	const btnLoadSession = document.getElementById('btnLoadSession');
+	if (btnLoadSession) {
+		btnLoadSession.addEventListener('click', () => {
+			document.getElementById('loadSessionText').textContent = '読み込み中...';
+			btnLoadSession.disabled = true;
+			vscode.postMessage({ type: 'loadFromSession', sessionId: sessionId });
+		});
+	}
 	document.getElementById('btnSave').addEventListener('click', save);
 	document.getElementById('btnCancel').addEventListener('click', cancel);
 </script>

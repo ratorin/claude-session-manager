@@ -1,7 +1,7 @@
 // YAML フロントマターのパース・生成・移行ユーティリティ
 // v0.3.1: CSM:AUTO マーカー → YAML フロントマター方式への移行
 
-import { AgentConfig } from './types';
+import { AgentConfig } from '../models/types';
 
 // パース結果
 export interface ParsedFrontmatter {
@@ -207,4 +207,78 @@ export function isLegacyAutoFormat(content: string): boolean {
 // ファイルが YAML フロントマター形式かどうか判定
 export function hasFrontmatter(content: string): boolean {
 	return findBounds(content) !== null;
+}
+
+// H-1: 配列対応版フロントマターパーサー（agentFileManager.ts から統合）
+// tools: ["Read", "Edit", ...] のようなJSON配列記法をサポート
+export interface ParsedFrontmatterExtended {
+	data: Record<string, string | number | boolean | string[]>;
+	body: string;
+}
+
+export function parseFrontmatterExtended(content: string): ParsedFrontmatterExtended | null {
+	const bounds = findBounds(content);
+	if (!bounds) { return null; }
+
+	const yamlText = content.substring(bounds.yamlStart, bounds.yamlEnd);
+	const body = content.substring(bounds.bodyStart);
+	const data: Record<string, string | number | boolean | string[]> = {};
+	const yamlLines = yamlText.split('\n');
+	let i = 0;
+
+	while (i < yamlLines.length) {
+		const line = yamlLines[i];
+		const match = line.match(/^([a-zA-Z_]\w*):\s*(.*)/);
+		if (match) {
+			const key = match[1];
+			const rawValue = match[2].trimEnd();
+
+			// JSON配列記法: tools: ["Read", "Edit", ...]
+			if (rawValue.startsWith('[')) {
+				try {
+					const parsed = JSON.parse(rawValue);
+					if (Array.isArray(parsed)) {
+						data[key] = parsed.map(String);
+					} else {
+						data[key] = rawValue;
+					}
+				} catch {
+					data[key] = rawValue;
+				}
+			} else if (rawValue === '|' || rawValue === '|+' || rawValue === '|-') {
+				// リテラルブロックスカラー
+				const blockLines: string[] = [];
+				i++;
+				while (i < yamlLines.length) {
+					const blockLine = yamlLines[i];
+					if (blockLine.startsWith('  ')) {
+						blockLines.push(blockLine.substring(2));
+					} else if (blockLine.trim() === '') {
+						if (i + 1 < yamlLines.length && /^[a-zA-Z_]\w*:\s/.test(yamlLines[i + 1])) {
+							break;
+						}
+						blockLines.push('');
+					} else {
+						break;
+					}
+					i++;
+				}
+				data[key] = blockLines.join('\n').replace(/\n+$/, '');
+				continue;
+			} else if (rawValue === 'true') {
+				data[key] = true;
+			} else if (rawValue === 'false') {
+				data[key] = false;
+			} else if (/^\d+$/.test(rawValue)) {
+				data[key] = parseInt(rawValue, 10);
+			} else {
+				// クォート除去
+				const unquoted = rawValue.replace(/^(["'])(.*)\1$/, '$2');
+				data[key] = unquoted;
+			}
+		}
+		i++;
+	}
+
+	return { data, body };
 }

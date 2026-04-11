@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { ManagerData, LocalManagerData, AgentConfig, TaskLog } from './types';
+import { ManagerData, LocalManagerData, AgentConfig, TaskLog, AgentSessionBinding } from './types';
+import * as agentFileManager from '../agents/agentFileManager';
 
 // グローバルデータファイル（~/.claude/session-manager.json）
 const DATA_FILE = path.join(os.homedir(), '.claude', 'session-manager.json');
@@ -33,13 +34,13 @@ async function loadData(): Promise<ManagerData> {
 		return cachedData;
 	}
 	try {
-		await fs.promises.access(DATA_FILE);
 		const raw = await fs.promises.readFile(DATA_FILE, 'utf-8');
 		cachedData = JSON.parse(raw);
 		cachedDataTimestamp = now;
 		return cachedData!;
-	} catch {
-		// 読み込みエラー時は初期データを返す
+	} catch (err: unknown) {
+		// ENOENT 以外のエラーは無視して初期データを返す（読み込みエラー時も同様）
+		void err;
 	}
 	cachedData = { bookmarks: [], tags: {}, customNames: {}, notes: {} };
 	cachedDataTimestamp = now;
@@ -48,12 +49,7 @@ async function loadData(): Promise<ManagerData> {
 
 // グローバルデータの保存（保存後にキャッシュを無効化・非同期）
 async function saveData(data: ManagerData): Promise<void> {
-	const dir = path.dirname(DATA_FILE);
-	try {
-		await fs.promises.access(dir);
-	} catch {
-		await fs.promises.mkdir(dir, { recursive: true });
-	}
+	await fs.promises.mkdir(path.dirname(DATA_FILE), { recursive: true });
 	await fs.promises.writeFile(DATA_FILE, JSON.stringify(data, null, '\t'), 'utf-8');
 	// キャッシュを無効化（次回 loadData() で再読み込みさせる）
 	cachedData = null;
@@ -69,14 +65,14 @@ async function loadLocalData(): Promise<LocalManagerData> {
 		return cachedLocalData;
 	}
 	try {
-		await fs.promises.access(filePath);
 		const raw = await fs.promises.readFile(filePath, 'utf-8');
 		cachedLocalData = JSON.parse(raw);
 		cachedLocalDataPath = filePath;
 		cachedLocalDataTimestamp = now;
 		return cachedLocalData!;
-	} catch {
-		// 読み込みエラー時は空データを返す
+	} catch (err: unknown) {
+		// ENOENT 以外のエラーは無視して空データを返す
+		void err;
 	}
 	cachedLocalData = {};
 	cachedLocalDataPath = filePath;
@@ -88,12 +84,7 @@ async function loadLocalData(): Promise<LocalManagerData> {
 async function saveLocalData(data: LocalManagerData): Promise<void> {
 	const filePath = getLocalDataFilePath();
 	if (!filePath) { return; }
-	const dir = path.dirname(filePath);
-	try {
-		await fs.promises.access(dir);
-	} catch {
-		await fs.promises.mkdir(dir, { recursive: true });
-	}
+	await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
 	await fs.promises.writeFile(filePath, JSON.stringify(data, null, '\t'), 'utf-8');
 	// キャッシュを無効化（次回 loadLocalData() で再読み込みさせる）
 	cachedLocalData = null;
@@ -179,7 +170,6 @@ export async function getAllCustomNames(): Promise<Record<string, string>> {
 // メモ操作
 export async function setNote(sessionId: string, note: string): Promise<void> {
 	const data = await loadData();
-	if (!data.notes) { data.notes = {}; }
 	if (note) {
 		data.notes[sessionId] = note;
 	} else {
@@ -193,116 +183,120 @@ export async function getNote(sessionId: string): Promise<string> {
 	return data.notes?.[sessionId] || '';
 }
 
-// エージェント操作（グローバル + ローカルのマージ）
+// エージェント操作（agents/*.md が Single Source of Truth、セッション紐づけのみ session-manager.json）
 
-// グローバルエージェント一覧を取得
-export async function getGlobalAgents(): Promise<AgentConfig[]> {
-	return (await loadData()).agents || [];
-}
-
-// ローカル（プロジェクト固有）エージェント一覧を取得
-export async function getLocalAgents(): Promise<AgentConfig[]> {
-	return (await loadLocalData()).agents || [];
-}
-
-// マージ済みエージェント一覧を取得（同名はローカル優先）
-export async function getAgents(): Promise<AgentConfig[]> {
-	const globalAgents = await getGlobalAgents();
-	const localAgents = await getLocalAgents();
-	const localNames = new Set(localAgents.map(a => a.name));
-	return [
-		...localAgents,
-		...globalAgents.filter(a => !localNames.has(a.name)),
-	];
-}
-
-// エージェント一覧を設定（後方互換: グローバルに保存）
-export async function setAgents(agents: AgentConfig[]): Promise<void> {
+// セッション紐づけ情報を取得（session-manager.json から）
+async function getAgentSessionBindings(): Promise<Record<string, AgentSessionBinding>> {
 	const data = await loadData();
-	data.agents = agents;
+	// 新形式（agentSessions）を優先、なければ旧形式（agents[]）から変換
+	if (data.agentSessions) {
+		return data.agentSessions;
+	}
+	// 後方互換: agents[] から agentSessions を生成
+	const bindings: Record<string, AgentSessionBinding> = {};
+	if (data.agents) {
+		for (const a of data.agents) {
+			if (a.sessionId || a.previousSessionIds) {
+				bindings[a.name] = {
+					sessionId: a.sessionId || '',
+					previousSessionIds: a.previousSessionIds,
+					sessionMode: a.sessionMode,
+				};
+			}
+		}
+	}
+	return bindings;
+}
+
+// セッション紐づけ情報を保存
+async function saveAgentSessionBinding(name: string, binding: AgentSessionBinding): Promise<void> {
+	const data = await loadData();
+	if (!data.agentSessions) { data.agentSessions = {}; }
+	data.agentSessions[name] = binding;
 	await saveData(data);
 }
 
-// エージェントを追加（scope でグローバル/ローカルを指定）
-export async function addAgent(agent: AgentConfig, scope?: 'global' | 'local'): Promise<void> {
-	const targetScope = scope || 'global';
-
-	if (targetScope === 'local') {
-		const localData = await loadLocalData();
-		if (!localData.agents) { localData.agents = []; }
-		const idx = localData.agents.findIndex((a) => a.name === agent.name);
-		if (idx >= 0) {
-			localData.agents[idx] = agent;
-		} else {
-			localData.agents.push(agent);
-		}
-		await saveLocalData(localData);
-	} else {
-		const data = await loadData();
-		if (!data.agents) { data.agents = []; }
-		const idx = data.agents.findIndex((a) => a.name === agent.name);
-		if (idx >= 0) {
-			data.agents[idx] = agent;
-		} else {
-			data.agents.push(agent);
-		}
-		await saveData(data);
-	}
-}
-
-// エージェントを削除（ローカル優先、なければグローバルから削除）
-export async function removeAgent(name: string): Promise<void> {
-	const localData = await loadLocalData();
-	if (localData.agents && localData.agents.some(a => a.name === name)) {
-		localData.agents = localData.agents.filter((a) => a.name !== name);
-		await saveLocalData(localData);
-		return;
-	}
+// セッション紐づけ情報を削除
+async function removeAgentSessionBinding(name: string): Promise<void> {
 	const data = await loadData();
-	if (data.agents) {
-		data.agents = data.agents.filter((a) => a.name !== name);
-		await saveData(data);
+	if (data.agentSessions) {
+		delete data.agentSessions[name];
 	}
+	// 旧形式からも削除
+	if (data.agents) {
+		data.agents = data.agents.filter(a => a.name !== name);
+	}
+	await saveData(data);
 }
 
-// エージェントをローカル⇔グローバル間で移動
-export async function moveAgentScope(name: string, targetScope: 'global' | 'local'): Promise<boolean> {
-	const globalData = await loadData();
-	const localData = await loadLocalData();
-	const globalAgents = globalData.agents || [];
-	const localAgents = localData.agents || [];
+// マージ済みエージェント一覧を取得（agents/*.md + セッション紐づけ）
+export async function getAgents(): Promise<AgentConfig[]> {
+	const bindings = await getAgentSessionBindings();
 
-	if (targetScope === 'local') {
-		const idx = globalAgents.findIndex(a => a.name === name);
-		if (idx < 0) { return false; }
-		const agent = globalAgents[idx];
-		globalData.agents = globalAgents.filter(a => a.name !== name);
-		await saveData(globalData);
-		if (!localData.agents) { localData.agents = []; }
-		const localIdx = localData.agents.findIndex(a => a.name === name);
-		if (localIdx >= 0) {
-			localData.agents[localIdx] = agent;
-		} else {
-			localData.agents.push(agent);
-		}
-		await saveLocalData(localData);
-		return true;
-	} else {
-		const idx = localAgents.findIndex(a => a.name === name);
-		if (idx < 0) { return false; }
-		const agent = localAgents[idx];
-		localData.agents = localAgents.filter(a => a.name !== name);
-		await saveLocalData(localData);
-		if (!globalData.agents) { globalData.agents = []; }
-		const globalIdx = globalData.agents.findIndex(a => a.name === name);
-		if (globalIdx >= 0) {
-			globalData.agents[globalIdx] = agent;
-		} else {
-			globalData.agents.push(agent);
-		}
-		await saveData(globalData);
-		return true;
+	// セッションID/previousSessionIds マップを構築
+	const sessionIdMap = new Map<string, string>();
+	const prevIdsMap = new Map<string, string[]>();
+	const sessionModeMap = new Map<string, 'fixed' | 'disposable'>();
+	for (const [name, b] of Object.entries(bindings)) {
+		if (b.sessionId) { sessionIdMap.set(name, b.sessionId); }
+		if (b.previousSessionIds) { prevIdsMap.set(name, b.previousSessionIds); }
+		if (b.sessionMode) { sessionModeMap.set(name, b.sessionMode); }
 	}
+
+	const configs = await agentFileManager.getAllAgentsAsConfig(sessionIdMap, prevIdsMap);
+	// sessionMode を補完
+	for (const c of configs) {
+		const mode = sessionModeMap.get(c.name);
+		if (mode) { c.sessionMode = mode; }
+	}
+	return configs;
+}
+
+// エージェントを追加（agents/*.md + セッション紐づけ）
+export async function addAgent(agent: AgentConfig): Promise<void> {
+	// 1. agents/*.md にエージェント定義を書き込み
+	try {
+		await agentFileManager.saveAgentConfig(agent);
+	} catch {
+		// agents/*.md への書き込みが失敗してもセッション紐づけは保存する
+	}
+
+	// 2. セッション紐づけ情報を session-manager.json に保存
+	await saveAgentSessionBinding(agent.name, {
+		sessionId: agent.sessionId || '',
+		previousSessionIds: agent.previousSessionIds,
+		sessionMode: agent.sessionMode,
+	});
+
+	agentFileManager.invalidateCache();
+}
+
+// エージェントを削除
+export async function removeAgent(name: string): Promise<void> {
+	// agents/*.md から削除
+	await agentFileManager.deleteAgentFile(name);
+	// セッション紐づけを削除
+	await removeAgentSessionBinding(name);
+	agentFileManager.invalidateCache();
+}
+
+// エージェントをスコープ間で移動（agents/*.md のファイル移動）
+export async function moveAgentScope(name: string, targetScope: 'global' | 'project'): Promise<boolean> {
+	const existing = await agentFileManager.getAgentByName(name);
+	if (!existing) { return false; }
+	if (existing.scope === targetScope) { return false; }
+
+	// 新スコープにファイルを作成
+	const def: Parameters<typeof agentFileManager.writeAgentFile>[0] = {
+		...existing,
+		scope: targetScope,
+	};
+	await agentFileManager.writeAgentFile(def);
+
+	// 旧スコープのファイルを削除
+	await agentFileManager.deleteAgentFile(name);
+	agentFileManager.invalidateCache();
+	return true;
 }
 
 export async function getAgentBySessionId(sessionId: string): Promise<AgentConfig | undefined> {
@@ -437,6 +431,15 @@ export async function cleanupSessionData(sessionId: string): Promise<void> {
 	if (data.notes) {
 		delete data.notes[sessionId];
 	}
+	// agentSessions からセッション紐づけを解除
+	if (data.agentSessions) {
+		for (const [name, binding] of Object.entries(data.agentSessions)) {
+			if (binding.sessionId === sessionId) {
+				data.agentSessions[name] = { ...binding, sessionId: '' };
+			}
+		}
+	}
+	// 旧形式（agents[]）からも解除
 	if (data.agents) {
 		for (const agent of data.agents) {
 			if (agent.sessionId === sessionId) {
@@ -445,18 +448,41 @@ export async function cleanupSessionData(sessionId: string): Promise<void> {
 		}
 	}
 	await saveData(data);
+}
 
-	const localData = await loadLocalData();
-	if (localData.agents) {
-		let changed = false;
-		for (const agent of localData.agents) {
-			if (agent.sessionId === sessionId) {
-				agent.sessionId = '';
-				changed = true;
-			}
-		}
-		if (changed) {
-			await saveLocalData(localData);
+/**
+ * agents[] → agentSessions マイグレーション
+ * activate() 時に一度だけ実行し、旧形式 agents[] を agentSessions に変換して agents[] を除去する
+ */
+export async function migrateAgentsToAgentSessions(): Promise<boolean> {
+	const data = await loadData();
+
+	// agentSessions が既に存在し、agents[] がない場合はマイグレーション不要
+	if (!data.agents || data.agents.length === 0) {
+		return false;
+	}
+
+	// agentSessions が未作成なら初期化
+	if (!data.agentSessions) {
+		data.agentSessions = {};
+	}
+
+	// agents[] から agentSessions に変換（既存の agentSessions を上書きしない）
+	let migrated = 0;
+	for (const agent of data.agents) {
+		if (!data.agentSessions[agent.name] && (agent.sessionId || agent.previousSessionIds)) {
+			data.agentSessions[agent.name] = {
+				sessionId: agent.sessionId || '',
+				previousSessionIds: agent.previousSessionIds,
+				sessionMode: agent.sessionMode,
+			};
+			migrated++;
 		}
 	}
+
+	// 旧形式を除去
+	delete data.agents;
+
+	await saveData(data);
+	return migrated > 0;
 }

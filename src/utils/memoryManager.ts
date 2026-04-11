@@ -1,8 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { MemoryFile } from './types';
+import { MemoryFile } from '../models/types';
 import { buildProjectPathMap } from './sessionLoader';
+import { parseFrontmatter as parseFrontmatterYaml } from './frontmatterUtils';
 
 // メモリディレクトリの一覧を取得（非同期）
 export async function getMemoryDirs(): Promise<string[]> {
@@ -38,25 +39,22 @@ export async function getMemoryDirs(): Promise<string[]> {
 	return dirs;
 }
 
-// メモリファイルのフロントマターをパース
+// メモリファイルのフロントマターをパース（frontmatterUtils に委譲）
 function parseFrontmatter(content: string): { meta: Record<string, string>; body: string } {
-	const match = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
-	if (!match) {
+	const parsed = parseFrontmatterYaml(content);
+	if (!parsed) {
 		return { meta: {}, body: content };
 	}
-
+	// ParsedFrontmatter.data は Record<string, string|number|boolean> なので string に変換
 	const meta: Record<string, string> = {};
-	const lines = match[1].split('\n');
-	for (const line of lines) {
-		const colonIdx = line.indexOf(':');
-		if (colonIdx > 0) {
-			const key = line.substring(0, colonIdx).trim();
-			const value = line.substring(colonIdx + 1).trim();
-			meta[key] = value;
-		}
+	for (const [k, v] of Object.entries(parsed.data)) {
+		meta[k] = String(v);
 	}
-
-	return { meta, body: match[2] };
+	// description フィールドは data には含まれず parsed.description に格納されている
+	if (parsed.description) {
+		meta.description = parsed.description;
+	}
+	return { meta, body: parsed.body };
 }
 
 // グローバルメモリファイル（~/.claude/memory/）を読み込み

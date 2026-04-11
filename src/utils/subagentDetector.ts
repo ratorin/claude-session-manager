@@ -2,7 +2,7 @@
 // 既存 agentMonitor.ts のロジックを発展させ、SubagentInfo 型を返すように拡張
 // v0.3.0 perf: 全sync I/O排除
 import * as fs from 'fs';
-import { SubagentInfo } from './types';
+import { SubagentInfo } from '../models/types';
 
 // ファイルキャッシュ: mtime+sizeが変わらなければ再解析しない
 interface FileCache {

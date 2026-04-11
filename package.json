@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager - セッション履歴管理",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.3.3",
+	"version": "0.4.0",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -183,8 +183,14 @@
 				"category": "Claude Session Manager"
 			},
 			{
+				"command": "claudeManager.openAgentInClaude",
+				"title": "Claudeで開く",
+				"icon": "$(play)",
+				"category": "Claude Session Manager"
+			},
+			{
 				"command": "claudeManager.openAgentSession",
-				"title": "セッションを開く",
+				"title": "ターミナルで開く（ルール適用）",
 				"icon": "$(terminal)",
 				"category": "Claude Session Manager"
 			},
@@ -219,6 +225,12 @@
 				"command": "claudeManager.openOrgChart",
 				"title": "組織図を開く",
 				"icon": "$(organization)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.checkOrgChartSettings",
+				"title": "組織図表示設定を確認",
+				"icon": "$(checklist)",
 				"category": "Claude Session Manager"
 			},
 			{
@@ -315,6 +327,12 @@
 				"command": "claudeManager.migrateToFolderStructure",
 				"title": "フォルダ構造に移行",
 				"icon": "$(folder)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.installAskAgentHook",
+				"title": "/ask-agent hookをインストール",
+				"icon": "$(shield)",
 				"category": "Claude Session Manager"
 			},
 			{
@@ -475,9 +493,14 @@
 					"group": "inline"
 				},
 				{
+					"command": "claudeManager.openAgentInClaude",
+					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
+					"group": "0_open@1"
+				},
+				{
 					"command": "claudeManager.openAgentSession",
 					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
-					"group": "0_open"
+					"group": "0_open@2"
 				},
 				{
 					"command": "claudeManager.renewAgentSession",
@@ -546,10 +569,18 @@
 				"title": "エージェント監視",
 				"order": 1,
 				"properties": {
+					"claudeSessionManager.detectionMode": {
+						"type": "string",
+						"enum": ["fswatch"],
+						"default": "fswatch",
+						"order": 0,
+						"description": "エージェント検知方式（v0.4.0: fswatch固定）",
+						"deprecationMessage": "v0.4.0でfswatch固定になりました。この設定は将来削除されます。"
+					},
 					"claudeManager.enableAgentMonitor": {
 						"type": "boolean",
 						"default": false,
-						"order": 1,
+						"order": 2,
 						"markdownDescription": "エージェント監視を有効にします。ONにするとステータスバーに稼働中エージェントをリアルタイム表示します。\n\n⚠️ **有効にするとPC負荷が若干上がります**（定期的なセッション状態チェックのため）"
 					},
 					"claudeManager.agentMonitorInterval": {

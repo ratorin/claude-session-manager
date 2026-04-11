@@ -75,10 +75,13 @@ export interface MemoryFile {
 
 // エージェント設定
 export interface AgentConfig {
-	name: string;                // 部署名（例: CSM開発部）
+	name: string;                // エージェント名（CLI用・英数字）
+	displayName?: string;        // 日本語表示名（UI表示用）
 	sessionId: string;           // 紐づけセッションID
 	role: string;                // 役割（例: デバッグ・品質確認）
-	model: 'opus' | 'sonnet' | 'haiku';
+	displayRole?: string;        // 日本語役割説明（UI表示用）
+	displayDescription?: string; // 日本語説明（UI表示用）
+	model: 'opus' | 'sonnet' | 'sonnet-1m' | 'haiku'; // sonnet-1m = 長文コンテキスト対応モデル
 	sessionMode?: 'fixed' | 'disposable'; // セッション運用（固定 / 使い捨て）
 	ruleFile?: string;           // ルールファイルパス
 	parentAgent?: string;        // 親エージェント名（班の場合）
@@ -90,6 +93,9 @@ export interface AgentConfig {
 	// Phase 1b: モデル制御
 	effort?: 'low' | 'medium' | 'high' | 'max'; // 推論努力レベル（max は Opus 4.6 のみ）
 	thinkingEnabled?: boolean;   // Extended Thinking 有効/無効
+	permissionMode?: string;     // 権限モード（acceptEdits, auto, plan, default, bypassPermissions）
+	// 表示制御
+	showInOrgChart?: boolean;    // 組織図に表示するか（デフォルト: true）
 }
 
 // agentWatcher のイベントデータ
@@ -98,6 +104,8 @@ export interface AgentWatcherState {
 	sessionId: string;
 	isLive: boolean;
 	activeSubagentIds: string[];
+	actualModel?: string;       // JONSLから読み取った実際のモデル名
+	modelMismatch?: boolean;    // 設定モデルと実モデルが不一致
 }
 
 // サブエージェント情報
@@ -131,13 +139,21 @@ export interface TaskLog {
 	lastNotifiedAt?: number;  // 最後に通知した時刻
 }
 
+// エージェントのセッション紐づけ情報（session-manager.json に保持）
+export interface AgentSessionBinding {
+	sessionId: string;
+	previousSessionIds?: string[];
+	sessionMode?: 'fixed' | 'disposable';
+}
+
 // 拡張機能の永続データ（グローバル）
 export interface ManagerData {
 	bookmarks: string[]; // セッションIDの配列
 	tags: Record<string, string[]>; // タグ名 → セッションIDの配列
 	customNames: Record<string, string>; // セッションID → カスタム名
 	notes: Record<string, string>; // セッションID → メモ
-	agents?: AgentConfig[]; // エージェント設定
+	agents?: AgentConfig[]; // レガシー（後方互換・読み取り専用）— 新規書き込み禁止
+	agentSessions?: Record<string, AgentSessionBinding>; // エージェント名 → セッション紐づけ（Phase 3+）
 	ruleFolder?: string; // ルールフォルダパス（例: c:/xampp/Project/.agent-rules）
 	taskLogs?: TaskLog[]; // タスクログ
 }

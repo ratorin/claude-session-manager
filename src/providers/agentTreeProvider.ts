@@ -1,12 +1,13 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { AgentConfig, ParsedSession, TaskLog } from './types';
-import * as dataStore from './dataStore';
-import { getRuleFileInfo, resolveRuleFilePath } from './agentManager';
-import { isLegacyAutoFormat, hasFrontmatter } from './frontmatterUtils';
+import { AgentConfig, ParsedSession, TaskLog } from '../models/types';
+import * as dataStore from '../models/dataStore';
+import { getRuleFileInfo, resolveRuleFilePath } from '../agents/agentManager';
+import { isLegacyAutoFormat, hasFrontmatter } from '../utils/frontmatterUtils';
+import { shouldShowInOrgChart } from '../utils/agentUtils';
 
-type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem;
+type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | HookInstallBannerItem;
 
 // エージェント管理サイドバーのTreeDataProvider（ツリー構造対応）
 export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>, vscode.Disposable {
@@ -19,6 +20,11 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 
 	private getSessionsFn: () => ParsedSession[];
 	private isLiveFn: (id: string) => boolean;
+	private watcherStates: Map<string, import('../models/types').AgentWatcherState> = new Map();
+
+	setWatcherStates(states: Map<string, import('../models/types').AgentWatcherState>): void {
+		this.watcherStates = states;
+	}
 	private activeAgentNamesFn: () => Set<string>;
 	private getVisibleTasksFn: ((agentName: string) => TaskLog[]) | undefined;
 
@@ -50,11 +56,60 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 	}
 
 	async getChildren(element?: AgentTreeNode): Promise<AgentTreeNode[]> {
-		// TaskLogItem / MigrationBannerItem は子を持たない
+		// TaskLogItem / MigrationBannerItem / GlobalAgentsSectionItem は子を持たない（GlobalAgentsSectionItem は特別処理）
 		if (element instanceof TaskLogItem) { return []; }
 		if (element instanceof MigrationBannerItem) { return []; }
+		if (element instanceof HookInstallBannerItem) { return []; }
+		if (element instanceof GlobalAgentsSectionItem) {
+			// グローバルエージェント を返す
+			const allAgents = await dataStore.getAgents();
+			const globalAgents = allAgents.filter((a) => !shouldShowInOrgChart(a));
 
-		const agents = await dataStore.getAgents();
+			const sessions = this.getSessionsFn();
+			const titleMap = new Map<string, string>();
+			for (const s of sessions) {
+				titleMap.set(s.id, s.customName || s.claudeTitle || s.firstMessage.substring(0, 40));
+			}
+
+			const activeNames = this.activeAgentNamesFn();
+			const checkLive = (agent: AgentConfig): boolean => {
+				if (activeNames.has(agent.name)) { return true; }
+				return agent.sessionId ? this.isLiveFn(agent.sessionId) : false;
+			};
+
+			// グローバルエージェント をソート
+			globalAgents.sort((a, b) => {
+				const aLive = checkLive(a) ? 0 : 1;
+				const bLive = checkLive(b) ? 0 : 1;
+				if (aLive !== bLive) { return aLive - bLive; }
+				return a.name.localeCompare(b.name);
+			});
+
+			const result: AgentTreeNode[] = [];
+			for (const agent of globalAgents) {
+				const isLive = checkLive(agent);
+				const sessionTitle = agent.sessionId ? titleMap.get(agent.sessionId) : undefined;
+				const ws = this.watcherStates.get(agent.name);
+				result.push(new AgentItem(agent, isLive, sessionTitle, true, false, '', ws?.modelMismatch ?? false, ws?.actualModel));
+			}
+			return result;
+		}
+
+		const allAgents = await dataStore.getAgents();
+
+		// 現在のワークスペースパス（小文字・スラッシュ統一）
+		const currentWorkspace = (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '')
+			.toLowerCase().replace(/\\/g, '/');
+
+		// scope: "project" のエージェントは workDir が現在のワークスペース配下のものだけ表示
+		const agents = allAgents.filter((a) => {
+			if (a.scope !== 'project') { return true; } // グローバルエージェントは常に表示
+			if (!a.workDir) { return true; }             // workDirなしは常に表示
+			if (!currentWorkspace) { return true; }       // ワークスペース不明時は表示
+			const agentDir = a.workDir.toLowerCase().replace(/\\/g, '/');
+			return agentDir.startsWith(currentWorkspace) || currentWorkspace.startsWith(agentDir);
+		});
+
 		if (agents.length === 0) { return []; }
 
 		// セッションタイトル対応表
@@ -66,6 +121,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 
 		// エージェント名一覧（親の存在チェック用）
 		const agentNames = new Set(agents.map((a) => a.name));
+		agentNames.add('**global-agents**'); // 仮想親を登録
 
 		// 子を持つかどうかを判定
 		const childMap = new Map<string, AgentConfig[]>();
@@ -77,6 +133,12 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			}
 		}
 
+		// グローバルエージェント を仮想親にマッピング（parentAgent 未設定 かつ showInOrgChart 明示なし → グローバル）
+		const globalAgents = agents.filter((a) => !shouldShowInOrgChart(a) && (!a.parentAgent || !agentNames.has(a.parentAgent)));
+		if (globalAgents.length > 0) {
+			childMap.set('**global-agents**', globalAgents);
+		}
+
 		// JSONL解析ベースの稼働中エージェント名
 		const activeNames = this.activeAgentNamesFn();
 
@@ -86,23 +148,17 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			return agent.sessionId ? this.isLiveFn(agent.sessionId) : false;
 		};
 
-		// ルールファイル行数を非同期で一括取得
+		// 新形式（agents/*.md）では ruleFile は不要。削除済み。
 		const ruleStrMap = new Map<string, string>();
-		const ruleAgents = agents.filter((a) => a.ruleFile);
-		const ruleResults = await Promise.allSettled(
-			ruleAgents.map(async (a) => {
-				const info = await getRuleFileInfo(a.ruleFile!);
-				return { name: a.name, str: info ? `${info.lines}行` : '未検出' };
-			})
-		);
-		for (const r of ruleResults) {
-			if (r.status === 'fulfilled') {
-				ruleStrMap.set(r.value.name, r.value.str);
-			}
-		}
 
 		if (!element) {
 			const result: AgentTreeNode[] = [];
+
+			// /ask-agent hookインストールバナー: 未設定時のみ表示
+			const hookInstalled = await isAskAgentHookInstalled();
+			if (!hookInstalled) {
+				result.push(new HookInstallBannerItem());
+			}
 
 			// マイグレーションバナー: 旧形式のルールファイルがあれば表示
 			const legacyAgents = await detectLegacyAgents(agents);
@@ -111,9 +167,10 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				result.push(new MigrationBannerItem(legacyAgents.length));
 			}
 
-			// トップレベル: parentAgent 未設定、または存在しない親を参照しているもの（孤児防止）
-			const topLevel = agents.filter((a) => !a.parentAgent || !agentNames.has(a.parentAgent));
-			// ソート: 子を持つエージェントが上 → 稼働中を上 → 名前順
+			// トップレベル: parentAgent 未設定（または孤児）かつ組織図表示対象
+			// グローバルエージェント は仮想親の下に移動したので除外
+			const topLevel = agents.filter((a) => (!a.parentAgent || !agentNames.has(a.parentAgent)) && shouldShowInOrgChart(a));
+			// ソート: 子を持つ → 稼働中 → 名前順
 			topLevel.sort((a, b) => {
 				const aHasChildren = childMap.has(a.name) ? 0 : 1;
 				const bHasChildren = childMap.has(b.name) ? 0 : 1;
@@ -128,8 +185,16 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				const sessionTitle = agent.sessionId ? titleMap.get(agent.sessionId) : undefined;
 				const hasTasks = this.getVisibleTasksFn ? this.getVisibleTasksFn(agent.name).length > 0 : false;
 				const hasChildrenFlag = childMap.has(agent.name) || hasTasks;
-				result.push(new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || ''));
+				const ws = this.watcherStates.get(agent.name);
+				result.push(new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel));
 			}
+
+			// グローバルエージェント の仮想親ノード
+			if (globalAgents.length > 0) {
+				const globalAgentItem = new GlobalAgentsSectionItem();
+				result.push(globalAgentItem);
+			}
+
 			return result;
 		}
 
@@ -149,7 +214,8 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			const sessionTitle = agent.sessionId ? titleMap.get(agent.sessionId) : undefined;
 			const hasTasks = this.getVisibleTasksFn ? this.getVisibleTasksFn(agent.name).length > 0 : false;
 			const hasChildren = childMap.has(agent.name) || hasTasks;
-			result.push(new AgentItem(agent, isLive, sessionTitle, true, hasChildren, ruleStrMap.get(agent.name) || ''));
+			const ws = this.watcherStates.get(agent.name);
+			result.push(new AgentItem(agent, isLive, sessionTitle, true, hasChildren, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel));
 		}
 
 		// タスクログ
@@ -174,18 +240,26 @@ export class AgentItem extends vscode.TreeItem {
 		sessionTitle?: string,
 		isChild: boolean = false,
 		hasChildren: boolean = false,
-		ruleStr: string = ''
+		ruleStr: string = '',
+		modelMismatch: boolean = false,
+		actualModel?: string
 	) {
 		// モデル頭文字（会話一覧と同じ全角表記）
 		const modelChar = agent.model === 'opus' ? 'Ｏ'
+			: agent.model === 'sonnet-1m' ? '１'
 			: agent.model === 'haiku' ? 'Ｈ'
 			: 'Ｓ';
 
 		// 使い捨てラベル
 		const disposableLabel = agent.sessionMode === 'disposable' ? ' 使い捨て' : '';
+		// モデル不一致警告ラベル
+		const mismatchLabel = modelMismatch ? ' ⚠️' : '';
 
-		// 表示名: "Ｏ  CSM開発部 使い捨て"
-		const displayName = `${modelChar}\u2007${agent.name}${disposableLabel}`;
+		// 表示名: "Ｏ  CSM開発部（csm-dev）使い捨て ⚠️"
+		const agentDisplayName = agent.displayName
+			? `${agent.displayName}（${agent.name}）`
+			: agent.name;
+		const displayName = `${modelChar}\u2007${agentDisplayName}${disposableLabel}${mismatchLabel}`;
 
 		// 折りたたみ状態
 		const collapsible = hasChildren
@@ -195,28 +269,28 @@ export class AgentItem extends vscode.TreeItem {
 		super(displayName, collapsible);
 		this.agent = agent;
 
-		// description: ルール行数 + セッション情報
-		const parts: string[] = [];
-		if (ruleStr) {
-			parts.push(`📄${ruleStr}`);
-		}
+		// description: セッション情報 + 組織図表示フラグ
 		const sessionInfo = agent.sessionId
 			? (sessionTitle || `${agent.sessionId.substring(0, 8)}...`)
 			: '未紐づけ';
-		parts.push(sessionInfo);
-		this.description = parts.join(' ');
+		const orgChartFlag = shouldShowInOrgChart(agent) ? '👁' : '🙈';
+		this.description = `${orgChartFlag} ${sessionInfo}`;
 
 		// ツールチップ
+		const modelLine = modelMismatch && actualModel
+			? `| モデル（設定） | ${agent.model} |\n| モデル（実際） | **⚠️ ${actualModel}** |\n`
+			: `| モデル | ${agent.model} |\n`;
+		const displayRoleStr = agent.displayRole || agent.role || '未設定';
 		this.tooltip = new vscode.MarkdownString(
-			`**${agent.name}**\n\n` +
+			`**${agent.name}**${modelMismatch ? ' ⚠️ モデル不一致' : ''}\n\n` +
 			`| | |\n|---|---|\n` +
-			`| 役割 | ${agent.role || '未設定'} |\n` +
-			`| モデル | ${agent.model} |\n` +
+			`| 役割 | ${displayRoleStr} |\n` +
+			(agent.displayDescription ? `| 説明 | ${agent.displayDescription} |\n` : '') +
+			modelLine +
 			`| 運用 | ${agent.sessionMode === 'disposable' ? '使い捨て' : '固定'} |\n` +
 			`| セッション | ${sessionInfo} |\n` +
 			(agent.parentAgent ? `| 親エージェント | ${agent.parentAgent} |\n` : '') +
-			(agent.workDir ? `| 作業フォルダ | ${agent.workDir} |\n` : '') +
-			(agent.ruleFile ? `| ルールファイル | ${agent.ruleFile} |\n` : '')
+			(agent.workDir ? `| 作業フォルダ | ${agent.workDir} |\n` : '')
 		);
 
 		// アイコン: エージェント状態表示
@@ -240,11 +314,10 @@ export class AgentItem extends vscode.TreeItem {
 				break;
 		}
 
-		// contextValue: セッション紐づけ・ルールファイルの有無で分岐
-		// agentItemLinked / agentItemLinkedWithRule / agentItem / agentItemWithRule
+		// contextValue: セッション紐づけで分岐（新形式では ruleFile 不要）
+		// agentItemLinked / agentItem
 		const linked = agent.sessionId ? 'Linked' : '';
-		const withRule = agent.ruleFile ? 'WithRule' : '';
-		this.contextValue = `agentItem${linked}${withRule}`;
+		this.contextValue = `agentItem${linked}`;
 
 		// クリックでプレビューを表示
 		this.command = {
@@ -278,6 +351,54 @@ export class MigrationBannerItem extends vscode.TreeItem {
 	}
 }
 
+// グローバルエージェント セクションのTreeItem
+export class GlobalAgentsSectionItem extends vscode.TreeItem {
+	constructor() {
+		super('📦 グローバルエージェント', vscode.TreeItemCollapsibleState.Expanded);
+		this.description = '組織図に含まれない汎用エージェント';
+		this.tooltip = new vscode.MarkdownString(
+			`**グローバルエージェント**\n\n` +
+			`組織図とは無関係な汎用エージェント群。\n` +
+			`コード審査、テスト、セキュリティ等の機能を提供します。`
+		);
+		this.iconPath = new vscode.ThemeIcon('package', new vscode.ThemeColor('foreground'));
+		this.contextValue = 'globalAgentsSection';
+	}
+}
+
+// /ask-agent hookインストールバナー
+export class HookInstallBannerItem extends vscode.TreeItem {
+	constructor() {
+		super('🔧 /ask-agent hookをインストール', vscode.TreeItemCollapsibleState.None);
+		this.description = 'エージェント安全呼び出しガード';
+		this.tooltip = new vscode.MarkdownString(
+			`**/ask-agent hook のインストール**\n\n` +
+			`\`claude -p\` を \`--agent\`/\`--resume\` なしで実行するのを防ぐ安全hookです。\n\n` +
+			`クリックするとプロジェクトの \`.claude/settings.json\` に自動追加します。`
+		);
+		this.iconPath = new vscode.ThemeIcon('shield', new vscode.ThemeColor('charts.blue'));
+		this.contextValue = 'hookInstallBanner';
+		this.command = {
+			command: 'claudeManager.installAskAgentHook',
+			title: '/ask-agent hookをインストール',
+		};
+	}
+}
+
+// /ask-agent hookが設定されているかチェック
+async function isAskAgentHookInstalled(): Promise<boolean> {
+	const settingsPaths = [
+		path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '', '.claude', 'settings.json'),
+	];
+	for (const p of settingsPaths) {
+		try {
+			const content = await fs.promises.readFile(p, 'utf-8');
+			if (content.includes('check-ask-agent')) { return true; }
+		} catch { /* ファイルなし */ }
+	}
+	return false;
+}
+
 // 旧形式のルールファイルを持つエージェントを検出
 async function detectLegacyAgents(agents: AgentConfig[]): Promise<AgentConfig[]> {
 	const legacy: AgentConfig[] = [];
@@ -286,6 +407,13 @@ async function detectLegacyAgents(agents: AgentConfig[]): Promise<AgentConfig[]>
 		try {
 			const resolved = await resolveRuleFilePath(agent.ruleFile);
 			if (!resolved) { continue; }
+
+			// 新形式（agents/*.md）からのエージェントは除外
+			// パターン: /.claude/agents/... または \\.claude\\agents\\...
+			if (resolved.includes('/.claude/agents/') || resolved.includes('\\.claude\\agents\\')) {
+				// 新形式は自動的にYAMLフロントマター + 正しい構造なので、レガシーではない
+				continue;
+			}
 
 			// フラット構造チェック: 親ディレクトリ名がエージェント名と一致しない
 			const parentName = path.basename(path.dirname(resolved));

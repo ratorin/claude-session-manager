@@ -2,27 +2,30 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { SessionTreeProvider, SessionItem, SessionDecorationProvider } from './sessionTreeProvider';
-import { BookmarkTreeProvider } from './bookmarkTreeProvider';
-import { TagTreeProvider, TagSessionItem } from './tagTreeProvider';
-import { MemoryTreeProvider, MemoryFileItem, MemoryGroupItem } from './memoryTreeProvider';
-import { AgentTreeProvider, AgentItem, MigrationBannerItem } from './agentTreeProvider';
-import { showSessionPreview, showMemoryPreview, updatePreviewTitle } from './webviewPanel';
-import { showAgentFormPanel } from './agentFormPanel';
-import { showAgentPreview } from './agentPreviewPanel';
-import { showOrgChart } from './orgChartPanel';
-import { AgentWatcher } from './agentWatcher';
-import { TaskTracker } from './taskTracker';
-import { UsageMonitor } from './usageMonitor';
-import * as dataStore from './dataStore';
-import { AgentConfig } from './types';
-import { loadMemoryFiles, deleteMemoryFile, mergeMemoryFiles, extractFromMemory, addToIndex } from './memoryManager';
-import { resolveRuleFilePath } from './agentManager';
-import { syncParentRuleFile, syncAllParentRuleFiles, hasCircularRef } from './parentChildSync';
+import { SessionTreeProvider, SessionItem, SessionDecorationProvider } from './providers/sessionTreeProvider';
+import { BookmarkTreeProvider } from './providers/bookmarkTreeProvider';
+import { TagTreeProvider, TagSessionItem } from './providers/tagTreeProvider';
+import { MemoryTreeProvider, MemoryFileItem, MemoryGroupItem } from './providers/memoryTreeProvider';
+import { AgentTreeProvider, AgentItem, MigrationBannerItem } from './providers/agentTreeProvider';
+import { showSessionPreview, showMemoryPreview, updatePreviewTitle } from './panels/webviewPanel';
+import { showAgentFormPanel } from './panels/agentFormPanel';
+import { showAgentPreview } from './panels/agentPreviewPanel';
+import { showOrgChart } from './panels/orgChartPanel';
+import { shouldShowInOrgChart, moveToTrash } from './utils/agentUtils';
+import { AgentWatcher } from './watchers/agentWatcher';
+// detectionComparePanel は Phase 4 で削除済み
+import { modelCliMap } from './utils/cliBuilder';
+import { TaskTracker } from './watchers/taskTracker';
+import { UsageMonitor } from './utils/usageMonitor';
+import * as dataStore from './models/dataStore';
+import { AgentConfig } from './models/types';
+import { loadMemoryFiles, deleteMemoryFile, mergeMemoryFiles, extractFromMemory, addToIndex } from './utils/memoryManager';
+import { resolveRuleFilePath } from './agents/agentManager';
+import { syncParentRuleFile, syncAllParentRuleFiles, hasCircularRef } from './agents/parentChildSync';
 import {
 	parseFrontmatter, generateFrontmatter, updateFrontmatterInContent,
 	migrateAutoToYaml, isLegacyAutoFormat, hasFrontmatter, sanitizeForYaml,
-} from './frontmatterUtils';
+} from './utils/frontmatterUtils';
 
 // VS Code設定から値を取得するヘルパー
 function getConfig<T>(key: string, defaultValue: T): T {
@@ -53,6 +56,21 @@ function validateOutputFile(filePath: string): boolean {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+	// session-manager.json マイグレーション: agents[] → agentSessions（一度だけ実行）
+	dataStore.migrateAgentsToAgentSessions().catch(() => {
+		// マイグレーション失敗は致命的ではないため、エラーを無視
+	});
+
+	// check-dispatch フックのマイグレーション（初回のみユーザー確認付き）
+	ensureCheckDispatchHook(context).catch(() => {
+		// フック登録失敗は致命的ではないため、エラーを無視
+	});
+
+	// dispatch skill のセットアップ（初回のみユーザー確認付き）
+	ensureDispatchSkill(context).catch(() => {
+		// スキル登録失敗は致命的ではないため、エラーを無視
+	});
+
 	// TreeViewプロバイダーを作成
 	const sessionProvider = new SessionTreeProvider();
 	const bookmarkProvider = new BookmarkTreeProvider(() => sessionProvider.getAllParentSessions(), sessionProvider);
@@ -91,11 +109,13 @@ export function activate(context: vscode.ExtensionContext) {
 	function updateStatusBar(): void {
 		dataStore.getAgents().then((agents) => {
 			try {
-				const totalAgents = agents.length;
+				// 組織図エージェントのみカウント（showInOrgChart: true）
+				const orgAgents = agents.filter((a) => shouldShowInOrgChart(a));
+				const orgCount = orgAgents.length;
 
 				if (!agentWatcher.isEnabled()) {
 					// 監視無効時は静的表示のみ
-					statusBarItem.text = `👥 ${totalAgents}`;
+					statusBarItem.text = `👥 ${orgCount}`;
 					statusBarItem.tooltip = 'エージェント監視: OFF（設定で有効化できます）';
 					statusBarItem.backgroundColor = undefined;
 					statusBarItem.show();
@@ -103,21 +123,29 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 
 				const activeNames = agentWatcher.getActiveAgentNames();
-				const activeCount = activeNames.size;
+				// 組織図エージェントの中でアクティブなもののみカウント
+				const orgAgentNames = new Set(orgAgents.map((a) => a.name));
+				const activeOrgNames = [...activeNames].filter((n) => orgAgentNames.has(n));
+				const activeCount = activeOrgNames.length;
 
 				if (activeCount === 0) {
-					statusBarItem.text = `👥 ${totalAgents}`;
-					statusBarItem.tooltip = `動作中のエージェントなし（全${totalAgents}件）`;
+					statusBarItem.text = `👥 ${orgCount}`;
+					statusBarItem.tooltip = `動作中のエージェントなし（組織図: ${orgCount}件）`;
 					statusBarItem.backgroundColor = undefined;
 				} else {
-					statusBarItem.text = `🟢 ${activeCount} 👥 ${totalAgents}`;
+					statusBarItem.text = `🟢 ${activeCount} 👥 ${orgCount}`;
 					statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-					const nameList = [...activeNames].map((n) => `▶ ${n}`).join('\n');
-					statusBarItem.tooltip = `動作中: ${activeCount}件 / 全${totalAgents}件\n${nameList}`;
+					// 和名があれば「和名（英語名）」形式で表示
+					const displayNameMap = new Map(orgAgents.map((a) => [a.name, a.displayName]));
+					const nameList = activeOrgNames.map((n) => {
+						const dn = displayNameMap.get(n);
+						return dn ? `▶ ${dn}（${n}）` : `▶ ${n}`;
+					}).join('\n');
+					statusBarItem.tooltip = `動作中: ${activeCount}件 / 組織図: ${orgCount}件\n${nameList}`;
 				}
 				statusBarItem.show();
 			} catch {
-				statusBarItem.text = `👥 ${agents.length}`;
+				statusBarItem.text = `👥 ?`;
 				statusBarItem.backgroundColor = undefined;
 				statusBarItem.show();
 			}
@@ -137,6 +165,8 @@ export function activate(context: vscode.ExtensionContext) {
 	// AgentWatcher のイベントでステータスバー＋ツリーをリフレッシュ
 	agentWatcher.onDidChange(() => {
 		updateStatusBar();
+		// モデル不一致情報をagentProviderに連携してからリフレッシュ
+		agentProvider.setWatcherStates(agentWatcher.getStates());
 		agentProvider.refresh();
 		// ライブセッション情報をsessionTreeProviderに連携（H-3: 二重ポーリング統合）
 		sessionProvider.setLiveSessionIds(agentWatcher.getLiveSessionIds());
@@ -191,7 +221,12 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// 設定変更時に AgentWatcher / UsageMonitor を再起動
 	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
-		if (e.affectsConfiguration('claudeManager.enableAgentMonitor') || e.affectsConfiguration('claudeManager.agentMonitorInterval')) {
+		if (
+			e.affectsConfiguration('claudeManager.enableAgentMonitor') ||
+			e.affectsConfiguration('claudeManager.agentMonitorInterval') ||
+			e.affectsConfiguration('claudeManager.detectionMode') ||
+			e.affectsConfiguration('claudeSessionManager.detectionMode')
+		) {
 			const wasEnabled = agentWatcher.isEnabled();
 			agentWatcher.restart();
 			sessionProvider.restartPolling();
@@ -283,11 +318,14 @@ export function activate(context: vscode.ExtensionContext) {
 			delete env.CLAUDE_CODE;
 			delete env.CLAUDECODE;
 
-			const child = spawn('claude', args, {
+			// C-2: shell:false でコマンドインジェクションを防止
+			// Windows環境では .cmd 拡張子が必要
+			const claudeCmd = process.platform === 'win32' ? 'claude.cmd' : 'claude';
+			const child = spawn(claudeCmd, args, {
 				env,
 				cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir(),
 				stdio: ['ignore', 'pipe', 'pipe'],
-				shell: true,
+				shell: false,
 				windowsHide: true,
 			});
 
@@ -536,7 +574,8 @@ export function activate(context: vscode.ExtensionContext) {
 	}
 
 	// 詳細遺言生成: Claude CLIでAI要約を生成（トークンコストあり）
-	async function generateDetailedTestament(agent: AgentConfig, oldSession: { filePath: string } | undefined, model: string): Promise<string> {
+	// modelOrSessionId: モデル名（claude-xxx形式）またはエージェントのセッションID（UUID形式）
+	async function generateDetailedTestament(agent: AgentConfig, oldSession: { filePath: string } | undefined, modelOrSessionId: string): Promise<string> {
 		if (!oldSession) { return `${agent.name}の前セッションから引き継ぎ。`; }
 		try {
 			// JSONL末尾から直近の内容を取得（末尾256KBのみ読み取り）
@@ -551,8 +590,14 @@ export function activate(context: vscode.ExtensionContext) {
 			const { execFile } = require('child_process') as typeof import('child_process');
 			const prompt = `以下はClaude Codeのセッションログ（JSONL形式）の末尾です。このセッションで何をしたか・何が未完了かを300文字以内で簡潔に要約してください。次のセッションへの引き継ぎ情報として使います。\n\n${recentContent}`;
 
+			// UUID形式ならエージェントのセッションに--resume、それ以外はモデル名で新規
+			const isSessionId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(modelOrSessionId);
+			const cliArgs = isSessionId
+				? ['-p', prompt, '--resume', modelOrSessionId, '--max-tokens', '600']
+				: ['-p', prompt, '--model', modelOrSessionId, '--max-tokens', '600'];
+
 			const result = await new Promise<string>((resolve, reject) => {
-				const child = execFile('claude', ['-p', prompt, '--model', model, '--max-tokens', '600'], {
+				const child = execFile('claude', cliArgs, {
 					timeout: 60000,
 					maxBuffer: 1024 * 64,
 				}, (err: Error | null, stdout: string) => {
@@ -1083,7 +1128,7 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.linkSession', async (item: AgentItem) => {
 			const sessions = sessionProvider.getSessions();
-			const sessionItems: { label: string; description: string; sessionId: string; alreadyLinked: boolean; linkedAgentName: string | undefined }[] = [];
+			const sessionItems: { label: string; description: string; sessionId: string; actualModel: string | undefined; alreadyLinked: boolean; linkedAgentName: string | undefined }[] = [];
 			for (const s of sessions) {
 				const existingAgent = await dataStore.getAgentBySessionId(s.id);
 				const usedLabel = existingAgent ? ` [${existingAgent.name}に紐づけ済み]` : '';
@@ -1091,6 +1136,7 @@ export function activate(context: vscode.ExtensionContext) {
 					label: (s.customName || s.claudeTitle || s.firstMessage.substring(0, 50)) + usedLabel,
 					description: `${s.project} — ${s.lastTimestamp.toLocaleString('ja-JP')}`,
 					sessionId: s.id,
+					actualModel: s.model,
 					alreadyLinked: !!existingAgent,
 					linkedAgentName: existingAgent?.name,
 				});
@@ -1122,14 +1168,56 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 			}
 
-			const agent = { ...item.agent, sessionId: picked.sessionId };
-			await dataStore.addAgent(agent);
+			// モデル不一致チェック: 設定モデルと実際のモデルを比較
+			let agentToSave = { ...item.agent, sessionId: picked.sessionId };
+			if (picked.actualModel && item.agent.model) {
+				const mismatch = !agentWatcher.modelsMatchPublic(item.agent.model, picked.actualModel);
+				if (mismatch) {
+					const answer = await vscode.window.showWarningMessage(
+						`モデルが異なります。\n設定: ${item.agent.model}\n実際: ${picked.actualModel}\n設定を実際のモデルに合わせますか？`,
+						{ modal: true },
+						'合わせる', 'そのまま'
+					);
+					if (answer === '合わせる') {
+						// 実際のモデルから内部モデル名に変換（日付付きID対応）
+						function resolveModel(raw: string): string {
+							if (raw.includes('[1m]')) {
+								return raw.includes('sonnet') ? 'sonnet-1m' : 'opus';
+							}
+							if (raw.includes('opus')) { return 'opus'; }
+							if (raw.includes('sonnet')) { return 'sonnet'; }
+							if (raw.includes('haiku')) { return 'haiku'; }
+							return raw;
+						}
+						const newModel = picked.actualModel ? resolveModel(picked.actualModel) : picked.actualModel;
+						agentToSave = { ...agentToSave, model: newModel as typeof item.agent.model };
+					}
+				}
+			}
+
+			await dataStore.addAgent(agentToSave);
 			refreshAll();
 			vscode.window.showInformationMessage(`「${item.agent.name}」にセッションを紐づけました`);
 		})
 	);
 
-	// エージェントのセッションを開く（Claude Codeで開く）
+	// エージェントのセッションをClaudeで開く（URIスキーム）
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.openAgentInClaude', async (item: AgentItem) => {
+			if (!item.agent.sessionId) {
+				vscode.window.showWarningMessage('セッションが紐づけされていません');
+				return;
+			}
+			const scheme = vscode.env.uriScheme;
+			const uri = vscode.Uri.parse(
+				`${scheme}://anthropic.claude-code/open?session=` +
+				encodeURIComponent(item.agent.sessionId)
+			);
+			vscode.env.openExternal(uri);
+		})
+	);
+
+	// エージェントのセッションをターミナルで開く（ルールファイル適用付き）
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.openAgentSession', async (item: AgentItem) => {
 			if (!item.agent.sessionId) {
@@ -1146,12 +1234,27 @@ export function activate(context: vscode.ExtensionContext) {
 					vscode.window.showWarningMessage(`ルールファイルが見つかりません: ${item.agent.ruleFile}`);
 				}
 			}
-			const scheme = vscode.env.uriScheme;
-			const uri = vscode.Uri.parse(
-				`${scheme}://anthropic.claude-code/open?session=` +
-				encodeURIComponent(item.agent.sessionId)
-			);
-			vscode.env.openExternal(uri);
+
+			// ターミナルでclaude --resume + 全設定付きで起動
+			const args = ['claude', '--resume', item.agent.sessionId];
+			if (item.agent.ruleFile) {
+				args.push('--append-system-prompt-file', item.agent.ruleFile);
+			}
+			const modelId = modelCliMap[item.agent.model] || item.agent.model;
+			args.push('--model', modelId);
+			if (item.agent.effort) {
+				args.push('--effort', item.agent.effort);
+			}
+			if (item.agent.permissionMode) {
+				args.push('--permission-mode', item.agent.permissionMode);
+			}
+
+			const terminal = vscode.window.createTerminal({
+				name: `🤖 ${item.agent.name}`,
+				cwd: item.agent.workDir || undefined,
+			});
+			terminal.show();
+			terminal.sendText(args.join(' '));
 		})
 	);
 
@@ -1171,6 +1274,7 @@ export function activate(context: vscode.ExtensionContext) {
 					[
 						{ label: '簡易（即時）', description: 'JSONL末尾から自動抽出。コストゼロ', value: 'simple' as const },
 						{ label: '詳細（AI要約）', description: 'Claude CLIで要約生成。高品質だがトークンコストあり', value: 'detailed' as const },
+						{ label: 'エージェントに委任する', description: '登録済みエージェントのセッションで要約を生成', value: 'delegate' as const },
 					],
 					{ placeHolder: '遺言の生成方法を選択してください' }
 				);
@@ -1184,13 +1288,33 @@ export function activate(context: vscode.ExtensionContext) {
 				try {
 					if (mode.value === 'simple') {
 						testament = await generateSimpleTestament(agent, oldSession);
+					} else if (mode.value === 'delegate') {
+						// エージェント委任モード: 他エージェントのセッションにresumeして要約生成
+						const allAgents = await dataStore.getAgents();
+						const availableAgents = allAgents.filter(a => a.name !== agent.name && a.sessionId);
+						if (availableAgents.length === 0) {
+							vscode.window.showWarningMessage('利用可能なエージェントがありません。簡易モードにフォールバックします。');
+							testament = await generateSimpleTestament(agent, oldSession);
+						} else {
+							const agentPick = await vscode.window.showQuickPick(
+								availableAgents.map(a => ({
+									label: a.name,
+									description: `${a.role || ''} [${a.model}]`,
+									value: a,
+								})),
+								{ placeHolder: '要約を依頼するエージェントを選択', title: '委任先エージェント' }
+							);
+							if (!agentPick) { return; }
+							testament = await generateDetailedTestament(agent, oldSession, agentPick.value.sessionId);
+						}
 					} else {
 						// 詳細モード: モデル選択 → Claude CLIでAI要約生成
 						const modelPick = await vscode.window.showQuickPick(
 							[
-								{ label: 'opus', description: '最高品質（推奨）', value: 'opus' },
-								{ label: 'sonnet', description: 'バランス重視', value: 'sonnet' },
-								{ label: 'haiku', description: '高速・低コスト', value: 'haiku' },
+								{ label: 'claude-opus-4-6', description: '最高品質（推奨）', value: 'claude-opus-4-6' },
+								{ label: 'claude-sonnet-4-6', description: 'バランス重視', value: 'claude-sonnet-4-6' },
+								{ label: 'claude-sonnet-4-6[1m]', description: '長文コンテキスト対応', value: 'claude-sonnet-4-6[1m]' },
+								{ label: 'claude-haiku-4-5', description: '高速・低コスト', value: 'claude-haiku-4-5' },
 							],
 							{ placeHolder: '要約に使用するモデルを選択', title: 'AI要約モデル' }
 						);
@@ -1331,6 +1455,53 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
+	// 組織図表示設定を確認
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.checkOrgChartSettings', async () => {
+			const agents = await dataStore.getAgents();
+
+			// 組織図に表示/非表示を分類（B案: parentAgent 自動判定）
+			const visible = agents.filter((a) => shouldShowInOrgChart(a));
+			const hidden = agents.filter((a) => !shouldShowInOrgChart(a));
+
+			// グループ化（親ごと）
+			const visibleByParent = new Map<string | undefined, typeof visible>();
+			for (const a of visible) {
+				const parent = a.parentAgent || '(親なし)';
+				if (!visibleByParent.has(parent)) {
+					visibleByParent.set(parent, []);
+				}
+				visibleByParent.get(parent)!.push(a);
+			}
+
+			// メッセージ構築
+			let message = `📊 **組織図表示設定**\n\n`;
+			message += `**表示対象: ${visible.length}件**\n`;
+			for (const [parent, list] of visibleByParent.entries()) {
+				message += `\n${parent}\n`;
+				for (const a of list) {
+					const displayName = a.displayName || a.name;
+					message += `  • ${displayName}\n`;
+				}
+			}
+
+			if (hidden.length > 0) {
+				message += `\n**非表示: ${hidden.length}件**\n`;
+				for (const a of hidden) {
+					const displayName = a.displayName || a.name;
+					message += `  • ${displayName}\n`;
+				}
+			}
+
+			const ch = getExtensionOutputChannel();
+			ch.clear();
+			ch.appendLine(message);
+			ch.show();
+
+			vscode.window.showInformationMessage(`組織図設定: 表示${visible.length}件 / 非表示${hidden.length}件`);
+		})
+	);
+
 	// タスクログ手動記録コマンドは削除済み（v0.3.0: TODO.md自動管理に移行）
 	// 自動検知（taskTracker.ts）は引き続き動作
 
@@ -1395,10 +1566,7 @@ export function activate(context: vscode.ExtensionContext) {
 					await ensureAgentFolderFiles(agentFolder, agent.name);
 
 					// 旧ファイルを .trash/ に移動
-					const trashDir = path.join(ruleFolder, '.trash');
-					await fs.promises.mkdir(trashDir, { recursive: true });
-					const trashDest = path.join(trashDir, `${agent.name}.md.${Date.now()}`);
-					await fs.promises.rename(resolved, trashDest);
+					await moveToTrash(resolved, path.join(ruleFolder, '.trash'));
 
 					// session-manager.json の ruleFile パスを更新
 					const updatedAgent: AgentConfig = { ...agent, ruleFile: newRuleFile };
@@ -1506,9 +1674,7 @@ export function activate(context: vscode.ExtensionContext) {
 								await ensureAgentFolderFiles(agentFolder, agent.name);
 
 								// 旧ファイルを .trash/ に移動
-								const trashDir = path.join(ruleFolder, '.trash');
-								await fs.promises.mkdir(trashDir, { recursive: true });
-								await fs.promises.rename(resolved, path.join(trashDir, `${agent.name}.md.${Date.now()}`));
+								await moveToTrash(resolved, path.join(ruleFolder, '.trash'));
 
 								// session-manager.json のパス更新
 								const updatedAgent: AgentConfig = { ...agent, ruleFile: newRuleFile };
@@ -1536,6 +1702,85 @@ export function activate(context: vscode.ExtensionContext) {
 			if (errors.length > 0) { parts.push(`${errors.length}件エラー（OutputChannel参照）`); }
 			vscode.window.showInformationMessage(parts.join('、'));
 			if (errors.length > 0) { ch.show(true); }
+		})
+	);
+
+	// /ask-agent hookインストール
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.installAskAgentHook', async () => {
+			const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+			if (!wsFolder) {
+				vscode.window.showWarningMessage('ワークスペースが開かれていません');
+				return;
+			}
+
+			const hookDir = path.join(wsFolder, '.claude', 'hooks');
+			const hookFile = path.join(hookDir, 'check-ask-agent.sh');
+			const settingsFile = path.join(wsFolder, '.claude', 'settings.json');
+
+			// hookスクリプトを作成
+			await fs.promises.mkdir(hookDir, { recursive: true });
+			const hookScript = `#!/bin/bash
+# PreToolUse(Bash) hook: claude -p が --agent/--resume なしで実行されたら警告
+INPUT_JSON=$(cat)
+RESULT=$(echo "$INPUT_JSON" | python -c "
+import sys, json, re
+try:
+    d = json.load(sys.stdin)
+    cmd = d.get('tool_input', {}).get('command', '')
+except:
+    print('pass'); sys.exit(0)
+if 'claude' not in cmd:
+    print('pass'); sys.exit(0)
+if re.search(r'claude\\\\s.*(-p|--print)', cmd):
+    if re.search(r'--agent|--resume', cmd):
+        print('pass')
+    else:
+        print('block')
+else:
+    print('pass')
+" 2>/dev/null)
+if [ "$RESULT" = "block" ]; then
+  cat <<'HOOKEOF'
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"block","permissionDecisionReason":"claude -p を --agent/--resume なしで実行しようとしています。/ask-agent スキルを使ってください。"}}
+HOOKEOF
+else
+  echo '{}'
+fi
+exit 0
+`;
+			await fs.promises.writeFile(hookFile, hookScript, 'utf-8');
+
+			// settings.jsonにhookを追加
+			let settings: Record<string, unknown> = {};
+			try {
+				const raw = await fs.promises.readFile(settingsFile, 'utf-8');
+				settings = JSON.parse(raw);
+			} catch { /* 新規作成 */ }
+
+			if (!settings.hooks) { settings.hooks = {}; }
+			const hooks = settings.hooks as Record<string, unknown[]>;
+			if (!hooks.PreToolUse) { hooks.PreToolUse = []; }
+
+			// 既に check-ask-agent が含まれていなければ追加
+			const preToolUse = hooks.PreToolUse as Array<Record<string, unknown>>;
+			const alreadyExists = preToolUse.some(h =>
+				JSON.stringify(h).includes('check-ask-agent')
+			);
+			if (!alreadyExists) {
+				preToolUse.push({
+					matcher: 'Bash',
+					hooks: [{
+						type: 'command',
+						command: `bash ${hookFile.replace(/\\/g, '/')}`,
+					}],
+				});
+			}
+
+			await fs.promises.writeFile(settingsFile, JSON.stringify(settings, null, '  '), 'utf-8');
+
+			refreshAll();
+			vscode.window.showInformationMessage('/ask-agent hookをインストールしました。claude -p の安全ガードが有効になります。');
 		})
 	);
 
@@ -1613,7 +1858,7 @@ export function activate(context: vscode.ExtensionContext) {
 				} catch { /* 存在しない */ }
 			}
 			if (exists) {
-				vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(projectPath), { forceNewWindow: false });
+				vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(projectPath), { forceNewWindow: true });
 			} else {
 				vscode.window.showWarningMessage(`プロジェクトフォルダが見つかりません: ${projectPath}`);
 			}
@@ -1637,14 +1882,11 @@ export function activate(context: vscode.ExtensionContext) {
 			);
 			if (confirm !== '削除') { return; }
 
-			// .trash/ ディレクトリに移動（rm禁止ルール準拠）
+			// .trash/ ディレクトリに移動（H-1共通関数）
 			const configTrash = getConfig<string>('trash.folder', '');
 			const trashDir = configTrash || path.join(os.homedir(), '.claude', '.trash');
-			await fs.promises.mkdir(trashDir, { recursive: true });
 			try {
-				const fileName = path.basename(item.session.filePath);
-				const trashPath = path.join(trashDir, `${Date.now()}_${fileName}`);
-				await fs.promises.rename(item.session.filePath, trashPath);
+				await moveToTrash(item.session.filePath, trashDir);
 			} catch {
 				vscode.window.showErrorMessage('セッションファイルの移動に失敗しました');
 				return;
@@ -1940,6 +2182,216 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}
 
+	// v0.4.0: check-dispatch フックを settings.json の PreToolUse に登録する
+	// bash での claude -p 単体実行（--agent なし）を防止するセキュリティフック
+	async function ensureCheckDispatchHook(ctx: vscode.ExtensionContext): Promise<void> {
+		const MIGRATION_KEY = 'csm.checkDispatchHookInstalled';
+		// 既にインストール済みならスキップ
+		if (ctx.globalState.get<boolean>(MIGRATION_KEY)) {
+			return;
+		}
+
+		const homeDir = os.homedir();
+		const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+		const hookScript = path.join(homeDir, '.claude', 'hooks', 'check-dispatch.sh');
+		// プロジェクト配下のフックスクリプトも候補
+		const projectHookScript = 'c:/xampp/.claude/hooks/check-dispatch.sh';
+
+		// フックスクリプトの存在確認（いずれかが存在すれば OK）
+		let scriptPath = '';
+		for (const candidate of [hookScript, projectHookScript]) {
+			try {
+				await fs.promises.access(candidate);
+				scriptPath = candidate.replace(/\\/g, '/');
+				break;
+			} catch { /* 次の候補を試す */ }
+		}
+		if (!scriptPath) {
+			// フックスクリプトが見つからない → スキップ
+			return;
+		}
+
+		// settings.json 読み込み
+		let settings: Record<string, unknown> = {};
+		try {
+			const raw = await fs.promises.readFile(settingsPath, 'utf-8');
+			settings = JSON.parse(raw);
+		} catch {
+			return;
+		}
+
+		// 既にフックが登録済みか確認
+		const hooksObj = (settings.hooks && typeof settings.hooks === 'object' && !Array.isArray(settings.hooks))
+			? settings.hooks as Record<string, unknown>
+			: {};
+		const CHECK_DISPATCH_MARKER = 'check-dispatch';
+		const preToolUse = hooksObj['PreToolUse'];
+		if (Array.isArray(preToolUse)) {
+			const alreadyInstalled = preToolUse.some((entry: Record<string, unknown>) => {
+				const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+				if (!Array.isArray(innerHooks)) { return false; }
+				return innerHooks.some((hh: Record<string, unknown>) =>
+					typeof hh.command === 'string' && hh.command.includes(CHECK_DISPATCH_MARKER)
+				);
+			});
+			if (alreadyInstalled) {
+				// 既に登録済み → フラグだけ立てて終了
+				await ctx.globalState.update(MIGRATION_KEY, true);
+				return;
+			}
+		}
+
+		// ユーザーに確認を取る
+		const choice = await vscode.window.showInformationMessage(
+			'[CSM] bash での claude -p 単体実行を防止するセキュリティフック（check-dispatch.sh）を有効にします。' +
+			'これにより全プロジェクトで --agent なしの claude -p 実行がブロックされます。',
+			{ modal: false },
+			'有効にする',
+			'スキップ'
+		);
+
+		if (choice === 'スキップ') {
+			// スキップ → 次回も聞かないようにフラグを立てる
+			await ctx.globalState.update(MIGRATION_KEY, true);
+			return;
+		}
+		if (choice !== '有効にする') {
+			// ダイアログを閉じた場合 → 次回また聞く（フラグは立てない）
+			return;
+		}
+
+		try {
+			// hooks オブジェクトを準備
+			if (!settings.hooks || typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) {
+				settings.hooks = {};
+			}
+			const hooks = settings.hooks as Record<string, unknown>;
+			if (!Array.isArray(hooks['PreToolUse'])) {
+				hooks['PreToolUse'] = [];
+			}
+			const preToolUseArr = hooks['PreToolUse'] as Array<Record<string, unknown>>;
+
+			// check-dispatch フックエントリを追加
+			const hookEntry = {
+				matcher: 'Bash',
+				hooks: [
+					{
+						type: 'command',
+						command: `bash "${scriptPath}"`,
+						timeout: 5,
+					}
+				]
+			};
+			preToolUseArr.push(hookEntry);
+
+			// バックアップ作成
+			const backupPath = settingsPath + `.bak.${Date.now()}`;
+			try {
+				await fs.promises.copyFile(settingsPath, backupPath);
+			} catch { /* バックアップ失敗は無視 */ }
+
+			await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, '\t'), 'utf-8');
+			await ctx.globalState.update(MIGRATION_KEY, true);
+
+			const ch = getExtensionOutputChannel();
+			ch.appendLine(`[${new Date().toISOString()}] check-dispatch フックを settings.json の PreToolUse に登録しました`);
+			vscode.window.showInformationMessage(
+				'[CSM] check-dispatch セキュリティフックを有効にしました。claude -p 単体実行がブロックされます。'
+			);
+		} catch (err) {
+			const ch = getExtensionOutputChannel();
+			ch.appendLine(`[${new Date().toISOString()}] check-dispatch フック登録エラー: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	// dispatch skill のセットアップ（初回のみユーザー確認付き）
+	async function ensureDispatchSkill(ctx: vscode.ExtensionContext): Promise<void> {
+		const MIGRATION_KEY = 'csm.dispatchSkillInstalled';
+		// 既にインストール済みならスキップ
+		if (ctx.globalState.get<boolean>(MIGRATION_KEY)) {
+			return;
+		}
+
+		const homeDir = os.homedir();
+		const userSkillsDir = path.join(homeDir, '.claude', 'skills');
+		const dispatchSkillPath = path.join(userSkillsDir, 'dispatch.md');
+
+		// dispatch skill が既に存在するか確認
+		try {
+			await fs.promises.access(dispatchSkillPath);
+			// 既に存在 → フラグだけ立てて終了
+			await ctx.globalState.update(MIGRATION_KEY, true);
+			return;
+		} catch { /* スキル存在しない → インストール処理へ */ }
+
+		// ユーザーに確認を取る
+		const choice = await vscode.window.showInformationMessage(
+			'[CSM] エージェント指示の dispatch スキルを有効にします。' +
+			'これにより Claude セッション内で /dispatch コマンドが使用可能になります。',
+			{ modal: false },
+			'有効にする',
+			'スキップ'
+		);
+
+		if (choice === 'スキップ') {
+			// スキップ → 次回も聞かないようにフラグを立てる
+			await ctx.globalState.update(MIGRATION_KEY, true);
+			return;
+		}
+		if (choice !== '有効にする') {
+			// ダイアログを閉じた場合 → 次回また聞く（フラグは立てない）
+			return;
+		}
+
+		try {
+			// ~/.claude/skills/ ディレクトリを作成（なければ）
+			try {
+				await fs.promises.mkdir(userSkillsDir, { recursive: true });
+			} catch { /* ディレクトリ作成失敗は無視 */ }
+
+			// プロジェクト配下の dispatch.md をコピー
+			const sourceSkillPath = 'c:/xampp/.claude/skills/dispatch.md';
+			try {
+				const skillContent = await fs.promises.readFile(sourceSkillPath, 'utf-8');
+				await fs.promises.writeFile(dispatchSkillPath, skillContent, 'utf-8');
+			} catch {
+				// プロジェクト配下にない場合はテンプレートから作成
+				const defaultContent = `---
+name: dispatch
+displayName: Dispatch
+type: skill
+language: bash
+category: agent-orchestration
+description: Dispatch tasks to agents with automatic result reporting
+version: 1.0.0
+---
+
+# Dispatch Skill
+
+エージェント指示の送信・自動報告を行うスキル。
+
+## 使用方法
+
+\`\`\`
+/dispatch <agent-name> "<指示内容>"
+\`\`\`
+`;
+				await fs.promises.writeFile(dispatchSkillPath, defaultContent, 'utf-8');
+			}
+
+			await ctx.globalState.update(MIGRATION_KEY, true);
+
+			const ch = getExtensionOutputChannel();
+			ch.appendLine(`[${new Date().toISOString()}] dispatch スキルを ${dispatchSkillPath} にインストールしました`);
+			vscode.window.showInformationMessage(
+				'[CSM] dispatch スキルを有効にしました。Claude セッション内で /dispatch コマンドが使用可能です。'
+			);
+		} catch (err) {
+			const ch = getExtensionOutputChannel();
+			ch.appendLine(`[${new Date().toISOString()}] dispatch スキル登録エラー: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
 	// MEMORY.mdに組織情報を書き込む（v0.2.8: メモリファイル＋ポインタ方式・非同期）
 	async function writeOrgInfoToMemory(config: AgentConfig): Promise<void> {
 		try {
@@ -2071,6 +2523,8 @@ export function activate(context: vscode.ExtensionContext) {
 			vscode.commands.executeCommand('workbench.action.openSettings', 'claudeManager');
 		})
 	);
+
+	// 検知方式比較ビュー: Phase 4 で削除済み（fswatch固定）
 
 	// タスクログ自動クリーンアップ（起動時）
 	dataStore.cleanupTaskLogs();

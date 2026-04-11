@@ -1,8 +1,33 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
-import { ParsedSession, SimpleMessage, MemoryFile } from './types';
-import { loadSessionFull } from './sessionLoader';
-import * as dataStore from './dataStore';
+import * as path from 'path';
+import * as os from 'os';
+import { ParsedSession, SimpleMessage, MemoryFile } from '../models/types';
+import { loadSessionFull } from '../utils/sessionLoader';
+import * as dataStore from '../models/dataStore';
+
+// H-6: ファイルパスの安全性検証（ワークスペース・tmp・.claude 配下のみ許可）
+function isAllowedFilePath(filePath: string): boolean {
+	try {
+		const resolved = path.resolve(filePath);
+		// ワークスペースフォルダ配下を許可
+		const workspaceFolders = vscode.workspace.workspaceFolders;
+		if (workspaceFolders) {
+			for (const folder of workspaceFolders) {
+				if (resolved.startsWith(folder.uri.fsPath)) { return true; }
+			}
+		}
+		// tmpフォルダ配下を許可
+		const tmpDir = os.tmpdir();
+		if (resolved.startsWith(tmpDir)) { return true; }
+		// ホームディレクトリ配下の .claude を許可
+		const claudeDir = path.join(os.homedir(), '.claude');
+		if (resolved.startsWith(claudeDir)) { return true; }
+		return false;
+	} catch {
+		return false;
+	}
+}
 
 // 簡易Markdownレンダラー（外部依存なし、リンク対応）
 function renderMarkdown(text: string): string {
@@ -73,6 +98,9 @@ function renderMarkdown(text: string): string {
 
 // パネルを使い回すための参照
 let previewPanel: vscode.WebviewPanel | undefined;
+// 現在プレビュー中のセッション情報（ハンドラーから参照するためクロージャ外に保持）
+let currentSession: ParsedSession | null = null;
+let currentFullSession: ParsedSession | null = null;
 
 // プレビュー中のタブタイトルを更新
 export function updatePreviewTitle(title: string): void {
@@ -94,6 +122,10 @@ export async function showSessionPreview(session: ParsedSession, context: vscode
 	const title = `💬 ${session.customName || session.claudeTitle || session.firstMessage.substring(0, 30)}`;
 	const agent = await dataStore.getAgentBySessionId(session.id);
 
+	// セッション情報をモジュール変数に保持（ハンドラーから参照）
+	currentSession = session;
+	currentFullSession = fullSession;
+
 	if (previewPanel) {
 		previewPanel.title = title;
 		previewPanel.webview.html = getSessionHtml(fullSession, note, tags, agent);
@@ -106,71 +138,77 @@ export async function showSessionPreview(session: ParsedSession, context: vscode
 			{ enableScripts: true }
 		);
 		previewPanel.webview.html = getSessionHtml(fullSession, note, tags, agent);
-		previewPanel.onDidDispose(() => { previewPanel = undefined; });
-	}
+		previewPanel.onDidDispose(() => {
+			previewPanel = undefined;
+			currentSession = null;
+			currentFullSession = null;
+		});
 
-	// Webviewからのメッセージを受信
-	previewPanel.webview.onDidReceiveMessage(async (message) => {
-		if (message.type === 'saveNote') {
-			await dataStore.setNote(session.id, message.note);
-		} else if (message.type === 'addTag') {
-			// 既存タグから選択 or 新規入力
-			const existingTags = Object.keys(await dataStore.getAllTags());
-			const NEW_TAG = '+ 新しいタグを作成...';
-			let tagName: string | undefined;
-			if (existingTags.length > 0) {
-				const picked = await vscode.window.showQuickPick([...existingTags, NEW_TAG], { placeHolder: 'タグを選択' });
-				if (!picked) { return; }
-				tagName = picked === NEW_TAG
-					? await vscode.window.showInputBox({ prompt: '新しいタグ名を入力' })
-					: picked;
-			} else {
-				tagName = await vscode.window.showInputBox({ prompt: 'タグ名を入力' });
-			}
-			if (tagName) {
-				await dataStore.addTag(tagName, session.id);
-				// HTMLを更新
-				const updatedTags = await dataStore.getTagsForSession(session.id);
-				const updatedNote = await dataStore.getNote(session.id);
-				const updatedAgent = await dataStore.getAgentBySessionId(session.id);
-				previewPanel!.webview.html = getSessionHtml(fullSession!, updatedNote, updatedTags, updatedAgent);
-			}
-		} else if (message.type === 'removeTag') {
-			await dataStore.removeTagFromSession(message.tag, session.id);
-			const updatedTags = await dataStore.getTagsForSession(session.id);
-			const updatedNote = await dataStore.getNote(session.id);
-			const updatedAgent = await dataStore.getAgentBySessionId(session.id);
-			previewPanel!.webview.html = getSessionHtml(fullSession!, updatedNote, updatedTags, updatedAgent);
-		} else if (message.type === 'editAgent') {
-			vscode.commands.executeCommand('claudeManager.editAgentBySessionId', session.id);
-		} else if (message.type === 'editRuleFile') {
-			vscode.commands.executeCommand('claudeManager.editRuleFileBySessionId', session.id);
-		} else if (message.type === 'openLink') {
-			if (message.linkType === 'url') {
-				// URLをブラウザで開く
-				vscode.env.openExternal(vscode.Uri.parse(message.href));
-			} else if (message.linkType === 'file') {
-				// ファイルパスと行番号を分離（例: c:\path\file.ts:42）
-				const lineMatch = message.href.match(/^(.+?):(\d+)$/);
-				const filePath = lineMatch ? lineMatch[1] : message.href;
-				const lineNum = lineMatch ? parseInt(lineMatch[2]) - 1 : 0;
-				try {
-					const doc = await vscode.workspace.openTextDocument(filePath);
-					const editor = await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
-					if (lineNum > 0) {
-						const pos = new vscode.Position(lineNum, 0);
-						editor.selection = new vscode.Selection(pos, pos);
-						editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+		// Webviewからのメッセージを受信（パネル作成時に1回だけ登録）
+		previewPanel.webview.onDidReceiveMessage(async (message) => {
+			if (!currentSession || !currentFullSession) { return; }
+			const sid = currentSession.id;
+			if (message.type === 'saveNote') {
+				await dataStore.setNote(sid, message.note);
+			} else if (message.type === 'addTag') {
+				const existingTags = Object.keys(await dataStore.getAllTags());
+				const NEW_TAG = '+ 新しいタグを作成...';
+				let tagName: string | undefined;
+				if (existingTags.length > 0) {
+					const picked = await vscode.window.showQuickPick([...existingTags, NEW_TAG], { placeHolder: 'タグを選択' });
+					if (!picked) { return; }
+					tagName = picked === NEW_TAG
+						? await vscode.window.showInputBox({ prompt: '新しいタグ名を入力' })
+						: picked;
+				} else {
+					tagName = await vscode.window.showInputBox({ prompt: 'タグ名を入力' });
+				}
+				if (tagName) {
+					await dataStore.addTag(tagName, sid);
+					const updatedTags = await dataStore.getTagsForSession(sid);
+					const updatedNote = await dataStore.getNote(sid);
+					const updatedAgent = await dataStore.getAgentBySessionId(sid);
+					previewPanel!.webview.html = getSessionHtml(currentFullSession!, updatedNote, updatedTags, updatedAgent);
+				}
+			} else if (message.type === 'removeTag') {
+				await dataStore.removeTagFromSession(message.tag, sid);
+				const updatedTags = await dataStore.getTagsForSession(sid);
+				const updatedNote = await dataStore.getNote(sid);
+				const updatedAgent = await dataStore.getAgentBySessionId(sid);
+				previewPanel!.webview.html = getSessionHtml(currentFullSession!, updatedNote, updatedTags, updatedAgent);
+			} else if (message.type === 'editAgent') {
+				vscode.commands.executeCommand('claudeManager.editAgentBySessionId', sid);
+			} else if (message.type === 'editRuleFile') {
+				vscode.commands.executeCommand('claudeManager.editRuleFileBySessionId', sid);
+			} else if (message.type === 'openLink') {
+				if (message.linkType === 'url') {
+					vscode.env.openExternal(vscode.Uri.parse(message.href));
+				} else if (message.linkType === 'file') {
+					const lineMatch = message.href.match(/^(.+?):(\d+)$/);
+					const filePath = lineMatch ? lineMatch[1] : message.href;
+					const lineNum = lineMatch ? parseInt(lineMatch[2]) - 1 : 0;
+					if (!isAllowedFilePath(filePath)) {
+						vscode.window.showWarningMessage(`セキュリティ上の理由でこのファイルは開けません: ${filePath}`);
+						return;
 					}
-				} catch {
-					vscode.window.showErrorMessage(`ファイルを開けませんでした: ${filePath}`);
+					try {
+						const doc = await vscode.workspace.openTextDocument(filePath);
+						const editor = await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+						if (lineNum > 0) {
+							const pos = new vscode.Position(lineNum, 0);
+							editor.selection = new vscode.Selection(pos, pos);
+							editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+						}
+					} catch {
+						vscode.window.showErrorMessage(`ファイルを開けませんでした: ${filePath}`);
+					}
 				}
 			}
-		}
-	});
+		});
+	}
 }
 
-function getSessionHtml(session: ParsedSession, note: string, tags: string[], agent?: import('./types').AgentConfig): string {
+function getSessionHtml(session: ParsedSession, note: string, tags: string[], agent?: import('../models/types').AgentConfig): string {
 	// エージェント情報をヘッダに表示
 	const agentHeaderHtml = agent
 		? `<div class="agent-badge">

@@ -1,7 +1,7 @@
 // タスク状態管理 — AgentWatcher のイベントに便乗して状態を評価する
 import * as vscode from 'vscode';
-import { TaskLog, TaskStatus } from './types';
-import * as dataStore from './dataStore';
+import { TaskLog, TaskStatus } from '../models/types';
+import * as dataStore from '../models/dataStore';
 import { AgentWatcher } from './agentWatcher';
 
 export class TaskTracker implements vscode.Disposable {

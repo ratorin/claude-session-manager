@@ -1,0 +1,30 @@
+## エージェント運用ルール
+
+### 基本方針
+- 部署への指示は `claude --agent <name> -p` で別プロセスとして起動する
+- `claude -p` 単体（--agent なし）は禁止（ルール・メモリが適用されず意図しない動作をするため）
+- Agent ツール（subagent_type）は使い捨て調査のみ許可。並行タスクには使わない（親コンテキスト漏洩バグ Issue #14118）
+- `--continue` は禁止（最新セッションを再開するため、別エージェントのセッションが割り込む）
+
+### エージェント定義
+- 定義ファイル: `~/.claude/agents/*.md`（CLI標準）
+- 一覧確認: `claude agents list`
+- 部署名マッピング: `~/.claude/agents/director.md` の部署一覧を参照
+- 部署補足データ（todo/history）: `{{WORKDIR}}/.agent-rules/{name}/`
+
+### 起動コマンド
+```bash
+# 部署に指示（標準）
+echo "指示" | claude --agent <name> -p > {{WORKDIR}}/.agent-rules/tmp/agent_{name}_{タスク}.txt 2>&1
+
+# 同じ部署に並行タスク
+echo "タスクA" | claude --agent <name> -p > {{WORKDIR}}/.agent-rules/tmp/agent_{name}_taskA.txt 2>&1 &
+echo "タスクB" | claude --agent <name> -p > {{WORKDIR}}/.agent-rules/tmp/agent_{name}_taskB.txt 2>&1 &
+```
+
+### 出力先
+- `{{WORKDIR}}/.agent-rules/tmp/`
+
+### デプロイ
+- 本番デプロイは取締役が直接実行（子エージェントはSSH鍵にアクセスできない）
+- デプロイ用スキルがあれば使用

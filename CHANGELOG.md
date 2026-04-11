@@ -1,5 +1,107 @@
 # 更新履歴
 
+## v0.4.1 (2026-04-11)
+
+### セキュリティ修正
+
+- **[CRITICAL] C-1: パストラバーサル防止** — `agentFileManager.ts` にエージェント名バリデーション追加
+  - `^[\p{L}\p{N}_\-]+$` パターンで不正な名前（`../../` 等）を拒否
+  - `path.resolve()` 後のディレクトリ境界チェックも追加
+- **[CRITICAL] C-2: コマンドインジェクション防止** — `extension.ts` の `spawn()` を `shell: false` に変更
+  - Windows環境用に `claude.cmd` を自動選択
+- **[HIGH] H-4: YAMLインジェクション防止** — `buildFrontmatter()` の全文字列フィールドをダブルクォートで囲む
+  - `sanitizeForYaml()` + `quoteYamlValue()` で改行・制御文字・クォート文字をエスケープ
+- **[HIGH] H-5: CSPヘッダー追加** — `agentPreviewPanel.ts` / `orgChartPanel.ts` にnonce付きCSPメタタグを追加
+  - インラインイベントハンドラ(`onclick`)を `addEventListener` パターンに置換
+- **[HIGH] H-6: 任意ファイル読取防止** — `webviewPanel.ts` の `openLink` ハンドラにパス検証を追加
+  - ワークスペース・tmp・`~/.claude/` 配下のみファイルを開くことを許可
+- **[HIGH] H-1: フロントマターパーサー統合** — `agentFileManager.ts` の重複パーサーを `frontmatterUtils.ts` に統合
+  - `parseFrontmatterExtended()` を共通ユーティリティとしてエクスポート
+
+### データマイグレーション
+
+- **agents[] → agentSessions 自動変換** — `activate()` 時に一度だけ実行
+  - 旧形式 `agents[]` を `agentSessions` キーに変換し、`agents[]` を除去
+  - 既存の `agentSessions` エントリは保持（上書きしない）
+
+---
+
+## v0.4.0 (2026-04-10)
+
+### アーキテクチャ刷新（リビルド Phase 3〜6）
+
+#### Phase 3: エージェント管理の更新
+- **`agentFileManager.ts` 新規作成** — `~/.claude/agents/*.md` をSingle Source of Truthとして読み書き
+  - YAML フロントマター拡張パーサー（JSON配列 `tools: ["Read", "Edit"]` 対応）
+  - TTLキャッシュ（2秒間有効）でパフォーマンス最適化
+  - グローバル（`~/.claude/agents/`）＋プロジェクト（`.claude/agents/`）の両スコープ対応
+- **`dataStore.ts` ブリッジ化** — `getAgents()` が agentFileManager 経由に切り替え
+  - session-manager.json には `agentSessions`（セッション紐づけ情報）のみ保存
+  - 旧形式 `agents[]` からの自動マイグレーション（読み取り専用で後方互換）
+
+#### Phase 4: 検知の簡素化
+- **比較エンジン完全削除** — 7方式並列テスト用ウォッチャーを廃止
+  - `detectionComparePanel.ts` を削除
+  - agentWatcher.ts を1289行→568行に大幅削減
+  - 検知モードを `fswatch` 固定に簡素化（polling/signal モード廃止）
+  - package.json から `openDetectionCompare` コマンドと detectionMode 設定の選択肢を削除
+
+#### Phase 5: ファイル分割リファクタ
+- **ディレクトリ構造を刷新** — 全ソースファイルを機能別サブディレクトリに再配置
+  - `models/` — types.ts, dataStore.ts
+  - `providers/` — sessionTreeProvider, agentTreeProvider, tagTreeProvider, bookmarkTreeProvider, memoryTreeProvider
+  - `watchers/` — agentWatcher, taskTracker
+  - `panels/` — agentFormPanel, agentPreviewPanel, orgChartPanel, webviewPanel
+  - `utils/` — sessionLoader, cliBuilder, frontmatterUtils, memoryManager, usageMonitor, subagentDetector
+  - `agents/` — agentFileManager, agentManager, parentChildSync
+  - `commands/` — （今後のコマンド抽出用）
+- 全 import パスを新構造に対応
+
+#### Phase 6: session-manager.json 縮小
+- `setAgents()` を削除（デッドコード除去）
+- `agents[]` を読み取り専用（後方互換マイグレーション用）に変更
+- エージェント定義は `~/.claude/agents/*.md` が唯一の情報源に
+
+#### 親子エージェント同期の刷新
+- **`parentAgent` ベースの組織階層構築** — agents/*.md の frontmatter `parentAgent` フィールドから組織ツリーを動的生成
+  - 旧方式（session-manager.json の agents[].parentAgent）から完全移行
+  - 組織図・エージェントツリーの階層表示が agents/*.md のみから構築される
+  - 子エージェント追加/削除時の親ルール自動更新も agents/*.md ベースに刷新
+
+#### 検知方式の2方式化
+- **fswatch + jsonlMtime に簡素化** — 旧7方式（polling/signal/subagentsFswatch/preToolUseHook等）を廃止
+  - fswatch: sessions/ ディレクトリの変更検知（起動/停止）
+  - jsonlMtime: JSONL mtime変化（活動中検知 + 子エージェント検知）
+
+### 既知の制限
+- `extension.ts` は2182行のまま（コマンド抽出は次バージョンで実施予定）
+
+---
+
+## v0.3.5 (2026-04-10)
+
+### 新機能
+- **検知方式比較ビュー: 7方式対応** — 既存5方式に加え、2つの新方式を追加
+  - **⑥ subagentsFswatch** — `~/.claude/projects/*/subagents/` ディレクトリを定期スキャンし、サブエージェント（子タスク）の起動を検知。`.meta.json` から agentType + description を読み取りチップに表示。mtime が10秒以上更新されなければ終了と推定
+  - **⑦ preToolUseHook** — Claude CLI の PreToolUse(Agent) フックが書き込んだイベントファイルを fs.watch で検知。VS Code バグ(#21736)により CLIモードでのみ動作
+
+---
+
+## v0.3.4 (2026-04-08)
+
+### 新機能
+- **検知方式比較ビュー** — polling / fswatch / signal の3方式を並列テストし、レイテンシと累計検知件数をリアルタイム表示
+  - コマンドパレット → 「検知方式比較ビューを開く」で起動
+  - エージェント検知時に各方式の応答時間（ms）を計測し、最速方式に「← 最速」バッジを表示
+  - 各方式の累計検知件数を常時表示
+  - レイテンシ比較バー（横棒グラフ）でビジュアル比較
+  - CSP対応（nonce-based `default-src 'none'`）
+
+### バグ修正
+- タグ追加ボタンのクリックが反応しない問題を修正（CSP対応: `onclick` 属性を `addEventListener` に変更）
+
+---
+
 ## v0.3.3 (2026-04-08)
 
 ### バグ修正

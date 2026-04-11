@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { AgentConfig } from './types';
-import * as dataStore from './dataStore';
+import { AgentConfig } from '../models/types';
+import * as dataStore from '../models/dataStore';
 
 // エージェント情報（表示用に拡張）
 export interface AgentInfo extends AgentConfig {

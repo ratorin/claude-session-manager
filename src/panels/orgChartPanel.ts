@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
-import { AgentInfo, getAgents, enrichAgentsWithSessions } from './agentManager';
-import { ParsedSession } from './types';
+import * as crypto from 'crypto';
+import { AgentInfo, getAgents, enrichAgentsWithSessions } from '../agents/agentManager';
+import { ParsedSession } from '../models/types';
+import { shouldShowInOrgChart } from '../utils/agentUtils';
 
 // パネルを使い回すための参照
 let orgPanel: vscode.WebviewPanel | undefined;
@@ -33,7 +35,7 @@ export async function showOrgChart(
 	// ライブ状態はトップレベル＋取締役のみ確認（子エージェントは不要）
 	const topNames = new Set(
 		enriched
-			.filter((a) => !a.parentAgent || a.parentAgent === '取締役')
+			.filter((a) => !a.parentAgent || a.parentAgent === 'director')
 			.map((a) => a.name)
 	);
 	const liveIds = new Set<string>();
@@ -44,7 +46,9 @@ export async function showOrgChart(
 	}
 
 	const title = '🏢 エージェント組織図';
-	const html = getOrgChartHtml(enriched, liveIds);
+	// H-5: nonce付きCSPヘッダーを追加
+	const nonce = crypto.randomBytes(16).toString('hex');
+	const html = getOrgChartHtml(enriched, liveIds, nonce);
 
 	if (orgPanel) {
 		orgPanel.webview.html = html;
@@ -123,8 +127,10 @@ function renderDirectorNode(agent: AgentInfo, liveIds: Set<string>): string {
 // エージェントカードのHTML生成
 function renderAgentCard(agent: AgentInfo, liveIds: Set<string>, isSub: boolean = false): string {
 	const nodeClass = isSub ? 'node node-sub' : 'node';
+	// sonnet-1m は専用バッジで表示
 	const badgeClass = agent.model === 'opus' ? 'badge-opus'
 		: agent.model === 'haiku' ? 'badge-haiku'
+		: agent.model === 'sonnet-1m' ? 'badge-sonnet-1m'
 		: 'badge-sonnet';
 
 	// 子エージェントカードはライブ状態表示なし
@@ -155,10 +161,10 @@ function renderAgentCard(agent: AgentInfo, liveIds: Set<string>, isSub: boolean 
 }
 
 // 組織図全体のHTML
-function getOrgChartHtml(agents: AgentInfo[], liveIds: Set<string>): string {
-	const director = agents.find((a) => a.name === '取締役');
-	const topLevel = agents.filter((a) => a.name !== '取締役' && (!a.parentAgent || a.parentAgent === '取締役'));
-	const children = agents.filter((a) => a.parentAgent && a.parentAgent !== '取締役');
+function getOrgChartHtml(agents: AgentInfo[], liveIds: Set<string>, nonce: string): string {
+	const director = agents.find((a) => a.name === 'director');
+	const topLevel = agents.filter((a) => a.name !== 'director' && (!a.parentAgent || a.parentAgent === 'director') && shouldShowInOrgChart(a));
+	const children = agents.filter((a) => a.parentAgent && a.parentAgent !== 'director' && shouldShowInOrgChart(a));
 
 	const deptCards = topLevel.map((agent) => {
 		const subAgents = children.filter((c) => c.parentAgent === agent.name);
@@ -188,7 +194,8 @@ function getOrgChartHtml(agents: AgentInfo[], liveIds: Set<string>): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<style>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
+<style nonce="${nonce}">
 :root{--bg:var(--vscode-editor-background);--surface:var(--vscode-textBlockQuote-background);--border:var(--vscode-panel-border);--text:var(--vscode-foreground);--text-dim:var(--vscode-descriptionForeground);--accent:#e27e4a;--opus:#b388ff;--sonnet:#64b5f6;--haiku:#81c784;--line:var(--vscode-editorIndentGuide-background);--live:#4ec94e}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:var(--vscode-font-family);background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
@@ -212,6 +219,7 @@ h1{text-align:center;font-size:18px;color:var(--accent);margin-bottom:6px;font-w
 .badge-opus{background:rgba(179,136,255,.15);color:var(--opus);border:1px solid rgba(179,136,255,.3)}
 .badge-sonnet{background:rgba(100,181,246,.15);color:var(--sonnet);border:1px solid rgba(100,181,246,.3)}
 .badge-haiku{background:rgba(129,199,132,.15);color:var(--haiku);border:1px solid rgba(129,199,132,.3)}
+.badge-sonnet-1m{background:rgba(66,165,245,.18);color:#42a5f5;border:1px solid rgba(66,165,245,.35)}
 .live-dot{width:7px;height:7px;background:var(--live);border-radius:50%;display:inline-block}
 .node-director{border-color:var(--accent);border-width:2px;min-width:260px;max-width:300px;text-align:center}
 .node-director .node-name{color:var(--accent);font-size:15px}
@@ -249,12 +257,13 @@ h1{text-align:center;font-size:18px;color:var(--accent);margin-bottom:6px;font-w
 <div class="legend">
 	<div class="legend-item"><span class="badge badge-opus">opus</span> 高度な判断・開発</div>
 	<div class="legend-item"><span class="badge badge-sonnet">sonnet</span> 定型作業・補助</div>
+	<div class="legend-item"><span class="badge badge-sonnet-1m">sonnet-1m</span> 長文コンテキスト</div>
 	<div class="legend-item"><span class="live-dot"></span> 使用中（トップレベルのみ）</div>
 	<div class="legend-item">📋 IDコピー</div>
 	<div class="legend-item">${SVG_HISTORY} 履歴表示</div>
 	<div class="legend-item">${SVG_CLAUDE} Claude Codeで開く</div>
 </div>
-<script>
+<script nonce="${nonce}">
 const vscode=acquireVsCodeApi();
 // イベント委譲で一括処理
 document.body.addEventListener('click',e=>{

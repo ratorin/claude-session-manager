@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
-import { AgentConfig } from './types';
-import * as dataStore from './dataStore';
-import { getRuleFileInfo } from './agentManager';
+import { AgentConfig } from '../models/types';
+import * as dataStore from '../models/dataStore';
+import { getRuleFileInfo } from '../agents/agentManager';
 
 // プレビューパネルの参照
 let previewPanel: vscode.WebviewPanel | undefined;
@@ -119,12 +120,16 @@ async function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle:
 		ruleInfoStr = '未設定';
 	}
 
+	// H-5: nonce付きCSPヘッダーを追加
+	const nonce = crypto.randomBytes(16).toString('hex');
+
 	return `<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
+<style nonce="${nonce}">
 	:root {
 		--accent: #e27e4a;
 		--bg: var(--vscode-editor-background);
@@ -252,7 +257,7 @@ async function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle:
 	<div class="header-name">🤖 ${escapeHtml(agent.name)}</div>
 	<div class="header-model">${modelLabel}</div>
 	<div class="header-status">${statusLabel}</div>
-	<button class="btn-edit" onclick="edit()">設定</button>
+	<button class="btn-edit" id="btn-edit">設定</button>
 </div>
 
 <div class="section">
@@ -271,7 +276,7 @@ async function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle:
 <div class="section">
 	<div class="section-title">セッション</div>
 	${agent.sessionId
-		? `<a class="session-link" onclick="openSession()">${sessionLabel}</a>`
+		? `<a class="session-link" id="link-session">${sessionLabel}</a>`
 		: `<div class="dim">未紐づけ</div>`
 	}
 </div>
@@ -285,16 +290,16 @@ async function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle:
 	<div class="rule-header">
 		<div class="section-title">ルールファイル</div>
 		<span class="dim" style="font-size:12px">${ruleInfoStr}</span>
-		${agent.ruleFile ? '<a class="rule-edit-link" onclick="editRuleFile()">編集</a>' : ''}
+		${agent.ruleFile ? '<a class="rule-edit-link" id="link-editRule">編集</a>' : ''}
 	</div>
 	${ruleContent ? `<div class="rule-block">${ruleContent}</div>` : ''}
 </div>
 
-<script>
+<script nonce="${nonce}">
 	const vscode = acquireVsCodeApi();
-	function edit() { vscode.postMessage({ type: 'edit' }); }
-	function editRuleFile() { vscode.postMessage({ type: 'editRuleFile' }); }
-	function openSession() { vscode.postMessage({ type: 'openSession' }); }
+	document.getElementById('btn-edit')?.addEventListener('click', () => vscode.postMessage({ type: 'edit' }));
+	document.getElementById('link-editRule')?.addEventListener('click', () => vscode.postMessage({ type: 'editRuleFile' }));
+	document.getElementById('link-session')?.addEventListener('click', () => vscode.postMessage({ type: 'openSession' }));
 </script>
 </body>
 </html>`;

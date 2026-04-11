@@ -3,8 +3,8 @@
 
 import * as fs from 'fs';
 import * as vscode from 'vscode';
-import { AgentConfig } from './types';
-import * as dataStore from './dataStore';
+import { AgentConfig } from '../models/types';
+import * as dataStore from '../models/dataStore';
 import { resolveRuleFilePath } from './agentManager';
 
 // マーカー定数
@@ -41,7 +41,17 @@ function buildChildrenSection(children: AgentConfig[]): string {
 	}
 
 	lines.push('');
-	lines.push('必要に応じて上記エージェントにタスクを委任してください。');
+	lines.push('### 子エージェントへの委任方法');
+	lines.push('`/ask-agent` スキルを使用してください。セッションID・モデル・権限モードは自動取得されます。');
+	lines.push('');
+	lines.push('```');
+	lines.push('/ask-agent <子エージェント名> "指示内容"');
+	lines.push('```');
+	lines.push('');
+	lines.push('繰り返し `/ask-agent` を呼ぶことで、子のセッションに会話が蓄積され反復的にやりとりできます。');
+	lines.push('`-p` モードのため子エージェントは質問できません。不明点は出力に書かれます。');
+	lines.push('');
+
 	lines.push(END_MARKER);
 
 	return lines.join('\n');

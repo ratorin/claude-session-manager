@@ -1,14 +1,17 @@
 // 統合監視エンジン
 // PIDベースのライブセッション検出 + サブエージェント検出を一本化
 // EventEmitter方式で変更を通知する
-// v0.3.0 perf: setInterval廃止、fs.watchデバウンス一本化、全sync I/O排除
+// v0.4.0: 検知モード簡素化（fswatch + jsonlMtime の2方式のみ）
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { AgentWatcherState } from './types';
-import * as dataStore from './dataStore';
-import { detectSubagents } from './subagentDetector';
+import { AgentWatcherState } from '../models/types';
+import * as dataStore from '../models/dataStore';
+import { detectSubagents } from '../utils/subagentDetector';
+
+// 検知モードの型定義（Phase 4: fswatch のみ残す）
+type DetectionMode = 'fswatch';
 
 // シグナルファイルから読み取った情報
 interface SignalData {
@@ -27,7 +30,7 @@ export class AgentWatcher implements vscode.Disposable {
 	private _onDidChange = new vscode.EventEmitter<void>();
 	readonly onDidChange = this._onDidChange.event;
 
-	// ウォッチャー（setIntervalは廃止）
+	// ウォッチャー
 	private watcher: fs.FSWatcher | undefined;
 	private signalWatcher: fs.FSWatcher | undefined;
 	private signalDebounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -43,11 +46,20 @@ export class AgentWatcher implements vscode.Disposable {
 	private enabled = false;
 	private updating = false; // 二重実行防止
 
+	// 検知モード
+	private detectionMode: DetectionMode = 'fswatch';
+
+	// レイテンシ計測（直近5回の計測値をリングバッファで保持）
+	private latencyBuffer: number[] = [];
+	private readonly LATENCY_BUFFER_SIZE = 5;
+	private latencyPendingStart: number | undefined; // 変更検知開始時刻
+
 	// 監視を開始する
 	// enableAgentMonitor が false の場合は何もしない（完全停止）
 	start(): void {
 		const config = vscode.workspace.getConfiguration('claudeManager');
 		this.enabled = config.get<boolean>('enableAgentMonitor', false);
+		this.detectionMode = 'fswatch'; // Phase 4: fswatch固定
 
 		// 既存ウォッチャーをクリア
 		this.stop();
@@ -57,27 +69,72 @@ export class AgentWatcher implements vscode.Disposable {
 		// 初回即更新（非同期）
 		this.scheduleUpdate();
 
-		// sessions/ ディレクトリの fs.watch（デバウンス付き）
+		// fswatchモード: sessions/ ディレクトリの fs.watch（デバウンス300ms）
 		const sessionsDir = path.join(os.homedir(), '.claude', 'sessions');
 		try {
-			this.watcher = fs.watch(sessionsDir, () => this.scheduleUpdate());
+			this.watcher = fs.watch(sessionsDir, () => {
+				this.recordLatencyStart();
+				this.scheduleUpdate();
+			});
 		} catch {
 			// ディレクトリが存在しない場合はスキップ
 		}
-
-		// .csm-signals/ ディレクトリの監視（シグナルファイル方式の子エージェント検出）
-		this.startSignalWatcher();
+		// .csm-signals/ ディレクトリの監視（補助）
+		this.startSignalWatcher(false);
 	}
 
-	// デバウンス付き更新スケジュール（300ms）
+	// レイテンシ計測: 変更検知開始時刻を記録
+	private recordLatencyStart(): void {
+		// まだ保留中の計測がなければ新しく開始
+		if (this.latencyPendingStart === undefined) {
+			this.latencyPendingStart = Date.now();
+		}
+	}
+
+	// レイテンシ計測: onDidChange発火時に終了時刻を記録して計算
+	private recordLatencyEnd(): void {
+		if (this.latencyPendingStart !== undefined) {
+			const latency = Date.now() - this.latencyPendingStart;
+			this.latencyPendingStart = undefined;
+			// リングバッファに追加
+			this.latencyBuffer.push(latency);
+			if (this.latencyBuffer.length > this.LATENCY_BUFFER_SIZE) {
+				this.latencyBuffer.shift();
+			}
+		}
+	}
+
+	// 平均レイテンシを取得（ms）、計測データなしの場合は undefined
+	getAverageLatency(): number | undefined {
+		if (this.latencyBuffer.length === 0) { return undefined; }
+		const sum = this.latencyBuffer.reduce((a, b) => a + b, 0);
+		return Math.round(sum / this.latencyBuffer.length);
+	}
+
+	// 現在の検知モードを取得
+	getDetectionMode(): DetectionMode {
+		return this.detectionMode;
+	}
+
+	// ステータスバー表示用テキストを取得（例: "fswatch 245ms"）
+	getStatusBarModeText(): string {
+		const avg = this.getAverageLatency();
+		if (avg !== undefined) {
+			return `${this.detectionMode} ${avg}ms`;
+		}
+		return this.detectionMode;
+	}
+
+	// デバウンス付き更新スケジュール（300ms固定）
 	public scheduleUpdate(): void {
 		if (this.debounceTimer) {
 			clearTimeout(this.debounceTimer);
 		}
+		const delay = 300;
 		this.debounceTimer = setTimeout(() => {
 			this.debounceTimer = undefined;
 			this.updateAsync();
-		}, 300);
+		}, delay);
 	}
 
 	// 監視を停止する
@@ -138,6 +195,57 @@ export class AgentWatcher implements vscode.Disposable {
 			.replace(/^([a-zA-Z]):/, '$1-')
 			.replace(/\//g, '-');
 		return path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+	}
+
+	// JSONL末尾から実際のモデル名を読み取る（末尾32KBのみ）
+	private async readActualModel(jsonlPath: string): Promise<string | undefined> {
+		const TAIL_BYTES = 32768;
+		try {
+			const stat = await fs.promises.stat(jsonlPath);
+			const size = stat.size;
+			if (size === 0) { return undefined; }
+			const handle = await fs.promises.open(jsonlPath, 'r');
+			try {
+				const tailSize = Math.min(TAIL_BYTES, size);
+				const buf = Buffer.alloc(tailSize);
+				await handle.read(buf, 0, tailSize, size - tailSize);
+				const lines = buf.toString('utf-8').split('\n').reverse();
+				for (const line of lines) {
+					const s = line.trim();
+					if (!s) { continue; }
+					try {
+						const obj = JSON.parse(s);
+						if (obj.type === 'assistant' && obj.message?.model) {
+							return String(obj.message.model);
+						}
+					} catch { /* skip */ }
+				}
+			} finally {
+				await handle.close();
+			}
+		} catch { /* ファイル読み取り失敗 */ }
+		return undefined;
+	}
+
+	// 設定モデル（短縮名）と実モデル（正式ID）が一致するか判定（外部公開用）
+	modelsMatchPublic(configModel: string, actualModel: string): boolean {
+		return this.modelsMatch(configModel, actualModel);
+	}
+
+	private modelsMatch(configModel: string, actualModel: string): boolean {
+		// 正規化: どちらも小文字に
+		const cfg = configModel.toLowerCase();
+		const act = actualModel.toLowerCase();
+		if (cfg === act) { return true; }
+		// 短縮名マッピングで比較
+		const map: Record<string, string> = {
+			'opus': 'claude-opus-4-6',
+			'sonnet': 'claude-sonnet-4-6',
+			'sonnet-1m': 'claude-sonnet-4-6[1m]',
+			'haiku': 'claude-haiku-4-5',
+		};
+		const expanded = map[cfg] || cfg;
+		return expanded === act || act.includes(cfg) || act.startsWith(expanded.replace('[1m]', ''));
 	}
 
 	private async update(): Promise<void> {
@@ -201,48 +309,67 @@ export class AgentWatcher implements vscode.Disposable {
 				? this.liveSessionIds.has(agent.sessionId)
 				: false;
 
-			// サブエージェント検出: ライブかつセッションIDがある場合のみ
+			// サブエージェント検出＋実モデル読み取り: セッションIDがある場合
 			let activeSubagentIds: string[] = [];
-			if (isLive && agent.sessionId) {
+			let actualModel: string | undefined;
+			if (agent.sessionId) {
 				const cwd = this.sessionCwdMap.get(agent.sessionId);
 				if (cwd) {
 					const jsonlPath = this.getJsonlPath(agent.sessionId, cwd);
 					if (jsonlPath) {
+						if (isLive) {
+							try {
+								const subagents = await detectSubagents(jsonlPath);
+								activeSubagentIds = subagents.map(s => s.toolUseId);
+							} catch { /* 検出失敗は無視 */ }
+						}
+						// 実モデルをJSONL末尾から読み取る（ライブ問わず）
 						try {
-							const subagents = await detectSubagents(jsonlPath);
-							activeSubagentIds = subagents.map(s => s.toolUseId);
-						} catch { /* 検出失敗は無視 */ }
+							actualModel = await this.readActualModel(jsonlPath);
+						} catch { /* 読み取り失敗は無視 */ }
 					}
 				}
 			}
+
+			// モデル不一致チェック: 設定モデルと実モデルを比較
+			const modelMismatch = actualModel !== undefined && agent.model
+				? !this.modelsMatch(agent.model, actualModel)
+				: false;
 
 			this.states.set(agent.name, {
 				agentName: agent.name,
 				sessionId: agent.sessionId,
 				isLive,
 				activeSubagentIds,
+				actualModel,
+				modelMismatch,
 			});
 		}));
 
-		// 3. 変更があればイベント発火
+		// 3. 変更があればイベント発火 + レイテンシ終了記録
 		if (this.hasChanged(prevStates)) {
+			this.recordLatencyEnd();
 			this._onDidChange.fire();
 		}
 	}
 
 	// --- SignalWatcher: ~/.claude/.csm-signals/ 監視 ---
 
-	private startSignalWatcher(): void {
+	// isPrimary: falseのみ使用（fswatchモード補助、デバウンス200ms）
+	private startSignalWatcher(isPrimary: boolean): void {
 		const signalsDir = path.join(os.homedir(), '.claude', '.csm-signals');
 
 		// ディレクトリがなければ作成
 		fs.promises.mkdir(signalsDir, { recursive: true }).then(() => {
 			// 起動時に既存シグナルファイルを処理
-			this.processSignals(signalsDir);
+			this.processSignals(signalsDir, isPrimary);
 
 			// fs.watch で監視
 			try {
-				this.signalWatcher = fs.watch(signalsDir, () => this.scheduleSignalProcessing(signalsDir));
+				this.signalWatcher = fs.watch(signalsDir, () => {
+					this.recordLatencyStart();
+					this.scheduleSignalProcessing(signalsDir, isPrimary);
+				});
 			} catch {
 				// 監視開始失敗はスキップ
 			}
@@ -251,19 +378,21 @@ export class AgentWatcher implements vscode.Disposable {
 		});
 	}
 
-	// デバウンス付きシグナル処理スケジュール（200ms）
-	private scheduleSignalProcessing(signalsDir: string): void {
+	// デバウンス付きシグナル処理スケジュール
+	private scheduleSignalProcessing(signalsDir: string, isPrimary: boolean): void {
 		if (this.signalDebounceTimer) {
 			clearTimeout(this.signalDebounceTimer);
 		}
+		// 補助時: 200ms
+		const delay = isPrimary ? 100 : 200;
 		this.signalDebounceTimer = setTimeout(() => {
 			this.signalDebounceTimer = undefined;
-			this.processSignals(signalsDir);
-		}, 200);
+			this.processSignals(signalsDir, isPrimary);
+		}, delay);
 	}
 
 	// シグナルファイルを読み取り・処理・削除
-	private async processSignals(signalsDir: string): Promise<void> {
+	private async processSignals(signalsDir: string, isPrimary: boolean): Promise<void> {
 		try {
 			const files = await fs.promises.readdir(signalsDir);
 			const jsonFiles = files.filter(f => f.endsWith('.json'));
@@ -296,7 +425,6 @@ export class AgentWatcher implements vscode.Disposable {
 
 			if (changed) {
 				// シグナルベースの変更を反映 → 全体再スキャンでstatesも再構築
-				// （applySignalState + _onDidChange.fire だけでは states が古いまま残る）
 				this.scheduleUpdate();
 			}
 		} catch {
@@ -352,13 +480,46 @@ export class AgentWatcher implements vscode.Disposable {
 		return this.states.get(name)?.isLive ?? false;
 	}
 
-	// 稼働中のエージェント名一覧を取得
+	// 稼働中のエージェント名一覧を取得（dataStore登録エージェント名）
 	getActiveAgentNames(): Set<string> {
 		const names = new Set<string>();
 		for (const [name, state] of this.states) {
 			if (state.isLive) { names.add(name); }
 		}
 		return names;
+	}
+
+	// 稼働中セッションの表示名一覧を取得
+	// dataStore登録エージェント名 → cwd末尾フォルダ名 → セッションID先頭8文字 の順でフォールバック
+	getActiveSessionDisplayNames(): string[] {
+		// dataStore登録エージェントの sessionId → name マップ
+		const sessionIdToName = new Map<string, string>();
+		for (const [name, state] of this.states) {
+			if (state.isLive && state.sessionId) {
+				sessionIdToName.set(state.sessionId, name);
+			}
+		}
+
+		const displayNames: string[] = [];
+		for (const sessionId of this.liveSessionIds) {
+			if (sessionIdToName.has(sessionId)) {
+				// dataStore登録エージェント名を優先
+				displayNames.push(sessionIdToName.get(sessionId)!);
+			} else {
+				// cwd末尾フォルダ名でフォールバック
+				const cwd = this.sessionCwdMap.get(sessionId);
+				if (cwd) {
+					// パス区切り（/ または \）で分割して末尾要素を取得
+					const parts = cwd.replace(/\\/g, '/').split('/').filter(Boolean);
+					const folderName = parts[parts.length - 1] || sessionId.substring(0, 8);
+					displayNames.push(folderName);
+				} else {
+					// セッションID先頭8文字
+					displayNames.push(sessionId.substring(0, 8));
+				}
+			}
+		}
+		return displayNames;
 	}
 
 	// ライブセッションIDセットを取得（sessionTreeProvider連携用）
@@ -379,6 +540,24 @@ export class AgentWatcher implements vscode.Disposable {
 	// 監視が有効かどうか
 	isEnabled(): boolean {
 		return this.enabled;
+	}
+
+	// セッションID→表示名のマッピングを返す
+	getSessionIdToNameMap(): Record<string, string> {
+		const map: Record<string, string> = {};
+		for (const [name, state] of this.states) {
+			if (state.sessionId) {
+				map[state.sessionId] = name;
+			}
+		}
+		// dataStore登録外のセッションはcwdの末尾フォルダ名でフォールバック
+		for (const [sessionId, cwd] of this.sessionCwdMap) {
+			if (!map[sessionId]) {
+				const parts = cwd.replace(/\\/g, '/').split('/').filter(Boolean);
+				map[sessionId] = parts[parts.length - 1] || sessionId.substring(0, 8);
+			}
+		}
+		return map;
 	}
 
 	// リソース解放

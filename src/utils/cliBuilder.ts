@@ -1,4 +1,4 @@
-import { AgentConfig } from './types';
+import { AgentConfig } from '../models/types';
 
 // CLI コマンドの構造体
 export interface CliCommand {
@@ -6,6 +6,14 @@ export interface CliCommand {
 	parts: string[];       // コマンドの各パーツ
 	env: Record<string, string>; // 環境変数
 }
+
+// モデル名から CLI に渡す正式モデルIDへのマッピング
+export const modelCliMap: Record<string, string> = {
+	'opus': 'claude-opus-4-6',
+	'sonnet': 'claude-sonnet-4-6',
+	'sonnet-1m': 'claude-sonnet-4-6[1m]',
+	'haiku': 'claude-haiku-4-5',
+};
 
 // AgentConfig から CLI コマンドを組み立てる
 export function buildCommand(config: AgentConfig): CliCommand {
@@ -17,8 +25,8 @@ export function buildCommand(config: AgentConfig): CliCommand {
 		parts.push('--resume', config.sessionId);
 	}
 
-	// モデル（必須）
-	parts.push('--model', config.model);
+	// モデル（必須）。短縮名を正式モデルIDにマッピングして渡す
+	parts.push('--model', modelCliMap[config.model] || config.model);
 
 	// Effort（設定時のみ。max は Opus のみだが、バリデーションは呼び出し側）
 	if (config.effort) {
@@ -56,7 +64,7 @@ export function buildCommand(config: AgentConfig): CliCommand {
 
 // 人間可読なフォーマット済みコマンド文字列を生成（バックスラッシュ改行付き）
 export function buildCommandFormatted(config: AgentConfig): string {
-	const { env } = buildCommand(config);
+	const { parts, env } = buildCommand(config);
 	const lines: string[] = [];
 
 	// 環境変数プレフィックス
@@ -64,45 +72,9 @@ export function buildCommandFormatted(config: AgentConfig): string {
 		lines.push(`${k}=${v} \\`);
 	}
 
-	const cmdParts: string[] = [];
-
-	// claude --resume {id} （固定セッション時）
-	if (config.sessionId && config.sessionMode !== 'disposable') {
-		cmdParts.push(`claude --resume ${config.sessionId}`);
-	} else {
-		cmdParts.push('claude');
-	}
-
-	// モデル
-	cmdParts.push(`  --model ${config.model}`);
-
-	// Effort
-	if (config.effort) {
-		cmdParts.push(`  --effort ${config.effort}`);
-	}
-
-	// ルールファイル
-	if (config.ruleFile) {
-		cmdParts.push(`  --append-system-prompt-file ${config.ruleFile}`);
-	}
-
-	// allowedTools
-	if (config.allowedTools && config.allowedTools.length > 0) {
-		const tools = config.allowedTools.map(t => `"${t}"`).join(' ');
-		cmdParts.push(`  --allowedTools ${tools}`);
-	}
-
-	// 作業ディレクトリ
-	if (config.workDir) {
-		cmdParts.push(`  --add-dir ${config.workDir}`);
-	}
-
-	// 非対話モード
-	cmdParts.push('  --print');
-
-	// 最後以外にバックスラッシュを付加
-	const formatted = cmdParts.map((p, i) => i < cmdParts.length - 1 ? `${p} \\` : p);
-	lines.push(...formatted);
+	// --print を除外（表示用は対話前提）
+	const displayParts = parts.filter(p => p !== '--print');
+	lines.push(displayParts.join(' \\\n  '));
 
 	return lines.join('\n');
 }

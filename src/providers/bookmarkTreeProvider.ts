@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { ParsedSession } from './types';
-import * as dataStore from './dataStore';
+import { ParsedSession } from '../models/types';
+import * as dataStore from '../models/dataStore';
 import { SessionItem, SessionTreeProvider } from './sessionTreeProvider';
 
 export class BookmarkTreeProvider implements vscode.TreeDataProvider<SessionItem>, vscode.Disposable {

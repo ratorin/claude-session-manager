@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { ParsedSession, SessionMessage, SimpleMessage, ContentBlock } from './types';
+import { ParsedSession, SessionMessage, SimpleMessage, ContentBlock } from '../models/types';
 
 // Claude Codeのデータディレクトリを取得
 export function getClaudeDir(): string {
@@ -19,6 +19,8 @@ export interface SessionFileInfo {
 // --- TTLキャッシュ（P1-9: getSessionFileInfos の頻繁な再帰走査を抑制） ---
 const FILE_INFO_CACHE_TTL_MS = 7000; // 7秒
 let cachedFileInfos: SessionFileInfo[] | null = null;
+// キャッシュ強制無効化フラグ（手動リフレッシュ時に使用）
+let forceInvalidateFileInfoCache = false;
 let cachedFileInfosTimestamp = 0;
 
 // プロジェクトパスマップキャッシュ
@@ -32,29 +34,30 @@ export async function getSessionFiles(): Promise<string[]> {
 	return infos.map((info) => info.filePath);
 }
 
+// キャッシュを強制無効化（手動リフレッシュ用）
+export function invalidateSessionCache(): void {
+	forceInvalidateFileInfoCache = true;
+	cachedPathMap = null;
+	cachedPathMapTimestamp = 0;
+}
+
 // プロジェクトディレクトリ内の全セッションファイル情報を取得（非同期+TTLキャッシュ）
 export async function getSessionFileInfos(): Promise<SessionFileInfo[]> {
 	const now = Date.now();
-	if (cachedFileInfos && (now - cachedFileInfosTimestamp) < FILE_INFO_CACHE_TTL_MS) {
+	if (!forceInvalidateFileInfoCache && cachedFileInfos && (now - cachedFileInfosTimestamp) < FILE_INFO_CACHE_TTL_MS) {
 		return cachedFileInfos;
 	}
+	forceInvalidateFileInfoCache = false;
 
 	const claudeDir = getClaudeDir();
 	const projectsDir = path.join(claudeDir, 'projects');
-
-	try {
-		await fs.promises.access(projectsDir);
-	} catch {
-		cachedFileInfos = [];
-		cachedFileInfosTimestamp = now;
-		return [];
-	}
 
 	const files: SessionFileInfo[] = [];
 	let projects: string[];
 	try {
 		projects = await fs.promises.readdir(projectsDir);
 	} catch {
+		// ENOENT またはアクセスエラー → projects ディレクトリなし
 		cachedFileInfos = [];
 		cachedFileInfosTimestamp = now;
 		return [];
@@ -131,21 +134,23 @@ function stripSystemTags(text: string): string {
 		.trim();
 }
 
+// ツール名 → 日本語ラベルのマッピング（webviewPanel.ts でも共有）
+export const TOOL_LABELS: Record<string, string> = {
+	Read: '📄 ファイル読み取り',
+	Edit: '✏️ ファイル編集',
+	Write: '📝 ファイル作成',
+	Bash: '💻 コマンド実行',
+	Grep: '🔍 コード検索',
+	Glob: '📂 ファイル検索',
+	Agent: '🤖 エージェント',
+	TodoWrite: '📋 タスク更新',
+	WebSearch: '🌐 Web検索',
+	WebFetch: '🌐 Web取得',
+};
+
 // ツール名を日本語に変換
 function toolLabel(name: string): string {
-	const map: Record<string, string> = {
-		Read: '📄 ファイル読み取り',
-		Edit: '✏️ ファイル編集',
-		Write: '📝 ファイル作成',
-		Bash: '💻 コマンド実行',
-		Grep: '🔍 コード検索',
-		Glob: '📂 ファイル検索',
-		Agent: '🤖 エージェント',
-		TodoWrite: '📋 タスク更新',
-		WebSearch: '🌐 Web検索',
-		WebFetch: '🌐 Web取得',
-	};
-	return map[name] || `🔧 ${name}`;
+	return TOOL_LABELS[name] || `🔧 ${name}`;
 }
 
 // コンテンツブロックからテキストを抽出
@@ -460,6 +465,9 @@ function extractFromHeadLines(lines: string[], state: {
 	isSidechain?: boolean;
 	agentId?: string;
 }): void {
+	// フォールバック用: queue-operation等のタイムスタンプ
+	let fallbackTimestamp: Date | undefined;
+
 	for (const line of lines) {
 		if (!line.trim()) { continue; }
 		const parsed = tryParseLine(line);
@@ -476,6 +484,10 @@ function extractFromHeadLines(lines: string[], state: {
 		if (parsed.agentId && !state.agentId) {
 			state.agentId = String(parsed.agentId);
 		}
+		// sessionId（queue-operation等からも取得）
+		if (parsed.sessionId && !state.sessionId) {
+			state.sessionId = String(parsed.sessionId);
+		}
 		// custom-title（/renameで設定されたタイトル）を優先
 		if (parsed.type === 'custom-title' && parsed.customTitle) {
 			state.claudeTitle = String(parsed.customTitle);
@@ -484,12 +496,29 @@ function extractFromHeadLines(lines: string[], state: {
 		if (parsed.type === 'ai-title' && parsed.aiTitle && !state.claudeTitle) {
 			state.claudeTitle = String(parsed.aiTitle);
 		}
+		// last-prompt（-pセッション用）: firstUserMessageのフォールバック
+		if (parsed.type === 'last-prompt' && parsed.lastPrompt && !state.firstUserMessage) {
+			state.firstUserMessage = String(parsed.lastPrompt).substring(0, 100);
+		}
+		// queue-operationのcontent（-pセッションやresume時のプロンプト）をfirstUserMessageのフォールバックに
+		if (parsed.type === 'queue-operation' && parsed.content && !state.firstUserMessage) {
+			state.firstUserMessage = String(parsed.content).substring(0, 100);
+		}
+		// queue-operation等のタイムスタンプをフォールバックとして保持
+		if (!fallbackTimestamp && parsed.timestamp &&
+			(parsed.type === 'queue-operation' || parsed.type === 'progress' || parsed.type === 'system')) {
+			fallbackTimestamp = new Date(String(parsed.timestamp));
+		}
+		// file-history-snapshotのsnapshot.timestampもフォールバックとして利用
+		if (!fallbackTimestamp && parsed.type === 'file-history-snapshot') {
+			const snapshot = parsed.snapshot as Record<string, unknown> | undefined;
+			if (snapshot?.timestamp) {
+				fallbackTimestamp = new Date(String(snapshot.timestamp));
+			}
+		}
 		// ユーザーメッセージから基本情報を抽出
 		if (parsed.type === 'user' && parsed.message) {
 			const msg = parsed.message as Record<string, unknown>;
-			if (parsed.sessionId && !state.sessionId) {
-				state.sessionId = String(parsed.sessionId);
-			}
 			if (parsed.gitBranch && !state.gitBranch) {
 				state.gitBranch = String(parsed.gitBranch);
 			}
@@ -516,6 +545,11 @@ function extractFromHeadLines(lines: string[], state: {
 				state.firstTimestamp = new Date(String(parsed.timestamp));
 			}
 		}
+	}
+
+	// user/assistantメッセージがなくてもqueue-operation等のタイムスタンプで補完
+	if (!state.firstTimestamp && fallbackTimestamp) {
+		state.firstTimestamp = fallbackTimestamp;
 	}
 }
 
@@ -549,11 +583,27 @@ function extractFromTailLines(lines: string[], state: {
 		if (parsed.type === 'ai-title' && parsed.aiTitle && !state.claudeTitle) {
 			state.claudeTitle = String(parsed.aiTitle);
 		}
-		// タイムスタンプを更新（末尾なので常に最新になる可能性が高い）
-		if (parsed.timestamp && (parsed.type === 'user' || parsed.type === 'assistant')) {
+		// タイムスタンプを更新（user/assistant + queue-operation/progress/system も対象）
+		if (parsed.timestamp) {
 			const ts = new Date(String(parsed.timestamp));
-			if (!state.lastTimestamp || ts > state.lastTimestamp) {
-				state.lastTimestamp = ts;
+			if (parsed.type === 'user' || parsed.type === 'assistant') {
+				// user/assistantメッセージは最優先
+				if (!state.lastTimestamp || ts > state.lastTimestamp) {
+					state.lastTimestamp = ts;
+				}
+			} else if (parsed.type === 'queue-operation' || parsed.type === 'progress' ||
+				parsed.type === 'system' || parsed.type === 'last-prompt') {
+				// user/assistantがない場合のフォールバック
+				if (!state.lastTimestamp || ts > state.lastTimestamp) {
+					state.lastTimestamp = ts;
+				}
+			}
+		}
+		// file-history-snapshotのsnapshot.timestampもフォールバック
+		if (parsed.type === 'file-history-snapshot' && !state.lastTimestamp) {
+			const snapshot = parsed.snapshot as Record<string, unknown> | undefined;
+			if (snapshot?.timestamp) {
+				state.lastTimestamp = new Date(String(snapshot.timestamp));
 			}
 		}
 		// 最新のモデル名（末尾にある方が新しい）
@@ -566,11 +616,13 @@ function extractFromTailLines(lines: string[], state: {
 	}
 }
 
-// 軽量パース：先頭4KB + 末尾4KBのみ読み取り（非同期・fdリーク対策済み）
+// 軽量パース：先頭32KB + 末尾8KBのみ読み取り（非同期・fdリーク対策済み）
+// HEAD_BYTESを大きめに取る理由: ECC hookやdeferred_tools_delta、attachment行が先頭に
+// 大量に挿入されるため、16KBでは最初のuserメッセージまで到達しないケースがある
 async function parseSessionQuick(filePath: string): Promise<ParsedSession | null> {
 	try {
-		const HEAD_BYTES = 4096;
-		const TAIL_BYTES = 4096;
+		const HEAD_BYTES = 32768;
+		const TAIL_BYTES = 32768;
 
 		// ファイルハンドルを開いてサイズを確認（try/finallyで確実にclose）
 		const handle = await fs.promises.open(filePath, 'r');
@@ -582,13 +634,13 @@ async function parseSessionQuick(filePath: string): Promise<ParsedSession | null
 			if (stat.size === 0) { return null; }
 			fileSize = stat.size;
 
-			// 先頭4KBを読み取り
+			// 先頭32KBを読み取り
 			const headSize = Math.min(HEAD_BYTES, fileSize);
 			const headBuf = Buffer.alloc(headSize);
 			await handle.read(headBuf, 0, headSize, 0);
 			headStr = headBuf.toString('utf-8');
 
-			// 末尾4KBを読み取り（先頭と重複しない範囲で）
+			// 末尾8KBを読み取り（先頭と重複しない範囲で）
 			tailStr = '';
 			if (fileSize > HEAD_BYTES) {
 				const tailSize = Math.min(TAIL_BYTES, fileSize - HEAD_BYTES);

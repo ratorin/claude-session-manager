@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { ParsedSession } from './types';
-import { loadAllSessions } from './sessionLoader';
-import * as dataStore from './dataStore';
+import { ParsedSession } from '../models/types';
+import { loadAllSessions, invalidateSessionCache } from '../utils/sessionLoader';
+import * as dataStore from '../models/dataStore';
 
 // 日付グループヘッダー
 export class DateGroupItem extends vscode.TreeItem {
@@ -66,7 +66,9 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 		const target = this.filteredSessions || this.sessions;
 		this.sortSessions(target);
 		this.buildGroups(target);
-		this._onDidChangeTreeData.fire(undefined);
+		if (this.groupMode !== 'tag' && this.groupMode !== 'agent') {
+			this._onDidChangeTreeData.fire(undefined);
+		}
 	}
 
 	// グループモード設定
@@ -74,7 +76,10 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 		this.groupMode = mode;
 		const target = this.filteredSessions || this.sessions;
 		this.buildGroups(target);
-		this._onDidChangeTreeData.fire(undefined);
+		// M-6: tag/agentモードはbuildGroups内の非同期完了後にfireするため、ここではスキップ
+		if (mode !== 'tag' && mode !== 'agent') {
+			this._onDidChangeTreeData.fire(undefined);
+		}
 	}
 
 	// 外部の AgentMonitor からライブセッションIDを受け取りツリーを更新する（H-3）
@@ -106,6 +111,8 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 	}
 
 	refresh(): void {
+		// キャッシュを強制無効化して最新のファイル一覧を取得
+		invalidateSessionCache();
 		// 非同期でセッションをロードし、完了したらツリーを更新
 		const maxSessions = vscode.workspace.getConfiguration('claudeManager').get<number>('maxSessionsShown', 500);
 		loadAllSessions(maxSessions).then((allSessions) => {
@@ -160,7 +167,9 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 		}
 		this.filteredSessions = null;
 		this.buildGroups(this.sessions);
-		this._onDidChangeTreeData.fire(undefined);
+		if (this.groupMode !== 'tag' && this.groupMode !== 'agent') {
+			this._onDidChangeTreeData.fire(undefined);
+		}
 		// ロード完了を通知（bookmark/tagプロバイダーが最新データでリフレッシュできるように）
 		this._onDidRefresh.fire();
 	}
@@ -243,14 +252,33 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 
 		if (element instanceof DateGroupItem) {
 			const sessions = this.groupedSessions.get(element.label) || [];
+			// H-6: N+1解消 — ブックマーク・タグ・エージェントを一括取得
+			const [bookmarks, allTags, agents] = await Promise.all([
+				dataStore.getBookmarks(),
+				dataStore.getAllTags(),
+				dataStore.getAgents(),
+			]);
+			const bookmarkSet = new Set(bookmarks);
+			// タグ逆引きマップ: sessionId → タグ名[]
+			const tagsBySession = new Map<string, string[]>();
+			for (const [tag, ids] of Object.entries(allTags)) {
+				for (const id of ids) {
+					const existing = tagsBySession.get(id) || [];
+					existing.push(tag);
+					tagsBySession.set(id, existing);
+				}
+			}
+			// エージェント逆引き: sessionId → AgentConfig
+			const agentBySession = new Map(agents.filter(a => a.sessionId).map(a => [a.sessionId, a]));
+
 			const items: SessionItem[] = [];
 			for (const session of sessions) {
-				const isBookmarked = await dataStore.isBookmarked(session.id);
-				const tags = await dataStore.getTagsForSession(session.id);
+				const isBookmarked = bookmarkSet.has(session.id);
+				const tags = tagsBySession.get(session.id) || [];
 				const isPreviewing = session.id === this.previewSessionId;
 				const isLive = this.liveSessionIds.has(session.id);
 				const hasChildren = this.hasSubagents(session.id);
-				const agentConfig = await dataStore.getAgentBySessionId(session.id);
+				const agentConfig = agentBySession.get(session.id);
 				items.push(new SessionItem(session, isBookmarked, tags, isPreviewing, isLive, false, hasChildren, agentConfig));
 			}
 			return items;
@@ -381,13 +409,17 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 	}
 
 	private async buildAgentGroupsAsync(sessions: ParsedSession[]): Promise<void> {
+		// H-6: N+1解消 — エージェント一覧を1回だけ取得
+		const agents = await dataStore.getAgents();
+		const agentBySessionId = new Map(agents.filter(a => a.sessionId).map(a => [a.sessionId, a]));
+
 		const agentSessions = new Map<string, ParsedSession[]>();
 		const unlinked: ParsedSession[] = [];
 
 		for (const session of sessions) {
-			const agent = await dataStore.getAgentBySessionId(session.id);
+			const agent = agentBySessionId.get(session.id);
 			if (agent) {
-				const key = `🤖 ${agent.name}`;
+				const key = `🤖 ${agent.displayName || agent.name}`;
 				if (!agentSessions.has(key)) {
 					agentSessions.set(key, []);
 				}
@@ -409,6 +441,7 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 // モデル名からアイコンと色を決定
 function getModelIcon(model?: string): { icon: string; color: string } {
 	if (!model) { return { icon: 'comment-discussion', color: 'foreground' }; }
+	if (model.includes('[1m]')) { return { icon: 'zap', color: 'charts.orange' }; } // 1Mは専用色
 	if (model.includes('opus')) { return { icon: 'sparkle', color: 'charts.purple' }; }
 	if (model.includes('sonnet')) { return { icon: 'zap', color: 'charts.blue' }; }
 	if (model.includes('haiku')) { return { icon: 'flame', color: 'charts.green' }; }
@@ -446,7 +479,7 @@ export class SessionItem extends vscode.TreeItem {
 		public readonly isLive: boolean = false,
 		public readonly inBookmarkView: boolean = false,
 		public readonly hasChildren: boolean = false,
-		agentConfigArg?: import('./types').AgentConfig
+		agentConfigArg?: import('../models/types').AgentConfig
 	) {
 		const isSub = !!session.isSidechain;
 
@@ -462,11 +495,14 @@ export class SessionItem extends vscode.TreeItem {
 		}
 
 		// モデル頭文字（全角で等幅）— 親セッションのみ
+		// [1m] を含む場合は専用文字で区別
 		const modelChar = isSub ? '' : (
-			session.model?.includes('opus') ? 'Ｏ'
+			session.model?.includes('[1m]') ? '１'
+			: session.model?.includes('opus') ? 'Ｏ'
 			: session.model?.includes('sonnet') ? 'Ｓ'
 			: session.model?.includes('haiku') ? 'Ｈ'
-			: '\u3000'
+			: session.model ? '？'  // 未知のモデル
+			: '\u3000'              // モデル情報なし
 		);
 		// 件数を5桁右揃え（Figure Space U+2007 で等幅パディング）
 		const figureSpace = '\u2007';
@@ -492,9 +528,12 @@ export class SessionItem extends vscode.TreeItem {
 			// タグ表示
 			const tagStr = tags.length > 0 ? ` [${tags.join(', ')}]` : '';
 
-			// モデル短縮名
+			// モデル短縮名（[1m]は保持して区別できるようにする）
 			const modelShort = session.model
-				? session.model.replace('claude-', '').replace(/-\d.*$/, '')
+				? session.model.replace('claude-', '').replace(/-\d+(\.\d+)?(-\d+)?(?=\[|$)/, (m, ...args) => {
+					// バージョン番号を削除しつつ [1m] は残す
+					return '';
+				}).replace(/^-/, '').replace(/-(?!\[).*$/, '')
 				: '';
 
 			// 元のメッセージ（タイトルが変わっている場合のみ表示）
