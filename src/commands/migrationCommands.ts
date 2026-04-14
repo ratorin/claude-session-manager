@@ -33,7 +33,7 @@ export function registerMigrationCommands(
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.migrateToFolderStructure', async () => {
 			const confirm = await vscode.window.showWarningMessage(
-				'.agent-rules/ をフォルダ構造に移行します。旧ファイルは .trash/ に退避されます。',
+				'旧形式のルールファイルをフォルダ構造に移行します。旧ファイルは .trash/ に退避されます。',
 				{ modal: true },
 				'移行実行'
 			);

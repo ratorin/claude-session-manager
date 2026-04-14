@@ -43,6 +43,29 @@ export function registerAgentCommands(
 		updateStatusBar, extensionOutputChannel,
 	} = deps;
 
+// エージェント保存共通ヘルパー（body生成 + 名前変更対応 + 親子同期）
+async function saveAgentWithRule(
+	config: AgentConfig,
+	oldName: string | undefined,
+	oldParent: string | undefined,
+): Promise<void> {
+	// ルール本文を生成
+	const [ruleConfig, ruleBody] = await prepareAgentRule(config);
+	// 名前変更時: 旧ファイルを削除
+	if (oldName && ruleConfig.name !== oldName) {
+		await dataStore.removeAgent(oldName);
+	}
+	// 保存（bodyをagents/<name>.mdの本文に書き込む）
+	await dataStore.addAgent(ruleConfig, ruleBody);
+	// 親子同期
+	const ch = getExtensionOutputChannel();
+	if (oldParent && oldParent !== ruleConfig.parentAgent) {
+		await syncParentRuleFile(oldParent, ch);
+	}
+	await syncParentRuleFile(ruleConfig.parentAgent, ch);
+	refreshAll();
+}
+
 // --- エージェント関連コマンド ---
 
 // エージェントプレビュー（クリック時）
@@ -59,14 +82,7 @@ context.subscriptions.push(
 				const oldName = a.name;
 				const oldParent = a.parentAgent;
 				showAgentFormPanel(a, a.sessionId, async (config) => {
-					if (config.name !== oldName) { await dataStore.removeAgent(oldName); }
-					await dataStore.addAgent(config);
-					const ch = getExtensionOutputChannel();
-					if (oldParent && oldParent !== config.parentAgent) {
-						await syncParentRuleFile(oldParent, ch);
-					}
-					await syncParentRuleFile(config.parentAgent, ch);
-					refreshAll();
+					await saveAgentWithRule(config, oldName, oldParent);
 					vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
 				});
 			},
@@ -105,11 +121,8 @@ context.subscriptions.push(
 context.subscriptions.push(
 	vscode.commands.registerCommand('claudeManager.registerAgent', (item: SessionItem) => {
 		showAgentFormPanel(undefined, item.session.id, async (config) => {
-			const [finalConfig, ruleBody] = await prepareAgentRule(config);
-			await dataStore.addAgent(finalConfig, ruleBody);
-			await syncParentRuleFile(finalConfig.parentAgent, getExtensionOutputChannel());
-			refreshAll();
-			vscode.window.showInformationMessage(`「${finalConfig.name}」をエージェントとして登録しました`);
+			await saveAgentWithRule(config, undefined, undefined);
+			vscode.window.showInformationMessage(`「${config.name}」をエージェントとして登録しました`);
 		});
 	})
 );
@@ -118,10 +131,9 @@ context.subscriptions.push(
 context.subscriptions.push(
 	vscode.commands.registerCommand('claudeManager.addAgent', () => {
 		showAgentFormPanel(undefined, '', async (config) => {
-			// sessionIdが空文字の場合は空文字のまま保持（undefinedにしない）
 			if (!config.sessionId) { config.sessionId = ''; }
+			// ルール生成 + セッション自動作成 + 保存
 			const [ruleConfig, ruleBody] = await prepareAgentRule(config);
-			// 固定セッションかつsessionId未設定なら自動作成
 			const finalConfig = await autoCreateSessionIfNeeded(ruleConfig, sessionServiceDeps);
 			await dataStore.addAgent(finalConfig, ruleBody);
 			await syncParentRuleFile(finalConfig.parentAgent, getExtensionOutputChannel());
@@ -151,17 +163,7 @@ context.subscriptions.push(
 		const oldName = existing.name;
 		const oldParent = existing.parentAgent;
 		showAgentFormPanel(existing, sessionId, async (config) => {
-			if (config.name !== oldName) {
-				await dataStore.removeAgent(oldName);
-			}
-			await dataStore.addAgent(config);
-			// 親子同期: 旧親≠新親なら両方、同じなら1回
-			const ch = getExtensionOutputChannel();
-			if (oldParent && oldParent !== config.parentAgent) {
-				await syncParentRuleFile(oldParent, ch);
-			}
-			await syncParentRuleFile(config.parentAgent, ch);
-			refreshAll();
+			await saveAgentWithRule(config, oldName, oldParent);
 			vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
 		});
 	})
@@ -175,13 +177,7 @@ context.subscriptions.push(
 		const oldName = existing.name;
 		const oldParent = existing.parentAgent;
 		showAgentFormPanel(existing, sessionId, async (config) => {
-			if (config.name !== oldName) { await dataStore.removeAgent(oldName); }
-			await dataStore.addAgent(config);
-			const ch = getExtensionOutputChannel();
-			if (oldParent && oldParent !== config.parentAgent) {
-				await syncParentRuleFile(oldParent, ch);
-			}
-			await syncParentRuleFile(config.parentAgent, ch);
+			await saveAgentWithRule(config, oldName, oldParent);
 			refreshAll();
 			vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
 		});

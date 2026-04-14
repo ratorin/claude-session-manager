@@ -281,9 +281,14 @@ export async function generateDetailedTestament(agent: AgentConfig, oldSession: 
 
 		const result = await new Promise<string>((resolve, reject) => {
 			const { spawn } = require('child_process') as typeof import('child_process');
-			const proc = spawn('claude', cliArgs, {
-				shell: true,
-				timeout: 120000,
+			const claudeCmd = process.platform === 'win32' ? 'claude.cmd' : 'claude';
+			const env = { ...process.env };
+			delete env.CLAUDE_CODE;
+			delete env.CLAUDECODE;
+			const proc = spawn(claudeCmd, cliArgs, {
+				env,
+				shell: false,
+				windowsHide: true,
 				stdio: ['pipe', 'pipe', 'pipe'],
 			});
 			let stdout = '';

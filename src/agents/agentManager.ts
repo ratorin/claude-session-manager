@@ -45,7 +45,7 @@ export async function resolveRuleFilePath(ruleFilePath: string): Promise<string>
 	}
 	// ファイル名のみの場合はルールフォルダと結合
 	const ruleFolder = await dataStore.getRuleFolder();
-	// フォルダ構造を優先チェック: .agent-rules/<name>/<name>.md
+	// フォルダ構造を優先チェック: agents/<name>/<name>.md
 	const nameWithoutExt = ruleFilePath.replace(/\.md$/, '');
 	const folderPath = path.join(ruleFolder, nameWithoutExt, ruleFilePath);
 	try {
