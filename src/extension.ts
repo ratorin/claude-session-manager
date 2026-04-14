@@ -23,6 +23,19 @@ import { loadMemoryFiles, deleteMemoryFile, mergeMemoryFiles, extractFromMemory,
 import { resolveRuleFilePath } from './agents/agentManager';
 import { syncParentRuleFile, syncAllParentRuleFiles, hasCircularRef } from './agents/parentChildSync';
 import {
+	createSessionForAgent, autoCreateSessionIfNeeded,
+	readFileTail, generateSimpleTestament, generateDetailedTestament,
+	appendSessionHistoryToRuleFile, SessionServiceDeps,
+} from './services/sessionService';
+import {
+	buildDescription, updateRuleFrontmatter, autoGenerateRuleFile,
+	ensureAgentFolderFiles, addAffinitySettings,
+	generateDirectorRuleFile, buildDirectorDescription,
+} from './services/agentService';
+import {
+	ensureSubagentHooks, registerCsmAskAgentHook, writeOrgInfoToMemory,
+} from './services/hookService';
+import {
 	parseFrontmatter, generateFrontmatter, updateFrontmatterInContent,
 	migrateAutoToYaml, isLegacyAutoFormat, hasFrontmatter, sanitizeForYaml,
 } from './utils/frontmatterUtils';
@@ -62,14 +75,7 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	// check-dispatch フックのマイグレーション（初回のみユーザー確認付き）
-	ensureCheckDispatchHook(context).catch(() => {
-		// フック登録失敗は致命的ではないため、エラーを無視
-	});
-
-	// dispatch skill のセットアップ（初回のみユーザー確認付き）
-	ensureDispatchSkill(context).catch(() => {
-		// スキル登録失敗は致命的ではないため、エラーを無視
-	});
+	// /csm-ask-agent のインストール状態はエージェントツリーのバナーで表示（ensureCsmAskAgent は廃止）
 
 	// TreeViewプロバイダーを作成
 	const sessionProvider = new SessionTreeProvider();
@@ -248,286 +254,8 @@ export function activate(context: vscode.ExtensionContext) {
 		}).catch(() => {/* ignore */});
 	}
 
-	// 子エージェント用 description テキストを構築
-	function buildDescription(config: AgentConfig): string {
-		const safeName = sanitizeForYaml(config.name);
-		const safeRole = sanitizeForYaml(config.role || '（役割未設定）');
-		const lines: string[] = [
-			`あなたは${safeName}所属のエンジニアです。`,
-			`- ${safeRole}`,
-			`- 変更前に既存コードを確認し、既存の設計方針を尊重する`,
-			`- セッション開始時にMEMORY.md（自動メモリ）を確認し、組織図・行動規範・プロジェクト情報を把握すること`,
-			`- session-manager.json の agents 一覧から自分の位置づけ・他エージェントとの関係を把握すること`,
-			`- 「※子エージェントはこのセクションを無視すること」とマークされたセクションは読み飛ばすこと`,
-		];
-		if (config.parentAgent) {
-			const safeParent = sanitizeForYaml(config.parentAgent);
-			lines.push(`- 報告先: ${safeParent}（親エージェント）。作業完了時は結果を報告すること`);
-		}
-		if (config.workDir) {
-			const safeWorkDir = sanitizeForYaml(config.workDir);
-			lines.push(`- 編集対象は \`${safeWorkDir}\` 内のみ。それ以外のフォルダは絶対に変更しない`);
-		}
-		return lines.join('\n');
-	}
-
-	// 既存ファイルのフロントマター（description含む）を更新（本文は保持）— 非同期
-	async function updateRuleFrontmatter(filePath: string, config: AgentConfig, description: string): Promise<void> {
-		try {
-			const content = await fs.promises.readFile(filePath, 'utf-8');
-
-			// 旧 CSM:AUTO 形式 → YAML フロントマターに自動移行
-			if (isLegacyAutoFormat(content)) {
-				const migrated = migrateAutoToYaml(content, config);
-				// 移行後に description を最新化
-				const newContent = updateFrontmatterInContent(migrated, config, description);
-				await fs.promises.writeFile(filePath, newContent, 'utf-8');
-				return;
-			}
-
-			// YAML フロントマター形式 → フロントマターのみ更新
-			const newContent = updateFrontmatterInContent(content, config, description);
-			await fs.promises.writeFile(filePath, newContent, 'utf-8');
-		} catch {
-			// ファイル読み書きエラーは無視
-		}
-	}
-
-	// セッション自動作成: claude CLIをspawnしてセッションIDを取得
-	// 固定セッション（sessionMode !== 'disposable'）かつsessionIdが空の場合のみ実行
-	async function createSessionForAgent(config: AgentConfig): Promise<string> {
-		const { spawn } = require('child_process') as typeof import('child_process');
-
-		return new Promise<string>((resolve, reject) => {
-			// CLI引数を構築
-			const args: string[] = [
-				'--model', config.model,
-				'--verbose',
-				'--output-format', 'stream-json',
-				'--max-turns', '1',
-				'-p', `あなたは「${config.name}」です。${config.role || '指示された業務'}を担当します。ルールファイルを確認して準備完了を報告してください。`,
-			];
-
-			// ルールファイルがあれば付与
-			if (config.ruleFile) {
-				args.push('--append-system-prompt-file', config.ruleFile);
-			}
-
-			// 環境変数: ネストセッション検出を回避
-			const env = { ...process.env };
-			delete env.CLAUDE_CODE;
-			delete env.CLAUDECODE;
-
-			// C-2: shell:false でコマンドインジェクションを防止
-			// Windows環境では .cmd 拡張子が必要
-			const claudeCmd = process.platform === 'win32' ? 'claude.cmd' : 'claude';
-			const child = spawn(claudeCmd, args, {
-				env,
-				cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir(),
-				stdio: ['ignore', 'pipe', 'pipe'],
-				shell: false,
-				windowsHide: true,
-			});
-
-			let output = '';
-			let sessionId = '';
-			const timeout = setTimeout(() => {
-				child.kill('SIGTERM');
-				reject(new Error('セッション作成がタイムアウトしました（60秒）'));
-			}, 60000);
-
-			child.stdout?.on('data', (data: Buffer) => {
-				output += data.toString('utf-8');
-				// stream-json形式: 各行が独立したJSON
-				const lines = output.split('\n');
-				for (const line of lines) {
-					if (!line.trim()) { continue; }
-					try {
-						const parsed = JSON.parse(line);
-						// セッションIDは init / system / result メッセージに含まれる
-						if (parsed.session_id) {
-							sessionId = parsed.session_id;
-						}
-					} catch {
-						// 不完全な行は次回に持ち越し
-					}
-				}
-			});
-
-			child.stderr?.on('data', (data: Buffer) => {
-				extensionOutputChannel.appendLine(`[createSession stderr] ${data.toString('utf-8').trim()}`);
-			});
-
-			child.on('close', (code: number | null) => {
-				clearTimeout(timeout);
-				// セッション初期化プロセス終了時にagentWatcherを再スキャン
-				agentWatcher.scheduleUpdate();
-				if (sessionId) {
-					resolve(sessionId);
-				} else if (code === 0) {
-					// 終了コード0でもsessionIdが取れなかった場合: 出力からフォールバック検索
-					const match = output.match(/"session_id"\s*:\s*"([a-f0-9-]{36})"/);
-					if (match) {
-						resolve(match[1]);
-					} else {
-						reject(new Error('セッションIDを取得できませんでした'));
-					}
-				} else {
-					reject(new Error(`claude CLI がエラーコード ${code} で終了しました`));
-				}
-			});
-
-			child.on('error', (err: Error) => {
-				clearTimeout(timeout);
-				reject(err);
-			});
-		});
-	}
-
-	// エージェント保存時にセッションを自動作成（固定セッション＋sessionId未設定の場合）
-	async function autoCreateSessionIfNeeded(config: AgentConfig): Promise<AgentConfig> {
-		// 使い捨てセッション or 既にsessionIdがある場合はスキップ
-		if (config.sessionMode === 'disposable' || config.sessionId) {
-			return config;
-		}
-
-		try {
-			const sessionId = await vscode.window.withProgress(
-				{
-					location: vscode.ProgressLocation.Notification,
-					title: `「${config.name}」のセッションを作成中...`,
-					cancellable: false,
-				},
-				async () => createSessionForAgent(config)
-			);
-
-			extensionOutputChannel.appendLine(`[INFO] ${config.name} のセッションを自動作成: ${sessionId}`);
-			return { ...config, sessionId };
-		} catch (err) {
-			// エラー時はsessionId無しで保存（従来と同じ動作にフォールバック）
-			extensionOutputChannel.appendLine(`[WARN] ${config.name} のセッション自動作成に失敗: ${err}`);
-			vscode.window.showWarningMessage(
-				`セッションの自動作成に失敗しました。エージェントはセッション未紐づけで保存されます。`
-			);
-			return config;
-		}
-	}
-
-	// ruleFileが未設定の場合にルールファイルを自動生成するヘルパー（子エージェント用）— 非同期
-	// v0.3.1: YAML フロントマター形式（CSM:AUTOマーカー廃止）
-	async function autoGenerateRuleFile(config: AgentConfig): Promise<AgentConfig> {
-		const description = buildDescription(config);
-
-		if (config.ruleFile) {
-			// 既にルールファイルがある → フロントマター更新（旧形式は自動移行）
-			await updateRuleFrontmatter(config.ruleFile, config, description);
-			return config;
-		}
-		const ruleFolder = await dataStore.getRuleFolderForScope(config.scope);
-		if (!ruleFolder) { return config; }
-
-		// フォルダ構造: .agent-rules/<部署名>/<部署名>.md
-		const agentFolder = path.join(ruleFolder, config.name);
-		const filePath = path.join(agentFolder, `${config.name}.md`);
-
-		// フラット構造の旧ファイルが存在するか確認（後方互換）
-		const flatPath = path.join(ruleFolder, `${config.name}.md`);
-		try {
-			await fs.promises.access(flatPath);
-			const flatStat = await fs.promises.stat(flatPath);
-			if (flatStat.isFile()) {
-				// フラット構造が存在 → フロントマター更新（旧形式は自動移行）
-				await updateRuleFrontmatter(flatPath, config, description);
-				return { ...config, ruleFile: flatPath };
-			}
-		} catch {
-			// フラットファイルが存在しない → OK
-		}
-
-		// フォルダ構造のファイルが既に存在する場合は紐づけ + フロントマター更新
-		try {
-			await fs.promises.access(filePath);
-			await updateRuleFrontmatter(filePath, config, description);
-			// TODO.md / HISTORY.md が無ければ作成
-			await ensureAgentFolderFiles(agentFolder, config.name);
-			return { ...config, ruleFile: filePath };
-		} catch {
-			// ファイルが存在しない → 新規作成
-		}
-
-		// 重複チェック: 他スコープに同名が存在する場合は警告
-		const otherScope = config.scope === 'global' ? 'project' : 'global';
-		const otherFolder = await dataStore.getRuleFolderForScope(otherScope);
-		const otherPath = path.join(otherFolder, config.name, `${config.name}.md`);
-		const otherFlatPath = path.join(otherFolder, `${config.name}.md`);
-		try {
-			await fs.promises.access(otherPath);
-			vscode.window.showWarningMessage(
-				`同名のルールファイルが${otherScope === 'global' ? 'グローバル' : 'プロジェクト'}スコープに既に存在します: ${otherPath}`
-			);
-		} catch {
-			try {
-				await fs.promises.access(otherFlatPath);
-				const s = await fs.promises.stat(otherFlatPath);
-				if (s.isFile()) {
-					vscode.window.showWarningMessage(
-						`同名のルールファイルが${otherScope === 'global' ? 'グローバル' : 'プロジェクト'}スコープに既に存在します: ${otherFlatPath}`
-					);
-				}
-			} catch {
-				// 他スコープには存在しない → OK
-			}
-		}
-
-		try {
-			// 部署フォルダ作成
-			await fs.promises.mkdir(agentFolder, { recursive: true });
-			// YAML フロントマター形式で新規作成
-			const frontmatter = generateFrontmatter(config, description);
-			const content = frontmatter + '\n\n<!-- 以下にカスタムルールを自由に追記してください -->\n';
-			await fs.promises.writeFile(filePath, content, 'utf-8');
-			// TODO.md / HISTORY.md テンプレート作成
-			await ensureAgentFolderFiles(agentFolder, config.name);
-			return { ...config, ruleFile: filePath };
-		} catch {
-			return config;
-		}
-	}
-
-	// 部署フォルダに TODO.md / HISTORY.md が存在しなければテンプレートを作成
-	async function ensureAgentFolderFiles(agentFolder: string, agentName: string): Promise<void> {
-		const todoPath = path.join(agentFolder, 'TODO.md');
-		const historyPath = path.join(agentFolder, 'HISTORY.md');
-		try {
-			await fs.promises.access(todoPath);
-		} catch {
-			const todoTemplate = `# ${agentName} — TODO\n\n> 最終更新: ${new Date().toISOString()}\n\n## 未完了\n\n## 完了（直近10件）\n\n## 保留\n`;
-			await fs.promises.writeFile(todoPath, todoTemplate, 'utf-8');
-		}
-		try {
-			await fs.promises.access(historyPath);
-		} catch {
-			const historyTemplate = `# ${agentName} — 歴代セッション記録\n\n`;
-			await fs.promises.writeFile(historyPath, historyTemplate, 'utf-8');
-		}
-	}
 
 	// ファイル末尾だけ読み取る（巨大JSONL対策・非同期・fdリーク対策済み）
-	async function readFileTail(filePath: string, bytes: number): Promise<string> {
-		const handle = await fs.promises.open(filePath, 'r');
-		try {
-			const stat = await handle.stat();
-			if (stat.size === 0) { return ''; }
-			const readSize = Math.min(bytes, stat.size);
-			const startPos = Math.max(0, stat.size - readSize);
-			const buffer = Buffer.alloc(readSize);
-			await handle.read(buffer, 0, readSize, startPos);
-			return buffer.toString('utf-8');
-		} finally {
-			await handle.close();
-		}
-	}
-
 	// OutputChannel（エラーログ出力用）— 起動時に即作成
 	const extensionOutputChannel = vscode.window.createOutputChannel('CSM Session Manager');
 	context.subscriptions.push(extensionOutputChannel);
@@ -535,152 +263,11 @@ export function activate(context: vscode.ExtensionContext) {
 		return extensionOutputChannel;
 	}
 
-	// 簡易遺言生成: JSONL末尾から直近のやり取りを抽出（コストゼロ・即時）
-	async function generateSimpleTestament(agent: AgentConfig, oldSession: { filePath: string } | undefined): Promise<string> {
-		let testament = `${agent.name}の前セッションから引き継ぎ。`;
-		if (!oldSession) { return testament; }
-		try {
-			const tail = await readFileTail(oldSession.filePath, 128 * 1024); // 128KB
-			const lines = tail.split('\n').filter((l: string) => l.trim());
-			// 先頭行は途中で切れている可能性があるのでスキップ
-			if (lines.length > 1) { lines.shift(); }
-			const summaryParts: string[] = [];
-			const recentLines = lines.slice(-50);
-			for (const line of recentLines) {
-				try {
-					const entry = JSON.parse(line);
-					if (entry.type === 'user' && entry.message?.role === 'user' && typeof entry.message.content === 'string') {
-						summaryParts.push(`[User] ${entry.message.content.substring(0, 200)}`);
-					} else if (entry.type === 'assistant' && entry.message?.role === 'assistant') {
-						const text = typeof entry.message.content === 'string'
-							? entry.message.content
-							: Array.isArray(entry.message.content)
-								? entry.message.content.filter((b: { type: string }) => b.type === 'text').map((b: { text: string }) => b.text).join('')
-								: '';
-						if (text) {
-							summaryParts.push(`[Assistant] ${text.substring(0, 300)}`);
-						}
-					}
-				} catch { /* パース失敗は無視 */ }
-			}
-			if (summaryParts.length > 0) {
-				const lastParts = summaryParts.slice(-4);
-				testament = `${agent.name}の前セッション引き継ぎ:\n${lastParts.join('\n')}`;
-			}
-		} catch {
-			// 読み込み失敗時はデフォルトメッセージのまま
-		}
-		return testament;
-	}
-
-	// 詳細遺言生成: Claude CLIでAI要約を生成（トークンコストあり）
-	// modelOrSessionId: モデル名（claude-xxx形式）またはエージェントのセッションID（UUID形式）
-	async function generateDetailedTestament(agent: AgentConfig, oldSession: { filePath: string } | undefined, modelOrSessionId: string): Promise<string> {
-		if (!oldSession) { return `${agent.name}の前セッションから引き継ぎ。`; }
-		try {
-			// JSONL末尾から直近の内容を取得（末尾256KBのみ読み取り）
-			const tail = await readFileTail(oldSession.filePath, 256 * 1024); // 256KB
-			const lines = tail.split('\n').filter((l: string) => l.trim());
-			// 先頭行は途中で切れている可能性があるのでスキップ
-			if (lines.length > 1) { lines.shift(); }
-			const recentLines = lines.slice(-100);
-			const recentContent = recentLines.join('\n').substring(0, 8000);
-
-			// Claude CLIで要約生成
-			const { execFile } = require('child_process') as typeof import('child_process');
-			const prompt = `以下はClaude Codeのセッションログ（JSONL形式）の末尾です。このセッションで何をしたか・何が未完了かを300文字以内で簡潔に要約してください。次のセッションへの引き継ぎ情報として使います。\n\n${recentContent}`;
-
-			// UUID形式ならエージェントのセッションに--resume、それ以外はモデル名で新規
-			const isSessionId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(modelOrSessionId);
-			const cliArgs = isSessionId
-				? ['-p', prompt, '--resume', modelOrSessionId, '--max-tokens', '600']
-				: ['-p', prompt, '--model', modelOrSessionId, '--max-tokens', '600'];
-
-			const result = await new Promise<string>((resolve, reject) => {
-				const child = execFile('claude', cliArgs, {
-					timeout: 60000,
-					maxBuffer: 1024 * 64,
-				}, (err: Error | null, stdout: string) => {
-					if (err) { reject(err); return; }
-					resolve(stdout.trim());
-				});
-				child.stdin?.end();
-			});
-			return result || `${agent.name}の前セッションから引き継ぎ。`;
-		} catch (err) {
-			vscode.window.showWarningMessage(`AI要約の生成に失敗しました。簡易モードにフォールバックします。`);
-			return generateSimpleTestament(agent, oldSession);
-		}
-	}
-
-	// ルールファイルの本文に「歴代セッションの記録」を追記（直近3世代保持）
-	// v0.3.1: フロントマター方式対応（本文=フロントマター以降の部分に書き込む）
-	async function appendSessionHistoryToRuleFile(ruleFilePath: string, oldSessionId: string, testament: string): Promise<void> {
-		const HISTORY_HEADER = '## 歴代セッションの記録';
-		const MAX_GENERATIONS = 3;
-
-		try {
-			let content = await fs.promises.readFile(ruleFilePath, 'utf-8');
-
-			// 日付文字列
-			const dateStr = new Date().toISOString().split('T')[0];
-			const newEntry = `### ${dateStr} (旧ID: ${oldSessionId})\n${testament}`;
-
-			const historyIdx = content.indexOf(HISTORY_HEADER);
-			if (historyIdx >= 0) {
-				// 既存の歴代セクションを解析
-				const sectionStart = historyIdx;
-				const afterHeader = content.substring(sectionStart + HISTORY_HEADER.length);
-				// 「## 」で始まる次のセクション（空行の後に来る同レベル以上のヘッダ）を探す
-				// 歴代記録内の ## ヘッダを誤検出しないよう、空行を前提とする
-				const nextSectionMatch = afterHeader.match(/\n\n## [^#]/);
-				const sectionEnd = nextSectionMatch
-					? sectionStart + HISTORY_HEADER.length + (nextSectionMatch.index ?? afterHeader.length)
-					: content.length;
-				const sectionBody = content.substring(sectionStart + HISTORY_HEADER.length, sectionEnd);
-
-				// ### で始まるエントリを抽出
-				const entries: string[] = [];
-				const entryRegex = /### .+/g;
-				let match;
-				const entryStarts: number[] = [];
-				while ((match = entryRegex.exec(sectionBody)) !== null) {
-					entryStarts.push(match.index);
-				}
-				for (let i = 0; i < entryStarts.length; i++) {
-					const start = entryStarts[i];
-					const end = i + 1 < entryStarts.length ? entryStarts[i + 1] : sectionBody.length;
-					entries.push(sectionBody.substring(start, end).trim());
-				}
-
-				// 新エントリを追加し、直近3世代に制限
-				entries.push(newEntry);
-				while (entries.length > MAX_GENERATIONS) { entries.shift(); }
-
-				// セクションを再構築
-				const newSection = HISTORY_HEADER + '\n\n' + entries.join('\n\n') + '\n';
-				content = content.substring(0, sectionStart) + newSection + content.substring(sectionEnd);
-			} else {
-				// 歴代セクションが存在しない → フロントマター直後（本文の先頭）に追加
-				const parsed = parseFrontmatter(content);
-				if (parsed) {
-					// フロントマター形式 → 本文の先頭に歴代セクションを挿入
-					const fm = content.substring(0, content.length - parsed.body.length);
-					const newSection = HISTORY_HEADER + '\n\n' + newEntry + '\n\n';
-					content = fm + newSection + parsed.body;
-				} else {
-					// フロントマターなし → ファイル末尾に追加
-					content += '\n\n' + HISTORY_HEADER + '\n\n' + newEntry + '\n';
-				}
-			}
-
-			await fs.promises.writeFile(ruleFilePath, content, 'utf-8');
-		} catch (err) {
-			// ルールファイル書き込みエラーをOutputChannelにログ出力
-			const ch = getExtensionOutputChannel();
-			ch.appendLine(`[${new Date().toISOString()}] appendSessionHistoryToRuleFile エラー: ${err instanceof Error ? err.message : String(err)}`);
-		}
-	}
+	// SessionService 依存オブジェクト（activate内クロージャ変数を注入）
+	const sessionServiceDeps: SessionServiceDeps = {
+		outputChannel: extensionOutputChannel,
+		agentWatcher,
+	};
 
 	// 全ビューをリフレッシュするヘルパー
 	function refreshAll(): void {
@@ -966,12 +553,8 @@ export function activate(context: vscode.ExtensionContext) {
 			const session = agent.sessionId ? sessions.find((s) => s.id === agent.sessionId) : undefined;
 			const sessionTitle = session ? (session.customName || session.claudeTitle || session.firstMessage.substring(0, 40)) : undefined;
 
-			showAgentPreview(
-				agent,
-				isLive,
-				sessionTitle,
-				// 設定ボタン → 編集フォームを開く
-				(a) => {
+			showAgentPreview(agent, isLive, sessionTitle, {
+				onEdit: (a) => {
 					const oldName = a.name;
 					const oldParent = a.parentAgent;
 					showAgentFormPanel(a, a.sessionId, async (config) => {
@@ -986,23 +569,34 @@ export function activate(context: vscode.ExtensionContext) {
 						vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
 					});
 				},
-				// ルールファイル編集
-				async (a) => {
+				onEditRuleFile: async (a) => {
 					if (!a.ruleFile) { return; }
 					const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(a.ruleFile));
 					await vscode.window.showTextDocument(doc);
 				},
-				// セッション履歴を開く
-				(sessionId) => {
-					const s = sessionProvider.getSessionById(sessionId);
-					if (s) {
-						sessionProvider.setActiveSession(s.id);
-						bookmarkProvider.refresh();
-						tagProvider.refresh();
-						showSessionPreview(s, context, getConfig<boolean>('preview.showThinkingBlocks', false));
-					}
-				}
-			);
+				onOpenInClaude: (sessionId) => {
+					const scheme = vscode.env.uriScheme;
+					const uri = vscode.Uri.parse(`${scheme}://anthropic.claude-code/open?session=${encodeURIComponent(sessionId)}`);
+					vscode.env.openExternal(uri);
+				},
+				onOpenInTerminal: (a) => {
+					if (!a.sessionId) { return; }
+					const args = ['claude', '--resume', a.sessionId];
+					if (a.ruleFile) { args.push('--append-system-prompt-file', a.ruleFile); }
+					args.push('--model', modelCliMap[a.model] || a.model);
+					if (a.effort) { args.push('--effort', a.effort); }
+					if (a.permissionMode) { args.push('--permission-mode', a.permissionMode); }
+					const terminal = vscode.window.createTerminal({ name: `🤖 ${a.displayName || a.name}`, cwd: a.workDir || undefined });
+					terminal.show();
+					terminal.sendText(args.join(' '));
+				},
+				onRenewSession: (a) => {
+					vscode.commands.executeCommand('claudeManager.renewAgentSession', { agent: a });
+				},
+				onLinkSession: (a) => {
+					vscode.commands.executeCommand('claudeManager.linkSession', { agent: a });
+				},
+			});
 		})
 	);
 
@@ -1027,7 +621,7 @@ export function activate(context: vscode.ExtensionContext) {
 				if (!config.sessionId) { config.sessionId = ''; }
 				const ruleConfig = await autoGenerateRuleFile(config);
 				// 固定セッションかつsessionId未設定なら自動作成
-				const finalConfig = await autoCreateSessionIfNeeded(ruleConfig);
+				const finalConfig = await autoCreateSessionIfNeeded(ruleConfig, sessionServiceDeps);
 				await dataStore.addAgent(finalConfig);
 				await syncParentRuleFile(finalConfig.parentAgent, getExtensionOutputChannel());
 				refreshAll();
@@ -1148,9 +742,20 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 
 			const isAlreadyLinked = !!item.agent.sessionId;
+
+			// 紐づけ済みの場合は確認を挟む
+			if (isAlreadyLinked) {
+				const confirm = await vscode.window.showWarningMessage(
+					`「${item.agent.displayName || item.agent.name}」には既にセッションが紐づけされています。変更しますか？`,
+					{ modal: true },
+					'変更する'
+				);
+				if (confirm !== '変更する') { return; }
+			}
+
 			const picked = await vscode.window.showQuickPick(sessionItems, {
 				placeHolder: '紐づけるセッションを選択',
-				title: `「${item.agent.name}」に${isAlreadyLinked ? 'セッションを変更' : 'セッションを紐づけ'}`,
+				title: `「${item.agent.displayName || item.agent.name}」に${isAlreadyLinked ? 'セッションを変更' : 'セッションを紐づけ'}`,
 			});
 			if (!picked) { return; }
 
@@ -1269,20 +874,97 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 
 			try {
+				// セッションサイズチェック（巨大セッションではAI要約不可）
+				let sessionSizeMB = 0;
+				const oldSession2 = sessionProvider.getSessionById(agent.sessionId);
+				if (oldSession2) {
+					try {
+						const stat = await fs.promises.stat(oldSession2.filePath);
+						sessionSizeMB = stat.size / (1024 * 1024);
+					} catch { /* stat失敗 */ }
+				}
+				const isTooLarge = sessionSizeMB > 30;
+
 				// 遺言生成モードを選択
-				const mode = await vscode.window.showQuickPick(
-					[
-						{ label: '簡易（即時）', description: 'JSONL末尾から自動抽出。コストゼロ', value: 'simple' as const },
-						{ label: '詳細（AI要約）', description: 'Claude CLIで要約生成。高品質だがトークンコストあり', value: 'detailed' as const },
-						{ label: 'エージェントに委任する', description: '登録済みエージェントのセッションで要約を生成', value: 'delegate' as const },
-					],
-					{ placeHolder: '遺言の生成方法を選択してください' }
+				const options: { label: string; description: string; value: 'simple' | 'detailed' | 'delegate' | 'manual' }[] = [
+					{ label: '簡易（即時）', description: 'JSONL末尾から自動抽出。コストゼロ', value: 'simple' },
+				];
+				if (!isTooLarge) {
+					options.push(
+						{ label: '詳細（AI要約）', description: '本人のセッションで要約生成', value: 'detailed' as const },
+						{ label: 'エージェントに委任する', description: '別エージェントに要約を依頼', value: 'delegate' as const },
+					);
+				} else {
+					options.unshift(
+						{ label: '📋 手動引き継ぎ手順を表示', description: `セッション${Math.round(sessionSizeMB)}MB — 手順に従って手動で引き継ぎ`, value: 'manual' as const },
+					);
+					options.push(
+						{ label: 'エージェントに委任する', description: '別エージェントに要約を依頼', value: 'delegate' as const },
+					);
+				}
+				const mode = await vscode.window.showQuickPick(options,
+					{ placeHolder: isTooLarge ? `⚠ セッション${Math.round(sessionSizeMB)}MB — 手動引き継ぎ推奨` : '遺言の生成方法を選択してください' }
 				);
 				if (!mode) { return; }
 
 				const oldSession = sessionProvider.getSessionById(agent.sessionId);
 				const oldSessionId = agent.sessionId;
 				let testament = `${agent.name}の前セッションから引き継ぎ。`;
+
+				// 手動引き継ぎ手順を表示（巨大セッション用）
+				if (mode.value === 'manual') {
+					const crypto = require('crypto') as typeof import('crypto');
+					const nonce = crypto.randomBytes(16).toString('hex');
+					const historyPath = path.join(os.homedir(), '.claude', 'agents', agent.name, 'HISTORY.md').replace(/\\/g, '/');
+					const manualPanel = vscode.window.createWebviewPanel(
+						'claudeManualRenew',
+						`📋 手動引き継ぎ手順 — ${agent.displayName || agent.name}`,
+						vscode.ViewColumn.One,
+						{ enableScripts: false }
+					);
+					manualPanel.webview.html = `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}';">
+<style nonce="${nonce}">
+body { font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); padding: 24px; max-width: 700px; margin: 0 auto; }
+h1 { font-size: 18px; margin-bottom: 16px; }
+.warn { background: rgba(255,200,50,0.08); border: 1px solid rgba(255,200,50,0.3); border-radius: 4px; padding: 12px; margin-bottom: 16px; font-size: 13px; }
+.step { margin-bottom: 20px; }
+.step-num { font-size: 24px; font-weight: 700; color: #e27e4a; float: left; margin-right: 12px; }
+.step-content { overflow: hidden; }
+.step-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.step-desc { font-size: 12px; color: var(--vscode-descriptionForeground); }
+code { background: var(--vscode-textBlockQuote-background); padding: 8px 12px; display: block; border-radius: 4px; font-size: 12px; white-space: pre-wrap; margin: 8px 0; line-height: 1.6; }
+</style></head><body>
+<h1>📋 手動引き継ぎ手順</h1>
+<div class="warn">⚠ セッションが ${Math.round(sessionSizeMB)}MB と巨大なため、自動AI要約は使用できません。以下の手順で手動引き継ぎしてください。</div>
+
+<div class="step">
+<div class="step-num">1</div>
+<div class="step-content">
+<div class="step-title">このセッションで以下を実行</div>
+<div class="step-desc">エージェントに直接入力してください：</div>
+<code>セッションの要約を300文字以内で書いて。
+何をしたか・何が達成されたか・何が未完了か。
+結果を ${historyPath} に追記して。</code>
+</div></div>
+
+<div class="step">
+<div class="step-num">2</div>
+<div class="step-content">
+<div class="step-title">引き継ぎボタンで「簡易（即時）」を選択</div>
+<div class="step-desc">HISTORYに記録が残っているので、簡易モードで十分です。新セッションが自動作成されます。</div>
+</div></div>
+
+<div class="step">
+<div class="step-num">3</div>
+<div class="step-content">
+<div class="step-title">新セッションで確認</div>
+<div class="step-desc">新セッションが起動したら、HISTORY.mdを読んで前回の文脈を把握します。</div>
+</div></div>
+</body></html>`;
+					return; // 手順表示のみで終了
+				}
 
 				// 遺言生成（エラー時はデフォルトメッセージで続行）
 				try {
@@ -1308,18 +990,9 @@ export function activate(context: vscode.ExtensionContext) {
 							testament = await generateDetailedTestament(agent, oldSession, agentPick.value.sessionId);
 						}
 					} else {
-						// 詳細モード: モデル選択 → Claude CLIでAI要約生成
-						const modelPick = await vscode.window.showQuickPick(
-							[
-								{ label: 'claude-opus-4-6', description: '最高品質（推奨）', value: 'claude-opus-4-6' },
-								{ label: 'claude-sonnet-4-6', description: 'バランス重視', value: 'claude-sonnet-4-6' },
-								{ label: 'claude-sonnet-4-6[1m]', description: '長文コンテキスト対応', value: 'claude-sonnet-4-6[1m]' },
-								{ label: 'claude-haiku-4-5', description: '高速・低コスト', value: 'claude-haiku-4-5' },
-							],
-							{ placeHolder: '要約に使用するモデルを選択', title: 'AI要約モデル' }
-						);
-						if (!modelPick) { return; }
-						testament = await generateDetailedTestament(agent, oldSession, modelPick.value);
+						// 詳細モード: エージェント設定のモデルでAI要約生成
+						// 本人のセッションに直接要約を依頼
+						testament = await generateDetailedTestament(agent, oldSession, agent.sessionId);
 					}
 				} catch (testamentErr) {
 					ch.appendLine(`[${new Date().toISOString()}] 遺言生成エラー: ${testamentErr instanceof Error ? testamentErr.message : String(testamentErr)}`);
@@ -1363,7 +1036,7 @@ export function activate(context: vscode.ExtensionContext) {
 				// ルールファイルのカスタム部分に歴代セッション記録を追記
 				if (agent.ruleFile) {
 					try {
-						await appendSessionHistoryToRuleFile(agent.ruleFile, oldSessionId, trimmedTestament);
+						await appendSessionHistoryToRuleFile(agent.ruleFile, oldSessionId, trimmedTestament, extensionOutputChannel);
 					} catch (historyErr) {
 						ch.appendLine(`[${new Date().toISOString()}] 歴代セッション記録追記エラー: ${historyErr instanceof Error ? historyErr.message : String(historyErr)}`);
 						// 追記失敗でもセッション更新は続行
@@ -1375,13 +1048,117 @@ export function activate(context: vscode.ExtensionContext) {
 				prevIds.push(oldSessionId);
 				while (prevIds.length > 5) { prevIds.shift(); }
 
-				// セッションID紐づけを解除、previousSessionIds を保存
+				// セッションID紐づけを一時解除
 				const updatedAgent: AgentConfig = { ...agent, sessionId: '', previousSessionIds: prevIds };
 				await dataStore.addAgent(updatedAgent);
-				refreshAll();
-				vscode.window.showInformationMessage(
-					`「${agent.name}」のセッション紐づけを解除しました。新しいセッションを紐づけてください。`
+
+				// 新セッション自動作成 + 紐づけ
+				const createNew = await vscode.window.showInformationMessage(
+					`「${agent.displayName || agent.name}」の旧セッションを解除しました。新しいセッションを自動作成しますか？`,
+					'自動作成', '手動で紐づけ'
 				);
+
+				if (createNew === '自動作成') {
+					try {
+						ch.appendLine(`[${new Date().toISOString()}] 新セッション作成中: ${agent.name}`);
+						const { spawn } = require('child_process') as typeof import('child_process');
+						const initPrompt = `セッション引き継ぎ完了。前回の要約: ${trimmedTestament}`;
+
+						const newSessionId = await new Promise<string>((resolve, reject) => {
+							const claudeCmd = process.platform === 'win32' ? 'claude.cmd' : 'claude';
+							const args = [
+								'--agent', agent.name,
+								'-p', initPrompt,
+								'--permission-mode', 'acceptEdits',
+								'--output-format', 'stream-json',
+								'--max-turns', '1',
+							];
+
+							// ネストセッション検出を回避
+							const env = { ...process.env };
+							delete env.CLAUDE_CODE;
+							delete env.CLAUDECODE;
+
+							const child = spawn(claudeCmd, args, {
+								env,
+								cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir(),
+								stdio: ['ignore', 'pipe', 'pipe'],
+								shell: false,
+								windowsHide: true,
+							});
+
+							let output = '';
+							let sessionId = '';
+							const timeout = setTimeout(() => {
+								child.kill('SIGTERM');
+								reject(new Error('新セッション作成がタイムアウトしました（120秒）'));
+							}, 120000);
+
+							child.stdout?.on('data', (data: Buffer) => {
+								output += data.toString('utf-8');
+								// stream-json形式: 各行が独立したJSON
+								const lines = output.split('\n');
+								for (const line of lines) {
+									if (!line.trim()) { continue; }
+									try {
+										const parsed = JSON.parse(line);
+										if (parsed.session_id) {
+											sessionId = parsed.session_id;
+										}
+									} catch {
+										// 不完全な行は次回に持ち越し
+									}
+								}
+							});
+
+							child.stderr?.on('data', (data: Buffer) => {
+								ch.appendLine(`[renew stderr] ${data.toString('utf-8').trim()}`);
+							});
+
+							child.on('close', (code: number | null) => {
+								clearTimeout(timeout);
+								agentWatcher.scheduleUpdate();
+								if (sessionId) {
+									resolve(sessionId);
+								} else if (code === 0) {
+									// stream-jsonでID取得失敗時: 出力から正規表現フォールバック
+									const match = output.match(/"session_id"\s*:\s*"([a-f0-9-]{36})"/);
+									if (match) {
+										resolve(match[1]);
+									} else {
+										reject(new Error('セッションIDを取得できませんでした'));
+									}
+								} else {
+									reject(new Error(`claude CLI がエラーコード ${code} で終了しました`));
+								}
+							});
+
+							child.on('error', (err: Error) => {
+								clearTimeout(timeout);
+								reject(err);
+							});
+						});
+
+						const finalAgent: AgentConfig = { ...updatedAgent, sessionId: newSessionId };
+						await dataStore.addAgent(finalAgent);
+						ch.appendLine(`[${new Date().toISOString()}] 新セッション紐づけ完了: ${newSessionId}`);
+						refreshAll();
+						vscode.window.showInformationMessage(
+							`「${agent.displayName || agent.name}」の新セッションを作成・紐づけしました`
+						);
+					} catch (createErr) {
+						ch.appendLine(`[${new Date().toISOString()}] 新セッション作成エラー: ${createErr instanceof Error ? createErr.message : String(createErr)}`);
+						refreshAll();
+						vscode.window.showWarningMessage(
+							`新セッションの自動作成に失敗しました。手動で紐づけてください。`
+						);
+					}
+				} else {
+					refreshAll();
+					vscode.window.showInformationMessage(
+						`「${agent.displayName || agent.name}」のセッション紐づけを解除しました。手動で紐づけてください。`
+					);
+				}
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
 				ch.appendLine(`[${new Date().toISOString()}] renewAgentSession 致命的エラー (${agent.name}): ${msg}`);
@@ -1406,6 +1183,122 @@ export function activate(context: vscode.ExtensionContext) {
 			await syncParentRuleFile(parentName, getExtensionOutputChannel());
 			refreshAll();
 			vscode.window.showInformationMessage(`「${item.agent.name}」を削除しました`);
+		})
+	);
+
+	// 確認待ち一覧
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.showPendingTasks', async () => {
+			const crypto = require('crypto') as typeof import('crypto');
+			// 全エージェントの TODO.md から「確認待ち」の未チェック項目を取得
+			const agentsDir = path.join(os.homedir(), '.claude', 'agents');
+			const agents = await dataStore.getAgents();
+			const pendingByAgent: { name: string; displayName: string; items: string[] }[] = [];
+			let totalCount = 0;
+
+			for (const agent of agents) {
+				const todoPath = path.join(agentsDir, agent.name, 'TODO.md');
+				try {
+					const content = await fs.promises.readFile(todoPath, 'utf-8');
+					const items: string[] = [];
+					let inPending = false;
+					for (const line of content.split('\n')) {
+						const stripped = line.trim();
+						if (stripped.startsWith('## 確認待ち')) { inPending = true; continue; }
+						if (inPending && stripped.startsWith('## ')) { break; }
+						if (inPending && stripped.startsWith('- [ ]')) {
+							items.push(stripped.substring(6).trim());
+						}
+					}
+					if (items.length > 0) {
+						pendingByAgent.push({
+							name: agent.name,
+							displayName: agent.displayName || agent.name,
+							items,
+						});
+						totalCount += items.length;
+					}
+				} catch { /* TODO.mdがない場合はスキップ */ }
+			}
+
+			if (totalCount === 0) {
+				vscode.window.showInformationMessage('確認待ちタスクはありません');
+				return;
+			}
+
+			// Webviewパネルで表示
+			const nonce = crypto.randomBytes(16).toString('hex');
+			const sectionsHtml = pendingByAgent.map(a => {
+				const itemsHtml = a.items.map((item, i) =>
+					`<label class="pending-item"><input type="checkbox" data-agent="${a.name}" data-task="${item.replace(/"/g,'&quot;')}"> ${item.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</label>`
+				).join('');
+				return `<div class="agent-section">
+					<div class="agent-name">🤖 ${a.displayName.replace(/&/g,'&amp;').replace(/</g,'&lt;')}（${a.name}）</div>
+					${itemsHtml}
+				</div>`;
+			}).join('');
+
+			const panel = vscode.window.createWebviewPanel(
+				'claudePendingTasks',
+				`📋 確認待ち（${totalCount}件）`,
+				vscode.ViewColumn.One,
+				{ enableScripts: true }
+			);
+
+			panel.webview.onDidReceiveMessage(async (message) => {
+				if (message.type === 'togglePending') {
+					const todoPath = path.join(os.homedir(), '.claude', 'agents', message.agent, 'TODO.md');
+					try {
+						const content = await fs.promises.readFile(todoPath, 'utf-8');
+						const lines = content.split('\n');
+						for (let i = 0; i < lines.length; i++) {
+							if (message.checked && lines[i].trim() === `- [ ] ${message.task}`) {
+								lines[i] = lines[i].replace('- [ ]', '- [x]');
+								break;
+							} else if (!message.checked && lines[i].trim() === `- [x] ${message.task}`) {
+								lines[i] = lines[i].replace('- [x]', '- [ ]');
+								break;
+							}
+						}
+						await fs.promises.writeFile(todoPath, lines.join('\n'), 'utf-8');
+					} catch { /* 失敗は無視 */ }
+				}
+			});
+
+			panel.webview.html = `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
+<style nonce="${nonce}">
+body { font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); padding: 20px 24px; max-width: 720px; margin: 0 auto; }
+h1 { font-size: 16px; margin-bottom: 16px; }
+.agent-section { margin-bottom: 16px; border-left: 3px solid #e27e4a; padding-left: 12px; }
+.agent-name { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #e27e4a; }
+.pending-item { display: block; font-size: 12px; padding: 3px 0; cursor: pointer; }
+.pending-item:hover { background: rgba(255,255,255,0.03); }
+.pending-item input { margin-right: 6px; cursor: pointer; }
+.pending-item.done { text-decoration: line-through; opacity: 0.4; }
+.summary { font-size: 12px; color: var(--vscode-descriptionForeground); margin-bottom: 16px; }
+</style></head><body>
+<h1>📋 確認待ちタスク</h1>
+<div class="summary">${pendingByAgent.length}エージェント・${totalCount}件</div>
+${sectionsHtml}
+<script nonce="${nonce}">
+const vscode = acquireVsCodeApi();
+document.querySelectorAll('.pending-item input').forEach(cb => {
+	cb.addEventListener('change', (e) => {
+		const input = e.target;
+		const label = input.parentElement;
+		if (input.checked) { label.classList.add('done'); } else { label.classList.remove('done'); }
+		vscode.postMessage({
+			type: 'togglePending',
+			agent: input.dataset.agent,
+			task: input.dataset.task,
+			checked: input.checked
+		});
+	});
+});
+</script>
+</body></html>`;
 		})
 	);
 
@@ -1695,7 +1588,7 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 			);
 
-			await ensureSubagentHooks();
+			await ensureSubagentHooks(extensionOutputChannel);
 			refreshAll();
 			const parts: string[] = [`移行完了: ${migrated.length}件成功`];
 			if (skipped.length > 0) { parts.push(`${skipped.length}件スキップ`); }
@@ -1705,7 +1598,85 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	// /ask-agent hookインストール
+	// 旧ask-agent → csm-ask-agent 移行
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.migrateAskAgent', async () => {
+			const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+			if (!wsFolder) { return; }
+
+			const renames = [
+				{ old: 'commands/ask-agent.md', new: 'commands/csm-ask-agent.md' },
+				{ old: 'hooks/check-ask-agent.sh', new: 'hooks/check-csm-ask-agent.sh' },
+				{ old: 'scripts/ask-agent.py', new: 'scripts/csm-ask-agent.py' },
+			];
+
+			let count = 0;
+			for (const r of renames) {
+				const oldPath = path.join(wsFolder, '.claude', r.old);
+				const newPath = path.join(wsFolder, '.claude', r.new);
+				try {
+					await fs.promises.access(oldPath);
+					await fs.promises.rename(oldPath, newPath);
+					count++;
+				} catch { /* ファイルなし */ }
+			}
+
+			// settings.json のhookパスも更新
+			const settingsPath = path.join(wsFolder, '.claude', 'settings.json');
+			try {
+				const raw = await fs.promises.readFile(settingsPath, 'utf-8');
+				const updated = raw.replace(/check-ask-agent\.sh/g, 'check-csm-ask-agent.sh');
+				if (updated !== raw) {
+					await fs.promises.writeFile(settingsPath, updated, 'utf-8');
+				}
+			} catch { /* settings.jsonなし */ }
+
+			refreshAll();
+			vscode.window.showInformationMessage(`${count}件のファイルを csm-ask-agent にリネームしました`);
+		})
+	);
+
+	// /csm-ask-agent グローバルインストール（バナーから起動）
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.installCsmAskAgent', async () => {
+			try {
+				const extensionPath = context.extensionPath;
+				const templatesDir = path.join(extensionPath, 'templates');
+				const homeDir = os.homedir();
+				const claudeDir = path.join(homeDir, '.claude');
+				const targets = [
+					{ src: 'csm-ask-agent.command.md', dest: path.join(claudeDir, 'commands', 'csm-ask-agent.md') },
+					{ src: 'csm-ask-agent.py', dest: path.join(claudeDir, 'scripts', 'csm-ask-agent.py') },
+					{ src: 'check-csm-ask-agent.sh', dest: path.join(claudeDir, 'hooks', 'check-csm-ask-agent.sh') },
+				];
+
+				let installed = 0;
+				for (const t of targets) {
+					try {
+						await fs.promises.access(t.dest);
+						continue; // 既存ファイルはスキップ
+					} catch { /* インストール */ }
+
+					await fs.promises.mkdir(path.dirname(t.dest), { recursive: true });
+					const content = await fs.promises.readFile(path.join(templatesDir, t.src), 'utf-8');
+					await fs.promises.writeFile(t.dest, content, 'utf-8');
+					installed++;
+				}
+
+				// hookをsettings.jsonに登録
+				await registerCsmAskAgentHook(claudeDir);
+
+				const ch = getExtensionOutputChannel();
+				ch.appendLine(`[${new Date().toISOString()}] /csm-ask-agent をインストールしました（${installed}ファイル）`);
+				vscode.window.showInformationMessage(`/csm-ask-agent をインストールしました（${installed}ファイル）`);
+				refreshAll();
+			} catch (err) {
+				vscode.window.showErrorMessage(`インストールエラー: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		})
+	);
+
+	// /csm-ask-agent hookインストール（プロジェクトローカル）
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.installAskAgentHook', async () => {
 			const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -1715,7 +1686,7 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 
 			const hookDir = path.join(wsFolder, '.claude', 'hooks');
-			const hookFile = path.join(hookDir, 'check-ask-agent.sh');
+			const hookFile = path.join(hookDir, 'check-csm-ask-agent.sh');
 			const settingsFile = path.join(wsFolder, '.claude', 'settings.json');
 
 			// hookスクリプトを作成
@@ -1742,7 +1713,7 @@ else:
 " 2>/dev/null)
 if [ "$RESULT" = "block" ]; then
   cat <<'HOOKEOF'
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"block","permissionDecisionReason":"claude -p を --agent/--resume なしで実行しようとしています。/ask-agent スキルを使ってください。"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"block","permissionDecisionReason":"claude -p を --agent/--resume なしで実行しようとしています。/csm-ask-agent スキルを使ってください。"}}
 HOOKEOF
 else
   echo '{}'
@@ -1762,10 +1733,10 @@ exit 0
 			const hooks = settings.hooks as Record<string, unknown[]>;
 			if (!hooks.PreToolUse) { hooks.PreToolUse = []; }
 
-			// 既に check-ask-agent が含まれていなければ追加
+			// 既に check-csm-ask-agent が含まれていなければ追加
 			const preToolUse = hooks.PreToolUse as Array<Record<string, unknown>>;
 			const alreadyExists = preToolUse.some(h =>
-				JSON.stringify(h).includes('check-ask-agent')
+				JSON.stringify(h).includes('check-csm-ask-agent')
 			);
 			if (!alreadyExists) {
 				preToolUse.push({
@@ -1780,7 +1751,7 @@ exit 0
 			await fs.promises.writeFile(settingsFile, JSON.stringify(settings, null, '  '), 'utf-8');
 
 			refreshAll();
-			vscode.window.showInformationMessage('/ask-agent hookをインストールしました。claude -p の安全ガードが有効になります。');
+			vscode.window.showInformationMessage('/csm-ask-agent hookをインストールしました。claude -p の安全ガードが有効になります。');
 		})
 	);
 
@@ -1955,7 +1926,7 @@ exit 0
 				// MEMORY.mdに組織情報を書き込み
 				await writeOrgInfoToMemory(finalConfig);
 				// SubagentStart/Stop フックを settings.json に登録
-				await ensureSubagentHooks();
+				await ensureSubagentHooks(extensionOutputChannel);
 				// Extension Host分離設定（affinity）を自動追加
 				await addAffinitySettings();
 				refreshAll();
@@ -1964,528 +1935,6 @@ exit 0
 		})
 	);
 
-	// Extension Host分離設定（affinity）を自動追加
-	async function addAffinitySettings(): Promise<void> {
-		try {
-			const settingsPath = path.join(
-				process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
-				'Code', 'User', 'settings.json'
-			);
-			let settings: Record<string, unknown> = {};
-			try {
-				const raw = await fs.promises.readFile(settingsPath, 'utf-8');
-				settings = JSON.parse(raw);
-			} catch {
-				// ファイルが存在しないか読めない場合はスキップ
-				return;
-			}
-			const affinityKey = 'extensions.experimental.affinity';
-			if (settings[affinityKey]) {
-				// 既に設定されている場合は上書きしない
-				return;
-			}
-			settings[affinityKey] = {
-				'ratorin.claude-session-manager': 1,
-				'anthropic.claude-code': 2,
-			};
-			await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, '\t'), 'utf-8');
-			vscode.window.showInformationMessage(
-				'Extension Host分離設定を追加しました。VS Code再起動後に反映されます。'
-			);
-		} catch {
-			// settings.json書き込み失敗は無視（権限不足等）
-		}
-	}
-
-	// 取締役専用ルールファイル生成（v0.3.1: YAML フロントマター形式）
-	async function generateDirectorRuleFile(config: AgentConfig): Promise<AgentConfig> {
-		const description = buildDirectorDescription(config);
-
-		if (config.ruleFile) {
-			// 既にルールファイルがある → フロントマター更新（旧形式は自動移行���
-			await updateRuleFrontmatter(config.ruleFile, config, description);
-			return config;
-		}
-		const ruleFolder = await dataStore.getRuleFolderForScope(config.scope);
-		if (!ruleFolder) { return config; }
-		const filePath = path.join(ruleFolder, `${config.name}.md`);
-		// 既にファイルが存在する場合は紐づけ + フロントマター更新
-		try {
-			await fs.promises.access(filePath);
-			await updateRuleFrontmatter(filePath, config, description);
-			return { ...config, ruleFile: filePath };
-		} catch {
-			// ファイルが存在しない → 新規作成
-		}
-		try {
-			await fs.promises.mkdir(ruleFolder, { recursive: true });
-			// YAML フロントマター形式で新規作成
-			const frontmatter = generateFrontmatter(config, description);
-			const content = frontmatter + '\n\n<!-- 以下にカスタムルールを自由に追記してください。このエリアはCSMによる自動更新の対象外です。 -->\n';
-			await fs.promises.writeFile(filePath, content, 'utf-8');
-			return { ...config, ruleFile: filePath };
-		} catch {
-			return config;
-		}
-	}
-
-	// 取締役用 description テキストを構築
-	function buildDirectorDescription(config: AgentConfig): string {
-		const safeName = sanitizeForYaml(config.name);
-		const lines: string[] = [
-			`あなたは${safeName}です。プロジェクト全体を統括する最上位のエージェントです。`,
-			``,
-			`## 行動規範`,
-			`1. **方針決定** — ユーザーの指示を受けて実行方針を決定する`,
-			`2. **指示起案** — 各部署（エージェント）への指示案を作成する`,
-			`3. **承認取得** — 指示案をユーザーに提示し、承認を得てから実行する`,
-			`4. **実行委任** — 実装作業は各部署のエージェントに委任する。自分ではコードを書かない`,
-			`5. **結果確認** — 各部署からの報告を確認し、ユーザーに最終報告する`,
-			``,
-			`## 初期行動`,
-			`- セッション開始時にMEMORY.md（自動メモリ）を読み込み、組織図・行動規範・プロジェクト情報を把握すること`,
-			`- session-manager.json の agents 一覧を読み込み、配下のエージェント体制を把握すること`,
-			`- 不明な情報はユーザーに確認してから行動すること`,
-			``,
-			`## エージェント操作`,
-			`- 子エージェントの起動: \`claude --resume {sessionId} --append-system-prompt-file {ruleFile} --print\``,
-			`- session-manager.json を読み込んで各エージェントの sessionId, ruleFile を取得すること`,
-			`- session-manager.json のパス: \`~/.claude/session-manager.json\``,
-			`- agents[] 配列に全エージェントの情報が格納されている`,
-			``,
-			`## 禁止事項`,
-			`- 実装作業を自分で行わない（必ず担当部署に委任する）`,
-			`- ユーザーの承認なく指示を出さない`,
-			`- MEMORY.mdに部署一覧やエージェント情報を直接書き込まない（session-manager.jsonが唯一の情報源）`,
-		];
-		return lines.join('\n');
-	}
-
-	// v0.3.1: SubagentStart/Stop フックを settings.json に登録する
-	async function ensureSubagentHooks(): Promise<void> {
-		const homeDir = os.homedir();
-		const settingsPath = path.join(homeDir, '.claude', 'settings.json');
-		const signalScript = path.join(homeDir, '.claude', 'scripts', 'csm', 'subagent-signal.js');
-
-		// シグナルスクリプトが存在しなければスキップ
-		try {
-			await fs.promises.access(signalScript);
-		} catch {
-			return;
-		}
-
-		try {
-			let settings: Record<string, unknown> = {};
-			try {
-				const raw = await fs.promises.readFile(settingsPath, 'utf-8');
-				settings = JSON.parse(raw);
-			} catch {
-				// settings.json が存在しないか読み取り不可
-				return;
-			}
-
-			// hooks はイベントタイプをキーとするオブジェクト（例: { Stop: [...], PreToolUse: [...] }）
-			const hooksObj = (settings.hooks && typeof settings.hooks === 'object' && !Array.isArray(settings.hooks))
-				? settings.hooks as Record<string, unknown>
-				: {};
-			if (!settings.hooks || typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) {
-				settings.hooks = hooksObj;
-			}
-			const CSM_SIGNAL_MARKER = 'csm/subagent-signal.js';
-
-			// 指定イベントキー内にCSMシグナルフックが既に存在するか確認するヘルパー
-			const hasSignalHook = (eventKey: string, action: string): boolean => {
-				const entries = hooksObj[eventKey];
-				if (!Array.isArray(entries)) { return false; }
-				return entries.some((entry: Record<string, unknown>) => {
-					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
-					if (!Array.isArray(innerHooks)) { return false; }
-					return innerHooks.some((hh: Record<string, unknown>) =>
-						typeof hh.command === 'string' && hh.command.includes(CSM_SIGNAL_MARKER) && hh.command.includes(action)
-					);
-				});
-			};
-
-			// 旧エントリ除去: Stop イベントに誤登録された csm-signal.js を検出・除去
-			const removeStaleSignalHooks = (eventKey: string): boolean => {
-				const entries = hooksObj[eventKey];
-				if (!Array.isArray(entries)) { return false; }
-				const originalLen = entries.length;
-				const filtered = entries.filter((entry: Record<string, unknown>) => {
-					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
-					if (!Array.isArray(innerHooks)) { return true; }
-					// csm-signal.js が含まれるエントリは不正な場所から除去
-					return !innerHooks.some((hh: Record<string, unknown>) =>
-						typeof hh.command === 'string' && hh.command.includes(CSM_SIGNAL_MARKER)
-					);
-				});
-				if (filtered.length !== originalLen) {
-					hooksObj[eventKey] = filtered;
-					return true;
-				}
-				return false;
-			};
-			// Stop / SessionStart イベントに誤登録された csm-signal.js を除去
-			const removedFromStop = removeStaleSignalHooks('Stop');
-			const removedFromSessionStart = removeStaleSignalHooks('SessionStart');
-
-			const hasStart = hasSignalHook('SubagentStart', 'start');
-			const hasStop = hasSignalHook('SubagentStop', 'stop');
-
-			let changed = removedFromStop || removedFromSessionStart;
-
-			// イベントキーにCSMシグナルフックを追加するヘルパー
-			// 既存の matcher:"*" エントリがあればその hooks 配列にマージ、なければ新規作成
-			const addSignalHook = (eventKey: string, action: string): void => {
-				if (!Array.isArray(hooksObj[eventKey])) {
-					hooksObj[eventKey] = [];
-				}
-				const entries = hooksObj[eventKey] as Array<Record<string, unknown>>;
-				const hook = {
-					type: 'command',
-					command: `node "${signalScript.replace(/\\/g, '/')}" ${action}`,
-					timeout: 10,
-					async: true,
-				};
-				// 既存の matcher:"*" エントリを探してマージ
-				const existing = entries.find((e: Record<string, unknown>) => e.matcher === '*');
-				if (existing && Array.isArray(existing.hooks)) {
-					(existing.hooks as Array<Record<string, unknown>>).push(hook);
-				} else {
-					entries.push({ matcher: '*', hooks: [hook] });
-				}
-			};
-
-			if (!hasStart) {
-				addSignalHook('SubagentStart', 'start');
-				changed = true;
-			}
-
-			if (!hasStop) {
-				addSignalHook('SubagentStop', 'stop');
-				changed = true;
-			}
-
-			if (changed) {
-				// バックアップ作成
-				const backupPath = settingsPath + `.bak.${Date.now()}`;
-				try {
-					await fs.promises.copyFile(settingsPath, backupPath);
-				} catch { /* バックアップ失敗は無視 */ }
-				await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, '\t'), 'utf-8');
-				const ch = getExtensionOutputChannel();
-				ch.appendLine(`[${new Date().toISOString()}] SubagentStart/Stop フックを settings.json に登録しました`);
-			}
-		} catch (err) {
-			const ch = getExtensionOutputChannel();
-			ch.appendLine(`[${new Date().toISOString()}] フック登録エラー: ${err instanceof Error ? err.message : String(err)}`);
-		}
-	}
-
-	// v0.4.0: check-dispatch フックを settings.json の PreToolUse に登録する
-	// bash での claude -p 単体実行（--agent なし）を防止するセキュリティフック
-	async function ensureCheckDispatchHook(ctx: vscode.ExtensionContext): Promise<void> {
-		const MIGRATION_KEY = 'csm.checkDispatchHookInstalled';
-		// 既にインストール済みならスキップ
-		if (ctx.globalState.get<boolean>(MIGRATION_KEY)) {
-			return;
-		}
-
-		const homeDir = os.homedir();
-		const settingsPath = path.join(homeDir, '.claude', 'settings.json');
-		const hookScript = path.join(homeDir, '.claude', 'hooks', 'check-dispatch.sh');
-		// プロジェクト配下のフックスクリプトも候補
-		const projectHookScript = 'c:/xampp/.claude/hooks/check-dispatch.sh';
-
-		// フックスクリプトの存在確認（いずれかが存在すれば OK）
-		let scriptPath = '';
-		for (const candidate of [hookScript, projectHookScript]) {
-			try {
-				await fs.promises.access(candidate);
-				scriptPath = candidate.replace(/\\/g, '/');
-				break;
-			} catch { /* 次の候補を試す */ }
-		}
-		if (!scriptPath) {
-			// フックスクリプトが見つからない → スキップ
-			return;
-		}
-
-		// settings.json 読み込み
-		let settings: Record<string, unknown> = {};
-		try {
-			const raw = await fs.promises.readFile(settingsPath, 'utf-8');
-			settings = JSON.parse(raw);
-		} catch {
-			return;
-		}
-
-		// 既にフックが登録済みか確認
-		const hooksObj = (settings.hooks && typeof settings.hooks === 'object' && !Array.isArray(settings.hooks))
-			? settings.hooks as Record<string, unknown>
-			: {};
-		const CHECK_DISPATCH_MARKER = 'check-dispatch';
-		const preToolUse = hooksObj['PreToolUse'];
-		if (Array.isArray(preToolUse)) {
-			const alreadyInstalled = preToolUse.some((entry: Record<string, unknown>) => {
-				const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
-				if (!Array.isArray(innerHooks)) { return false; }
-				return innerHooks.some((hh: Record<string, unknown>) =>
-					typeof hh.command === 'string' && hh.command.includes(CHECK_DISPATCH_MARKER)
-				);
-			});
-			if (alreadyInstalled) {
-				// 既に登録済み → フラグだけ立てて終了
-				await ctx.globalState.update(MIGRATION_KEY, true);
-				return;
-			}
-		}
-
-		// ユーザーに確認を取る
-		const choice = await vscode.window.showInformationMessage(
-			'[CSM] bash での claude -p 単体実行を防止するセキュリティフック（check-dispatch.sh）を有効にします。' +
-			'これにより全プロジェクトで --agent なしの claude -p 実行がブロックされます。',
-			{ modal: false },
-			'有効にする',
-			'スキップ'
-		);
-
-		if (choice === 'スキップ') {
-			// スキップ → 次回も聞かないようにフラグを立てる
-			await ctx.globalState.update(MIGRATION_KEY, true);
-			return;
-		}
-		if (choice !== '有効にする') {
-			// ダイアログを閉じた場合 → 次回また聞く（フラグは立てない）
-			return;
-		}
-
-		try {
-			// hooks オブジェクトを準備
-			if (!settings.hooks || typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) {
-				settings.hooks = {};
-			}
-			const hooks = settings.hooks as Record<string, unknown>;
-			if (!Array.isArray(hooks['PreToolUse'])) {
-				hooks['PreToolUse'] = [];
-			}
-			const preToolUseArr = hooks['PreToolUse'] as Array<Record<string, unknown>>;
-
-			// check-dispatch フックエントリを追加
-			const hookEntry = {
-				matcher: 'Bash',
-				hooks: [
-					{
-						type: 'command',
-						command: `bash "${scriptPath}"`,
-						timeout: 5,
-					}
-				]
-			};
-			preToolUseArr.push(hookEntry);
-
-			// バックアップ作成
-			const backupPath = settingsPath + `.bak.${Date.now()}`;
-			try {
-				await fs.promises.copyFile(settingsPath, backupPath);
-			} catch { /* バックアップ失敗は無視 */ }
-
-			await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, '\t'), 'utf-8');
-			await ctx.globalState.update(MIGRATION_KEY, true);
-
-			const ch = getExtensionOutputChannel();
-			ch.appendLine(`[${new Date().toISOString()}] check-dispatch フックを settings.json の PreToolUse に登録しました`);
-			vscode.window.showInformationMessage(
-				'[CSM] check-dispatch セキュリティフックを有効にしました。claude -p 単体実行がブロックされます。'
-			);
-		} catch (err) {
-			const ch = getExtensionOutputChannel();
-			ch.appendLine(`[${new Date().toISOString()}] check-dispatch フック登録エラー: ${err instanceof Error ? err.message : String(err)}`);
-		}
-	}
-
-	// dispatch skill のセットアップ（初回のみユーザー確認付き）
-	async function ensureDispatchSkill(ctx: vscode.ExtensionContext): Promise<void> {
-		const MIGRATION_KEY = 'csm.dispatchSkillInstalled';
-		// 既にインストール済みならスキップ
-		if (ctx.globalState.get<boolean>(MIGRATION_KEY)) {
-			return;
-		}
-
-		const homeDir = os.homedir();
-		const userSkillsDir = path.join(homeDir, '.claude', 'skills');
-		const dispatchSkillPath = path.join(userSkillsDir, 'dispatch.md');
-
-		// dispatch skill が既に存在するか確認
-		try {
-			await fs.promises.access(dispatchSkillPath);
-			// 既に存在 → フラグだけ立てて終了
-			await ctx.globalState.update(MIGRATION_KEY, true);
-			return;
-		} catch { /* スキル存在しない → インストール処理へ */ }
-
-		// ユーザーに確認を取る
-		const choice = await vscode.window.showInformationMessage(
-			'[CSM] エージェント指示の dispatch スキルを有効にします。' +
-			'これにより Claude セッション内で /dispatch コマンドが使用可能になります。',
-			{ modal: false },
-			'有効にする',
-			'スキップ'
-		);
-
-		if (choice === 'スキップ') {
-			// スキップ → 次回も聞かないようにフラグを立てる
-			await ctx.globalState.update(MIGRATION_KEY, true);
-			return;
-		}
-		if (choice !== '有効にする') {
-			// ダイアログを閉じた場合 → 次回また聞く（フラグは立てない）
-			return;
-		}
-
-		try {
-			// ~/.claude/skills/ ディレクトリを作成（なければ）
-			try {
-				await fs.promises.mkdir(userSkillsDir, { recursive: true });
-			} catch { /* ディレクトリ作成失敗は無視 */ }
-
-			// プロジェクト配下の dispatch.md をコピー
-			const sourceSkillPath = 'c:/xampp/.claude/skills/dispatch.md';
-			try {
-				const skillContent = await fs.promises.readFile(sourceSkillPath, 'utf-8');
-				await fs.promises.writeFile(dispatchSkillPath, skillContent, 'utf-8');
-			} catch {
-				// プロジェクト配下にない場合はテンプレートから作成
-				const defaultContent = `---
-name: dispatch
-displayName: Dispatch
-type: skill
-language: bash
-category: agent-orchestration
-description: Dispatch tasks to agents with automatic result reporting
-version: 1.0.0
----
-
-# Dispatch Skill
-
-エージェント指示の送信・自動報告を行うスキル。
-
-## 使用方法
-
-\`\`\`
-/dispatch <agent-name> "<指示内容>"
-\`\`\`
-`;
-				await fs.promises.writeFile(dispatchSkillPath, defaultContent, 'utf-8');
-			}
-
-			await ctx.globalState.update(MIGRATION_KEY, true);
-
-			const ch = getExtensionOutputChannel();
-			ch.appendLine(`[${new Date().toISOString()}] dispatch スキルを ${dispatchSkillPath} にインストールしました`);
-			vscode.window.showInformationMessage(
-				'[CSM] dispatch スキルを有効にしました。Claude セッション内で /dispatch コマンドが使用可能です。'
-			);
-		} catch (err) {
-			const ch = getExtensionOutputChannel();
-			ch.appendLine(`[${new Date().toISOString()}] dispatch スキル登録エラー: ${err instanceof Error ? err.message : String(err)}`);
-		}
-	}
-
-	// MEMORY.mdに組織情報を書き込む（v0.2.8: メモリファイル＋ポインタ方式・非同期）
-	async function writeOrgInfoToMemory(config: AgentConfig): Promise<void> {
-		try {
-			const homeDir = os.homedir();
-			const projectsDir = path.join(homeDir, '.claude', 'projects');
-			try { await fs.promises.access(projectsDir); } catch { return; }
-			const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-			if (!cwd) { return; }
-			// memory/ ディレクトリを持つプロジェクトフォルダを探す
-			const dirs = await fs.promises.readdir(projectsDir);
-			for (const dir of dirs) {
-				const memoryDir = path.join(projectsDir, dir, 'memory');
-				const memoryFile = path.join(memoryDir, 'MEMORY.md');
-				let content: string;
-				try {
-					content = await fs.promises.readFile(memoryFile, 'utf-8');
-				} catch { continue; }
-
-				// 1. project_agent_architecture.md を作成（なければ）
-				const archFile = path.join(memoryDir, 'project_agent_architecture.md');
-				try {
-					await fs.promises.access(archFile);
-				} catch {
-					const archContent = [
-						`---`,
-						`name: マルチエージェント運用体制`,
-						`description: 取締役＋子エージェント構成・部署一覧・運用ルール`,
-						`type: project`,
-						`---`,
-						``,
-						`セッション管理: Claude Session Manager（VS Code拡張）で運用`,
-						`エージェント一覧: \`~/.claude/session-manager.json\` の \`agents[]\` が唯一の情報源`,
-						``,
-						`**Why:** session-manager.json をマスターデータとすることで、MEMORY.md との二重管理を防止する`,
-						`**How to apply:** エージェント情報が必要な場合は session-manager.json を直接読むこと`,
-					].join('\n') + '\n';
-					await fs.promises.writeFile(archFile, archContent, 'utf-8');
-				}
-
-				// 2. project_director_rules.md を作成（なければ）
-				const directorFile = path.join(memoryDir, 'project_director_rules.md');
-				try {
-					await fs.promises.access(directorFile);
-				} catch {
-					const directorContent = [
-						`---`,
-						`name: 取締役の行動規範`,
-						`description: 取締役エージェントの役割・行動ルール・禁止事項`,
-						`type: project`,
-						`---`,
-						``,
-						`取締役名: ${config.name}`,
-						`役割: ${config.role || '全体統括・タスク分割・承認判断'}`,
-						``,
-						`**Why:** 取締役は実装を行わず、方針決定と委任に専念する`,
-						`**How to apply:** session-manager.json からエージェント情報を読み、子エージェントに作業を委任する`,
-					].join('\n') + '\n';
-					await fs.promises.writeFile(directorFile, directorContent, 'utf-8');
-				}
-
-				// 3. MEMORY.mdにセクションポインタを追記（なければ）
-				let appendText = '';
-				if (!content.includes('## マルチエージェント運用')) {
-					appendText += [
-						``,
-						`## マルチエージェント運用`,
-						`- [マルチエージェント運用体制](project_agent_architecture.md) — 取締役＋子エージェント構成・部署一覧・運用ルール`,
-					].join('\n') + '\n';
-				}
-				if (!content.includes('## 取締役セッション')) {
-					appendText += [
-						``,
-						`## 取締役セッション（※子エージェントはこのセクションを無視すること）`,
-						`- [取締役の行動規範](project_director_rules.md) — 役割・行動ルール`,
-					].join('\n') + '\n';
-				}
-				if (appendText) {
-					await fs.promises.appendFile(memoryFile, appendText, 'utf-8');
-				}
-
-				// 4. MEMORY.mdインデックスにファイルポインタを追加（なければ）
-				const updatedContent = await fs.promises.readFile(memoryFile, 'utf-8');
-				if (!updatedContent.includes('project_agent_architecture.md')) {
-					await addToIndex(memoryDir, 'project_agent_architecture.md', 'マルチエージェント運用体制', '取締役＋子エージェント構成・部署一覧・運用ルール');
-				}
-				if (!updatedContent.includes('project_director_rules.md')) {
-					await addToIndex(memoryDir, 'project_director_rules.md', '取締役の行動規範', '取締役エージェントの役割・行動ルール・禁止事項');
-				}
-				return; // 最初に見つかったプロジェクトメモリに書き込んで終了
-			}
-		} catch {
-			// MEMORY.md書き込み失敗は無視
-		}
-	}
 
 	// --- セッションフィルター切り替え ---
 	context.subscriptions.push(

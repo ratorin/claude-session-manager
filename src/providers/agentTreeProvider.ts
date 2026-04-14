@@ -7,7 +7,7 @@ import { getRuleFileInfo, resolveRuleFilePath } from '../agents/agentManager';
 import { isLegacyAutoFormat, hasFrontmatter } from '../utils/frontmatterUtils';
 import { shouldShowInOrgChart } from '../utils/agentUtils';
 
-type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | HookInstallBannerItem;
+type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem;
 
 // エージェント管理サイドバーのTreeDataProvider（ツリー構造対応）
 export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>, vscode.Disposable {
@@ -59,7 +59,8 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		// TaskLogItem / MigrationBannerItem / GlobalAgentsSectionItem は子を持たない（GlobalAgentsSectionItem は特別処理）
 		if (element instanceof TaskLogItem) { return []; }
 		if (element instanceof MigrationBannerItem) { return []; }
-		if (element instanceof HookInstallBannerItem) { return []; }
+		if (element instanceof CsmAskAgentInstallBannerItem) { return []; }
+		if (element instanceof AskAgentMigrationBannerItem) { return []; }
 		if (element instanceof GlobalAgentsSectionItem) {
 			// グローバルエージェント を返す
 			const allAgents = await dataStore.getAgents();
@@ -154,10 +155,16 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		if (!element) {
 			const result: AgentTreeNode[] = [];
 
-			// /ask-agent hookインストールバナー: 未設定時のみ表示
-			const hookInstalled = await isAskAgentHookInstalled();
-			if (!hookInstalled) {
-				result.push(new HookInstallBannerItem());
+			// /csm-ask-agent グローバルインストールバナー: 未インストール時のみ表示
+			const csmAskAgentInstalled = await isCsmAskAgentInstalled();
+			if (!csmAskAgentInstalled) {
+				result.push(new CsmAskAgentInstallBannerItem());
+			}
+
+			// 旧ask-agent移行バナー
+			const hasOldFiles = await hasOldAskAgentFiles();
+			if (hasOldFiles) {
+				result.push(new AskAgentMigrationBannerItem());
 			}
 
 			// マイグレーションバナー: 旧形式のルールファイルがあれば表示
@@ -366,37 +373,82 @@ export class GlobalAgentsSectionItem extends vscode.TreeItem {
 	}
 }
 
-// /ask-agent hookインストールバナー
-export class HookInstallBannerItem extends vscode.TreeItem {
+// /csm-ask-agent グローバルインストールバナー
+export class CsmAskAgentInstallBannerItem extends vscode.TreeItem {
 	constructor() {
-		super('🔧 /ask-agent hookをインストール', vscode.TreeItemCollapsibleState.None);
-		this.description = 'エージェント安全呼び出しガード';
+		super('🔧 /csm-ask-agent をインストール', vscode.TreeItemCollapsibleState.None);
+		this.description = 'コマンド・スクリプト・安全hook';
 		this.tooltip = new vscode.MarkdownString(
-			`**/ask-agent hook のインストール**\n\n` +
-			`\`claude -p\` を \`--agent\`/\`--resume\` なしで実行するのを防ぐ安全hookです。\n\n` +
-			`クリックするとプロジェクトの \`.claude/settings.json\` に自動追加します。`
+			`**/csm-ask-agent のインストール**\n\n` +
+			`エージェント指示スキルを ~/.claude/ にインストールします。\n\n` +
+			`- \`commands/csm-ask-agent.md\` — スキル定義\n` +
+			`- \`scripts/csm-ask-agent.py\` — エージェント情報取得\n` +
+			`- \`hooks/check-csm-ask-agent.sh\` — 安全ガード`
 		);
-		this.iconPath = new vscode.ThemeIcon('shield', new vscode.ThemeColor('charts.blue'));
-		this.contextValue = 'hookInstallBanner';
+		this.iconPath = new vscode.ThemeIcon('cloud-download', new vscode.ThemeColor('charts.blue'));
+		this.contextValue = 'csmAskAgentInstallBanner';
 		this.command = {
-			command: 'claudeManager.installAskAgentHook',
-			title: '/ask-agent hookをインストール',
+			command: 'claudeManager.installCsmAskAgent',
+			title: '/csm-ask-agent をインストール',
 		};
 	}
 }
 
-// /ask-agent hookが設定されているかチェック
-async function isAskAgentHookInstalled(): Promise<boolean> {
-	const settingsPaths = [
-		path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '', '.claude', 'settings.json'),
+// 旧ask-agent → csm-ask-agent 移行バナー
+export class AskAgentMigrationBannerItem extends vscode.TreeItem {
+	constructor() {
+		super('🔄 ask-agent → csm-ask-agent に移行', vscode.TreeItemCollapsibleState.None);
+		this.description = '旧ファイルを自動リネーム';
+		this.tooltip = new vscode.MarkdownString(
+			`**旧 ask-agent ファイルが検出されました**\n\n` +
+			`クリックすると以下を自動リネームします:\n` +
+			`- \`ask-agent.md\` → \`csm-ask-agent.md\`\n` +
+			`- \`check-ask-agent.sh\` → \`check-csm-ask-agent.sh\`\n` +
+			`- \`ask-agent.py\` → \`csm-ask-agent.py\`\n` +
+			`- settings.json のhookパスも更新`
+		);
+		this.iconPath = new vscode.ThemeIcon('arrow-right', new vscode.ThemeColor('charts.orange'));
+		this.contextValue = 'askAgentMigrationBanner';
+		this.command = {
+			command: 'claudeManager.migrateAskAgent',
+			title: 'ask-agent → csm-ask-agent に移行',
+		};
+	}
+}
+
+// 旧ask-agentファイルが残っているかチェック
+async function hasOldAskAgentFiles(): Promise<boolean> {
+	const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+	if (!wsFolder) { return false; }
+	const oldFiles = [
+		path.join(wsFolder, '.claude', 'commands', 'ask-agent.md'),
+		path.join(wsFolder, '.claude', 'hooks', 'check-ask-agent.sh'),
+		path.join(wsFolder, '.claude', 'scripts', 'ask-agent.py'),
 	];
-	for (const p of settingsPaths) {
+	for (const f of oldFiles) {
 		try {
-			const content = await fs.promises.readFile(p, 'utf-8');
-			if (content.includes('check-ask-agent')) { return true; }
-		} catch { /* ファイルなし */ }
+			await fs.promises.access(f);
+			return true;
+		} catch { /* なし */ }
 	}
 	return false;
+}
+
+// /csm-ask-agent がグローバルにインストール済みかチェック
+async function isCsmAskAgentInstalled(): Promise<boolean> {
+	const homeDir = require('os').homedir();
+	const targets = [
+		path.join(homeDir, '.claude', 'commands', 'csm-ask-agent.md'),
+		path.join(homeDir, '.claude', 'scripts', 'csm-ask-agent.py'),
+	];
+	for (const t of targets) {
+		try {
+			await fs.promises.access(t);
+		} catch {
+			return false;
+		}
+	}
+	return true;
 }
 
 // 旧形式のルールファイルを持つエージェントを検出

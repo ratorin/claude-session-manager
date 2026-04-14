@@ -300,6 +300,7 @@ async function extractCwdFromJsonl(filePath: string): Promise<string | undefined
 export async function parseSessionFile(filePath: string, includeThinking: boolean = false): Promise<ParsedSession | null> {
 	try {
 		const content = await fs.promises.readFile(filePath, 'utf-8');
+		const contentFileSize = Buffer.byteLength(content, 'utf-8');
 		const lines = content.split('\n').filter((line) => line.trim());
 
 		const messages: SimpleMessage[] = [];
@@ -391,7 +392,7 @@ export async function parseSessionFile(filePath: string, includeThinking: boolea
 			firstMessage: firstUserMessage || '(内容なし)',
 			firstTimestamp: messages[0].timestamp,
 			lastTimestamp: messages[messages.length - 1].timestamp,
-			messageCount: messages.length,
+			fileSize: contentFileSize,
 			model,
 			gitBranch,
 			claudeTitle,
@@ -704,8 +705,7 @@ async function parseSessionQuick(filePath: string): Promise<ParsedSession | null
 		const isSidechain = headState.isSidechain || tailState.isSidechain;
 		const agentId = headState.agentId || tailState.agentId;
 
-		// messageCountはファイルサイズから概算（1行あたり平均1000バイトとして推定）
-		const messageCount = Math.max(1, Math.round(fileSize / 1000));
+		// ファイルサイズはそのまま保持（セッションのボリューム指標として使用）
 
 		const projectDir = path.basename(path.dirname(filePath));
 		const project = headState.cwd || decodeProjectName(projectDir);
@@ -718,7 +718,7 @@ async function parseSessionQuick(filePath: string): Promise<ParsedSession | null
 			firstMessage: headState.firstUserMessage || '(内容なし)',
 			firstTimestamp,
 			lastTimestamp,
-			messageCount,
+			fileSize,
 			model,
 			gitBranch: headState.gitBranch,
 			claudeTitle,

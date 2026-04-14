@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager - セッション履歴管理",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.4.1",
+	"version": "0.4.2",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -207,6 +207,12 @@
 				"category": "Claude Session Manager"
 			},
 			{
+				"command": "claudeManager.showPendingTasks",
+				"title": "確認待ち一覧",
+				"icon": "$(checklist)",
+				"category": "Claude Session Manager"
+			},
+			{
 				"command": "claudeManager.refreshAgents",
 				"title": "エージェント管理を更新",
 				"icon": "$(refresh)",
@@ -330,8 +336,14 @@
 				"category": "Claude Session Manager"
 			},
 			{
+				"command": "claudeManager.installCsmAskAgent",
+				"title": "/csm-ask-agent をインストール",
+				"icon": "$(cloud-download)",
+				"category": "Claude Session Manager"
+			},
+			{
 				"command": "claudeManager.installAskAgentHook",
-				"title": "/ask-agent hookをインストール",
+				"title": "/csm-ask-agent hookをインストール（プロジェクト）",
 				"icon": "$(shield)",
 				"category": "Claude Session Manager"
 			},
@@ -411,6 +423,11 @@
 					"group": "navigation"
 				},
 					{
+					"command": "claudeManager.showPendingTasks",
+					"when": "view == claudeAgents",
+					"group": "navigation"
+				},
+				{
 					"command": "claudeManager.refreshAgents",
 					"when": "view == claudeAgents",
 					"group": "navigation"
@@ -569,15 +586,7 @@
 				"title": "エージェント監視",
 				"order": 1,
 				"properties": {
-					"claudeSessionManager.detectionMode": {
-						"type": "string",
-						"enum": ["fswatch"],
-						"default": "fswatch",
-						"order": 0,
-						"description": "エージェント検知方式（v0.4.0: fswatch固定）",
-						"deprecationMessage": "v0.4.0でfswatch固定になりました。この設定は将来削除されます。"
-					},
-					"claudeManager.enableAgentMonitor": {
+"claudeManager.enableAgentMonitor": {
 						"type": "boolean",
 						"default": false,
 						"order": 2,
@@ -691,12 +700,7 @@
 				"title": "その他",
 				"order": 3,
 				"properties": {
-					"claudeManager.defaultRuleFolder": {
-						"type": "string",
-						"default": "",
-						"description": "エージェントのルールファイルを格納するフォルダのパス。未設定の場合はsession-manager.jsonのruleFolderを使用します"
-					},
-					"claudeManager.preview.showThinkingBlocks": {
+"claudeManager.preview.showThinkingBlocks": {
 						"type": "boolean",
 						"default": false,
 						"description": "Claudeが回答前に内部で考えた思考プロセスをセッションプレビューに表示します"
@@ -705,6 +709,16 @@
 						"type": "string",
 						"default": "",
 						"description": "削除したセッションの移動先フォルダ。未設定の場合は ~/.claude/.trash/ を使用します"
+					},
+					"claudeManager.agent.defaultHistoryEnabled": {
+						"type": "boolean",
+						"default": false,
+						"description": "新規エージェント作成時にHISTORY.md（セッション履歴記録）を自動生成する"
+					},
+					"claudeManager.agent.defaultTodoEnabled": {
+						"type": "boolean",
+						"default": false,
+						"description": "新規エージェント作成時にTODO.md（タスク管理）を自動生成する"
 					}
 				}
 			}

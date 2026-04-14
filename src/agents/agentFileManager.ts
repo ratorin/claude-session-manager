@@ -8,6 +8,7 @@ import * as os from 'os';
 import * as vscode from 'vscode';
 import { AgentConfig } from '../models/types';
 import { sanitizeForYaml, parseFrontmatterExtended } from '../utils/frontmatterUtils';
+import { modelCliMap } from '../utils/cliBuilder';
 import { normalizeModel, normalizeStatus } from '../utils/agentUtils';
 
 // agents/*.md から読み取ったエージェント定義
@@ -30,6 +31,10 @@ export interface AgentDefinition {
 	permissionMode?: string;
 	/** CLI標準: 隔離モード */
 	isolation?: string;
+	/** CSM独自: HISTORY自動追記 */
+	historyEnabled?: boolean;
+	/** CSM独自: TODO管理 */
+	todoEnabled?: boolean;
 	/** CSM独自: 親エージェント名 */
 	parentAgent?: string;
 	/** CSM独自: 稼働状態 */
@@ -107,6 +112,8 @@ async function parseAgentFile(filePath: string, scope: 'global' | 'project'): Pr
 			tools: Array.isArray(d.tools) ? d.tools : undefined,
 			permissionMode: d.permissionMode ? String(d.permissionMode) : undefined,
 			isolation: d.isolation ? String(d.isolation) : undefined,
+			historyEnabled: d.historyEnabled === true || d.historyEnabled === 'true',
+			todoEnabled: d.todoEnabled === true || d.todoEnabled === 'true',
 			parentAgent: d.parentAgent ? String(d.parentAgent) : undefined,
 			status: normalizeStatus(d.status),
 			workDir: d.workDir ? String(d.workDir) : undefined,
@@ -248,6 +255,8 @@ export function toAgentConfig(def: AgentDefinition): AgentConfig {
 		effort: def.effort,
 		thinkingEnabled: def.thinkingEnabled,
 		permissionMode: def.permissionMode,
+		historyEnabled: def.historyEnabled,
+		todoEnabled: def.todoEnabled,
 		showInOrgChart: def.showInOrgChart,
 	};
 }
@@ -370,12 +379,14 @@ function buildFrontmatter(def: Partial<AgentDefinition> & { name: string }): str
 	if (def.displayName) { lines.push(`displayName: ${quoteYamlValue(def.displayName)}`); }
 	if (def.description) { lines.push(`description: ${quoteYamlValue(def.description)}`); }
 	if (def.displayDescription) { lines.push(`displayDescription: ${quoteYamlValue(def.displayDescription)}`); }
-	if (def.model) { lines.push(`model: ${def.model}`); }
+	if (def.model) { lines.push(`model: ${modelCliMap[def.model] || def.model}`); }
 	if (def.memory) { lines.push(`memory: ${def.memory}`); }
 	if (def.tools && def.tools.length > 0) {
 		lines.push(`tools: ${JSON.stringify(def.tools)}`);
 	}
 	if (def.permissionMode) { lines.push(`permissionMode: ${def.permissionMode}`); }
+	if (def.historyEnabled !== undefined) { lines.push(`historyEnabled: ${def.historyEnabled}`); }
+	if (def.todoEnabled !== undefined) { lines.push(`todoEnabled: ${def.todoEnabled}`); }
 	if (def.isolation) { lines.push(`isolation: ${def.isolation}`); }
 	if (def.parentAgent) { lines.push(`parentAgent: ${quoteYamlValue(def.parentAgent)}`); }
 	if (def.status) { lines.push(`status: ${def.status}`); }
@@ -410,6 +421,8 @@ export async function saveAgentConfig(config: AgentConfig): Promise<string> {
 		memory: existing?.memory || 'project',
 		tools: config.allowedTools || existing?.tools,
 		permissionMode: config.permissionMode || existing?.permissionMode,
+		historyEnabled: config.historyEnabled !== undefined ? config.historyEnabled : existing?.historyEnabled,
+		todoEnabled: config.todoEnabled !== undefined ? config.todoEnabled : existing?.todoEnabled,
 		isolation: existing?.isolation,
 		parentAgent: config.parentAgent,
 		status: config.status,
@@ -418,7 +431,7 @@ export async function saveAgentConfig(config: AgentConfig): Promise<string> {
 		displayRole: config.displayRole || existing?.displayRole,
 		effort: config.effort,
 		thinkingEnabled: config.thinkingEnabled,
-		showInOrgChart: config.showInOrgChart !== undefined ? config.showInOrgChart : (existing?.showInOrgChart ?? true),
+		showInOrgChart: config.showInOrgChart !== undefined ? config.showInOrgChart : existing?.showInOrgChart,
 		scope: config.scope || existing?.scope || 'global',
 	};
 

@@ -10,14 +10,18 @@ export async function moveToTrash(srcPath: string, trashDir: string): Promise<vo
 	await fs.promises.rename(srcPath, dest);
 }
 
-// L-1: モデル名正規化（agentFileManager.ts から移動）
+// L-1: モデル名正規化（短縮名・正式ID両対応）
 export function normalizeModel(raw: string): 'opus' | 'sonnet' | 'sonnet-1m' | 'haiku' {
-	switch (raw.toLowerCase()) {
-		case 'opus': return 'opus';
-		case 'haiku': return 'haiku';
-		case 'sonnet-1m': return 'sonnet-1m';
-		default: return 'sonnet';
-	}
+	const lower = raw.toLowerCase();
+	// 短縮名
+	if (lower === 'opus') { return 'opus'; }
+	if (lower === 'haiku') { return 'haiku'; }
+	if (lower === 'sonnet-1m') { return 'sonnet-1m'; }
+	// 正式ID（フロントマターに書き込まれた値からの逆変換）
+	if (lower.includes('[1m]')) { return 'sonnet-1m'; }
+	if (lower.includes('opus')) { return 'opus'; }
+	if (lower.includes('haiku')) { return 'haiku'; }
+	return 'sonnet';
 }
 
 // L-1: ステータス正規化（agentFileManager.ts から移動）
@@ -44,15 +48,13 @@ interface OrgChartCheckable {
  * エージェントが組織図に表示されるべきかを判定する。
  *
  * 判定ルール:
- * 1. 取締役（director）→ 常に true
+ * 1. showInOrgChart が明示的に設定されている → その値を使用
  * 2. parentAgent が設定されている → true（部門エージェント）
  * 3. それ以外 → false（グローバルエージェント）
- *
- * showInOrgChart フラグは廃止。parentAgent の有無で自動判定する。
  */
 export function shouldShowInOrgChart(agent: OrgChartCheckable): boolean {
-	if (agent.name === 'director') {
-		return true;
+	if (agent.showInOrgChart !== undefined) {
+		return agent.showInOrgChart;
 	}
 	return !!agent.parentAgent;
 }

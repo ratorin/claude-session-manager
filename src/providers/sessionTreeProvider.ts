@@ -320,7 +320,7 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 				});
 				break;
 			case 'count':
-				sessions.sort((a, b) => b.messageCount - a.messageCount);
+				sessions.sort((a, b) => b.fileSize - a.fileSize);
 				break;
 			case 'model':
 				sessions.sort((a, b) => (a.model || '').localeCompare(b.model || ''));
@@ -460,6 +460,13 @@ function getAgentTypeIcon(agentType?: string): { icon: string; color: string } {
 }
 
 // サブエージェントタイプの短縮ラベル
+// ファイルサイズを人間可読な形式に変換（KB/MB、小数1桁）
+function formatFileSize(bytes: number): string {
+	if (bytes < 1024) { return `${bytes}B`; }
+	if (bytes < 1024 * 1024) { return `${(bytes / 1024).toFixed(0)}KB`; }
+	return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
 function agentTypeLabel(agentType?: string): string {
 	switch (agentType) {
 		case 'Explore': return '🔍探索';
@@ -504,9 +511,10 @@ export class SessionItem extends vscode.TreeItem {
 			: session.model ? '？'  // 未知のモデル
 			: '\u3000'              // モデル情報なし
 		);
-		// 件数を5桁右揃え（Figure Space U+2007 で等幅パディング）
+		// ファイルサイズを5桁右揃え（Figure Space U+2007 で等幅パディング）
 		const figureSpace = '\u2007';
-		const countStr = isSub ? '' : String(session.messageCount).padStart(5, figureSpace) + ' ';
+		const sizeLabel = formatFileSize(session.fileSize);
+		const countStr = isSub ? '' : sizeLabel.padStart(5, figureSpace) + ' ';
 
 		// サブエージェントがある親は展開可能
 		const collapsible = hasChildren
@@ -523,7 +531,7 @@ export class SessionItem extends vscode.TreeItem {
 
 		if (isSub) {
 			// サブエージェント用のdescription
-			this.description = `${session.messageCount}件 ${timeStr}`;
+			this.description = `${formatFileSize(session.fileSize)} ${timeStr}`;
 		} else {
 			// タグ表示
 			const tagStr = tags.length > 0 ? ` [${tags.join(', ')}]` : '';
@@ -554,7 +562,7 @@ export class SessionItem extends vscode.TreeItem {
 				`| | |\n|---|---|\n` +
 				`| タイプ | ${session.agentType || '不明'} |\n` +
 				`| 日時 | ${date.toLocaleString('ja-JP')} |\n` +
-				`| メッセージ | ${session.messageCount}件 |\n` +
+				`| サイズ | ${formatFileSize(session.fileSize)} |\n` +
 				`| モデル | ${session.model || '不明'} |\n` +
 				(session.agentId ? `| エージェントID | \`${session.agentId.substring(0, 12)}...\` |\n` : '')
 			);
@@ -566,7 +574,7 @@ export class SessionItem extends vscode.TreeItem {
 				`| | |\n|---|---|\n` +
 				`| プロジェクト | ${session.project} |\n` +
 				`| 日時 | ${date.toLocaleString('ja-JP')} |\n` +
-				`| メッセージ | ${session.messageCount}件 |\n` +
+				`| サイズ | ${formatFileSize(session.fileSize)} |\n` +
 				`| モデル | ${session.model || '不明'} |\n` +
 				(session.gitBranch ? `| ブランチ | ${session.gitBranch} |\n` : '') +
 				(tags.length > 0 ? `| タグ | ${tags.join(', ')} |\n` : '')

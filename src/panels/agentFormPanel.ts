@@ -505,31 +505,19 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 <div class="form-group">
 	<label class="form-label">役割の説明</label>
 	<div class="form-desc">このエージェントが担当する業務内容</div>
-	<textarea id="role" rows="2" placeholder="TypeScript開発・品質管理">${escapeHtml(v.role || '')}</textarea>
-	<div class="jp-field" style="display:none">
-		<label class="form-label-sub">役割（日本語）</label>
-		<textarea id="displayRole" rows="2" placeholder="例: コード品質確保">${escapeHtml(v.displayRole || '')}</textarea>
-	</div>
+	<textarea id="role" rows="2" placeholder="日本語でもOK（例: コードレビュー・品質管理）">${escapeHtml(v.role || '')}</textarea>
 </div>
 
 <div class="form-group">
-	<label class="form-label">説明</label>
-	<div class="form-desc">エージェントの詳しい説明（description）</div>
+	<label class="form-label">説明（description）</label>
+	<div class="form-desc">CLIが使用するエージェントの説明文</div>
 	<textarea id="description" rows="2" placeholder="Handles code review and quality assurance">${escapeHtml(v.displayDescription || v.role || '')}</textarea>
-	<div class="jp-field" style="display:none">
-		<label class="form-label-sub">説明（日本語）</label>
-		<textarea id="displayDescription" rows="2" placeholder="例: コードの品質と安全性を保証します">${escapeHtml(v.displayDescription || '')}</textarea>
-	</div>
 </div>
 
 <div class="form-group">
-	<button class="btn-translate" id="btnToggleJp">
-		<span>🌐</span>
-		<span id="toggleJpText">日本語入力欄を表示</span>
-	</button>
-	<button class="btn-translate" id="btnTranslate" style="display:none;margin-left:8px">
+	<button class="btn-translate" id="btnTranslate" style="${v.role && v.displayName ? 'display:none' : ''}">
 		<span id="translateIcon">🔄</span>
-		<span id="translateText">英語 → 日本語に翻訳</span>
+		<span id="translateText">英語 → 日本語に翻訳（名前・役割）</span>
 	</button>
 	${sessionId ? `<button class="btn-translate" id="btnLoadSession" style="margin-left:8px">
 		<span>📥</span>
@@ -620,7 +608,8 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	<label class="form-label">親エージェント</label>
 	<div class="form-desc">このエージェントの上位エージェント（階層構造がある場合）</div>
 	<select id="parentAgent">
-		<option value="">なし（トップレベル）</option>
+		<option value="" ${!existing?.parentAgent && !existing?.showInOrgChart ? 'selected' : ''}>グローバル</option>
+		<option value="__org_top__" ${!existing?.parentAgent && existing?.showInOrgChart ? 'selected' : ''}>組織図トップ</option>
 		${parentOptions}
 	</select>
 </div>
@@ -684,19 +673,26 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 			displayName: document.getElementById('displayName').value.trim() || undefined,
 			sessionId: sessionId,
 			role: document.getElementById('role').value.trim(),
-			displayRole: document.getElementById('displayRole').value.trim() || undefined,
-			displayDescription: document.getElementById('displayDescription').value.trim() || undefined,
 			model: document.querySelector('input[name="model"]:checked')?.value || 'opus',
 			effort: document.querySelector('input[name="effort"]:checked')?.value || 'high',
 			permissionMode: document.getElementById('permissionMode').value || 'acceptEdits',
 			sessionMode: document.querySelector('input[name="sessionMode"]:checked')?.value || 'fixed',
 			scope: document.querySelector('input[name="scope"]:checked')?.value || 'project',
-			parentAgent: document.getElementById('parentAgent').value || undefined,
+			parentAgent: (() => {
+				const val = document.getElementById('parentAgent').value;
+				if (val === '__org_top__' || val === '') { return undefined; }
+				return val;
+			})(),
+			showInOrgChart: (() => {
+				const val = document.getElementById('parentAgent').value;
+				if (val === '__org_top__') { return true; }
+				if (val === '') { return false; }
+				return true; // 親エージェントがある = 組織図に表示
+			})(),
 			workDir: document.getElementById('workDir').value.trim() || undefined,
 			ruleFile: existingRuleFile || undefined,
 			allowedTools: ${JSON.stringify(v.allowedTools || undefined)},
 			status: ${JSON.stringify(v.status || 'idle')},
-			// showInOrgChart は parentAgent ベースの自動判定に移行済み
 		};
 	}
 
@@ -737,22 +733,8 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 		vscode.postMessage({ type: 'browseFolder' });
 	}
 
-	// 日本語入力欄のトグル
-	let jpFieldsVisible = !!(${JSON.stringify(v.displayName || '')} || ${JSON.stringify(v.displayRole || '')} || ${JSON.stringify(v.displayDescription || '')});
-	function toggleJpFields() {
-		jpFieldsVisible = !jpFieldsVisible;
-		document.querySelectorAll('.jp-field').forEach(el => el.style.display = jpFieldsVisible ? 'block' : 'none');
-		document.getElementById('toggleJpText').textContent = jpFieldsVisible ? '日本語入力欄を隠す' : '日本語入力欄を表示';
-		document.getElementById('btnTranslate').style.display = jpFieldsVisible ? 'inline-flex' : 'none';
-	}
-	// 初期状態：既にdisplayName等がある場合は表示
-	if (jpFieldsVisible) {
-		document.querySelectorAll('.jp-field').forEach(el => el.style.display = 'block');
-		document.getElementById('toggleJpText').textContent = '日本語入力欄を隠す';
-		document.getElementById('btnTranslate').style.display = 'inline-flex';
-	}
 
-	// 翻訳実行
+	// 翻訳実行（name → displayName, description → role）
 	function requestTranslate() {
 		const btn = document.getElementById('btnTranslate');
 		const icon = document.getElementById('translateIcon');
@@ -763,8 +745,8 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 		vscode.postMessage({
 			type: 'translate',
 			name: document.getElementById('name').value.trim(),
-			role: document.getElementById('role').value.trim(),
-			description: document.getElementById('role').value.trim(),
+			role: document.getElementById('description')?.value.trim() || document.getElementById('role').value.trim(),
+			description: document.getElementById('description')?.value.trim() || '',
 		});
 	}
 
@@ -774,17 +756,16 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 		if (msg.type === 'folderSelected') {
 			document.getElementById('workDir').value = msg.path;
 		} else if (msg.type === 'translateResult') {
-			// 翻訳結果を反映
+			// 翻訳結果: displayName → 表示名, displayRole → 役割
 			if (msg.displayName) { document.getElementById('displayName').value = msg.displayName; }
-			if (msg.displayRole) { document.getElementById('displayRole').value = msg.displayRole; }
-			if (msg.displayDescription) { document.getElementById('displayDescription').value = msg.displayDescription; }
-			// ボタンを戻す
+			if (msg.displayRole) { document.getElementById('role').value = msg.displayRole; }
 			const btn = document.getElementById('btnTranslate');
 			const icon = document.getElementById('translateIcon');
 			const text = document.getElementById('translateText');
 			btn.disabled = false;
 			icon.textContent = '🔄';
-			text.textContent = '英語 → 日本語に翻訳';
+			text.textContent = '英語 → 日本語に翻訳（名前・役割）';
+			btn.style.display = 'none';
 		} else if (msg.type === 'sessionDataLoaded') {
 			// セッションから読み込んだデータをフォームに反映
 			if (msg.model) {
@@ -843,8 +824,7 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 
 	// インラインonclickの代わりにaddEventListenerでイベントを登録（CSP対応）
 	document.getElementById('btnBrowseFolder').addEventListener('click', browseFolder);
-	document.getElementById('btnToggleJp').addEventListener('click', toggleJpFields);
-	document.getElementById('btnTranslate').addEventListener('click', requestTranslate);
+	document.getElementById('btnTranslate')?.addEventListener('click', requestTranslate);
 	const btnLoadSession = document.getElementById('btnLoadSession');
 	if (btnLoadSession) {
 		btnLoadSession.addEventListener('click', () => {

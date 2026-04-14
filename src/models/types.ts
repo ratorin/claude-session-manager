@@ -41,7 +41,7 @@ export interface ParsedSession {
 	firstMessage: string;
 	lastTimestamp: Date;
 	firstTimestamp: Date;
-	messageCount: number;
+	fileSize: number;  // バイト単位のファイルサイズ
 	model?: string;
 	gitBranch?: string;
 	claudeTitle?: string;  // Claude Codeの /rename で設定された名前
@@ -94,8 +94,11 @@ export interface AgentConfig {
 	effort?: 'low' | 'medium' | 'high' | 'max'; // 推論努力レベル（max は Opus 4.6 のみ）
 	thinkingEnabled?: boolean;   // Extended Thinking 有効/無効
 	permissionMode?: string;     // 権限モード（acceptEdits, auto, plan, default, bypassPermissions）
+	// 記録機能
+	historyEnabled?: boolean;    // HISTORY自動追記（デフォルト: false）
+	todoEnabled?: boolean;       // TODO管理（デフォルト: false）
 	// 表示制御
-	showInOrgChart?: boolean;    // 組織図に表示するか（デフォルト: true）
+	showInOrgChart?: boolean;    // 組織図に表示するか（デフォルト: false → グローバル）
 }
 
 // agentWatcher のイベントデータ

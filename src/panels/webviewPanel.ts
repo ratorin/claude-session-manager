@@ -549,7 +549,7 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 				<h2>${escapeHtml(displayName)}</h2>
 				<div class="meta-grid">
 					<span class="meta-item">📁 ${escapeHtml(session.project)}</span>
-					<span class="meta-item">💬 ${session.messageCount}件</span>
+					<span class="meta-item">💬 ${formatBytes(session.fileSize)}</span>
 					<span class="meta-item">🤖 ${session.model || '不明'}</span>
 					${session.gitBranch ? `<span class="meta-item">🔀 ${escapeHtml(session.gitBranch)}</span>` : ''}
 					<span class="meta-item">📅 ${dateRange}</span>
