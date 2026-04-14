@@ -253,10 +253,10 @@ export async function getAgents(): Promise<AgentConfig[]> {
 }
 
 // エージェントを追加（agents/*.md + セッション紐づけ）
-export async function addAgent(agent: AgentConfig): Promise<void> {
-	// 1. agents/*.md にエージェント定義を書き込み
+export async function addAgent(agent: AgentConfig, body?: string): Promise<void> {
+	// 1. agents/*.md にエージェント定義を書き込み（bodyがあればルール本文として保存）
 	try {
-		await agentFileManager.saveAgentConfig(agent);
+		await agentFileManager.saveAgentConfig(agent, body);
 	} catch {
 		// agents/*.md への書き込みが失敗してもセッション紐づけは保存する
 	}

@@ -408,7 +408,7 @@ function buildFrontmatter(def: Partial<AgentDefinition> & { name: string }): str
 /**
  * AgentConfig → agents/*.md 書き込み用変換
  */
-export async function saveAgentConfig(config: AgentConfig): Promise<string> {
+export async function saveAgentConfig(config: AgentConfig, body?: string): Promise<string> {
 	// 既存ファイルがあればそれを更新
 	const existing = await getAgentByName(config.name);
 
@@ -433,6 +433,7 @@ export async function saveAgentConfig(config: AgentConfig): Promise<string> {
 		thinkingEnabled: config.thinkingEnabled,
 		showInOrgChart: config.showInOrgChart !== undefined ? config.showInOrgChart : existing?.showInOrgChart,
 		scope: config.scope || existing?.scope || 'global',
+		body: body,
 	};
 
 	return writeAgentFile(def);

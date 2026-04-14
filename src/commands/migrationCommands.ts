@@ -15,7 +15,7 @@ import {
 import { resolveRuleFilePath } from '../agents/agentManager';
 import { syncParentRuleFile } from '../agents/parentChildSync';
 import { ensureSubagentHooks, registerCsmAskAgentHook } from '../services/hookService';
-import { autoGenerateRuleFile, ensureAgentFolderFiles, buildDescription } from '../services/agentService';
+import { ensureAgentFolderFiles, buildDescription } from '../services/agentService';
 
 export interface MigrationCommandsDeps {
 	refreshAll: () => void;

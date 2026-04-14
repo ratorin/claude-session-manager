@@ -57,84 +57,46 @@ export async function updateRuleFrontmatter(filePath: string, config: AgentConfi
 	}
 }
 
-// ruleFileが未設定の場合にルールファイルを自動生成するヘルパー（子エージェント用）
-export async function autoGenerateRuleFile(config: AgentConfig): Promise<AgentConfig> {
+// エージェント作成・更新時にルール本文を生成し、agents/<name>/ にTODO/HISTORYを配置
+// 戻り値: [更新されたconfig, ルール本文]
+export async function prepareAgentRule(config: AgentConfig): Promise<[AgentConfig, string]> {
 	const description = buildDescription(config);
+	const agentsDir = getAgentsDir(config.scope);
+	if (!agentsDir) { return [config, description]; }
 
-	if (config.ruleFile) {
-		// 既にルールファイルがある → フロントマター更新（旧形式は自動移行）
-		await updateRuleFrontmatter(config.ruleFile, config, description);
-		return config;
-	}
-	const ruleFolder = await dataStore.getRuleFolderForScope(config.scope);
-	if (!ruleFolder) { return config; }
-
-	// フォルダ構造: .agent-rules/<部署名>/<部署名>.md
-	const agentFolder = path.join(ruleFolder, config.name);
-	const filePath = path.join(agentFolder, `${config.name}.md`);
-
-	// フラット構造の旧ファイルが存在するか確認（後方互換）
-	const flatPath = path.join(ruleFolder, `${config.name}.md`);
-	try {
-		await fs.promises.access(flatPath);
-		const flatStat = await fs.promises.stat(flatPath);
-		if (flatStat.isFile()) {
-			// フラット構造が存在 → フロントマター更新（旧形式は自動移行）
-			await updateRuleFrontmatter(flatPath, config, description);
-			return { ...config, ruleFile: flatPath };
-		}
-	} catch {
-		// フラットファイルが存在しない → OK
-	}
-
-	// フォルダ構造のファイルが既に存在する場合は紐づけ + フロントマター更新
-	try {
-		await fs.promises.access(filePath);
-		await updateRuleFrontmatter(filePath, config, description);
-		// TODO.md / HISTORY.md が無ければ作成
-		await ensureAgentFolderFiles(agentFolder, config.name);
-		return { ...config, ruleFile: filePath };
-	} catch {
-		// ファイルが存在しない → 新規作成
-	}
-
-	// 重複チェック: 他スコープに同名が存在する場合は警告
+	// 名前重複チェック: 他スコープに同名エージェントが存在する場合はエラー
 	const otherScope = config.scope === 'global' ? 'project' : 'global';
-	const otherFolder = await dataStore.getRuleFolderForScope(otherScope);
-	const otherPath = path.join(otherFolder, config.name, `${config.name}.md`);
-	const otherFlatPath = path.join(otherFolder, `${config.name}.md`);
-	try {
-		await fs.promises.access(otherPath);
-		vscode.window.showWarningMessage(
-			`同名のルールファイルが${otherScope === 'global' ? 'グローバル' : 'プロジェクト'}スコープに既に存在します: ${otherPath}`
-		);
-	} catch {
+	const otherDir = getAgentsDir(otherScope);
+	if (otherDir) {
+		const otherFile = path.join(otherDir, `${config.name}.md`);
 		try {
-			await fs.promises.access(otherFlatPath);
-			const s = await fs.promises.stat(otherFlatPath);
-			if (s.isFile()) {
-				vscode.window.showWarningMessage(
-					`同名のルールファイルが${otherScope === 'global' ? 'グローバル' : 'プロジェクト'}スコープに既に存在します: ${otherFlatPath}`
-				);
-			}
-		} catch {
-			// 他スコープには存在しない → OK
+			await fs.promises.access(otherFile);
+			throw new Error(`同名のエージェントが${otherScope === 'global' ? 'グローバル' : 'プロジェクト'}スコープに既に存在します: ${config.name}`);
+		} catch (err) {
+			if (err instanceof Error && err.message.includes('同名')) { throw err; }
+			// ファイルが存在しない → OK
 		}
 	}
 
-	try {
-		// 部署フォルダ作成
-		await fs.promises.mkdir(agentFolder, { recursive: true });
-		// YAML フロントマター形式で新規作成
-		const frontmatter = generateFrontmatter(config, description);
-		const content = frontmatter + '\n\n<!-- 以下にカスタムルールを自由に追記してください -->\n';
-		await fs.promises.writeFile(filePath, content, 'utf-8');
-		// TODO.md / HISTORY.md テンプレート作成
-		await ensureAgentFolderFiles(agentFolder, config.name);
-		return { ...config, ruleFile: filePath };
-	} catch {
-		return config;
+	// agents/<name>/ フォルダに TODO.md / HISTORY.md を作成
+	const agentFolder = path.join(agentsDir, config.name);
+	await ensureAgentFolderFiles(agentFolder, config.name);
+
+	// ruleFile は agents/<name>.md を指す（CLIが読む場所）
+	const ruleFilePath = path.join(agentsDir, `${config.name}.md`);
+	return [{ ...config, ruleFile: ruleFilePath }, description];
+}
+
+// スコープに応じた agents ディレクトリパスを取得
+function getAgentsDir(scope?: 'global' | 'project'): string | undefined {
+	if (scope === 'project') {
+		const workspaceFolders = vscode.workspace.workspaceFolders;
+		if (workspaceFolders && workspaceFolders.length > 0) {
+			return path.join(workspaceFolders[0].uri.fsPath, '.claude', 'agents');
+		}
+		return undefined;
 	}
+	return path.join(os.homedir(), '.claude', 'agents');
 }
 
 // 部署フォルダに TODO.md / HISTORY.md が存在しなければテンプレートを作成

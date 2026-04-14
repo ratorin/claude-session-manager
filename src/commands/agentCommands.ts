@@ -20,7 +20,7 @@ import {
 	generateSimpleTestament, generateDetailedTestament,
 	appendSessionHistoryToRuleFile, SessionServiceDeps,
 } from '../services/sessionService';
-import { autoGenerateRuleFile } from '../services/agentService';
+import { prepareAgentRule } from '../services/agentService';
 
 export interface AgentCommandsDeps {
 	sessionProvider: SessionTreeProvider;
@@ -105,8 +105,8 @@ context.subscriptions.push(
 context.subscriptions.push(
 	vscode.commands.registerCommand('claudeManager.registerAgent', (item: SessionItem) => {
 		showAgentFormPanel(undefined, item.session.id, async (config) => {
-			const finalConfig = await autoGenerateRuleFile(config);
-			await dataStore.addAgent(finalConfig);
+			const [finalConfig, ruleBody] = await prepareAgentRule(config);
+			await dataStore.addAgent(finalConfig, ruleBody);
 			await syncParentRuleFile(finalConfig.parentAgent, getExtensionOutputChannel());
 			refreshAll();
 			vscode.window.showInformationMessage(`「${finalConfig.name}」をエージェントとして登録しました`);
@@ -120,10 +120,10 @@ context.subscriptions.push(
 		showAgentFormPanel(undefined, '', async (config) => {
 			// sessionIdが空文字の場合は空文字のまま保持（undefinedにしない）
 			if (!config.sessionId) { config.sessionId = ''; }
-			const ruleConfig = await autoGenerateRuleFile(config);
+			const [ruleConfig, ruleBody] = await prepareAgentRule(config);
 			// 固定セッションかつsessionId未設定なら自動作成
 			const finalConfig = await autoCreateSessionIfNeeded(ruleConfig, sessionServiceDeps);
-			await dataStore.addAgent(finalConfig);
+			await dataStore.addAgent(finalConfig, ruleBody);
 			await syncParentRuleFile(finalConfig.parentAgent, getExtensionOutputChannel());
 			refreshAll();
 			vscode.window.showInformationMessage(`「${finalConfig.name}」をエージェントとして登録しました`);
