@@ -315,21 +315,21 @@ export async function getRuleFolder(): Promise<string> {
 // スコープ別ルールフォルダ取得
 export async function getRuleFolderForScope(scope?: 'global' | 'project'): Promise<string> {
 	if (scope === 'global') {
-		return path.join(os.homedir(), '.claude', 'agent-rules');
+		return path.join(os.homedir(), '.claude', 'agents');
 	}
 	if (scope === 'project') {
 		const workspaceFolders = vscode.workspace.workspaceFolders;
 		if (workspaceFolders && workspaceFolders.length > 0) {
-			return path.join(workspaceFolders[0].uri.fsPath, '.agent-rules');
+			return path.join(workspaceFolders[0].uri.fsPath, '.claude', 'agents');
 		}
 	}
 	const legacy = await getRuleFolder();
 	if (legacy) { return legacy; }
 	const workspaceFolders = vscode.workspace.workspaceFolders;
 	if (workspaceFolders && workspaceFolders.length > 0) {
-		return path.join(workspaceFolders[0].uri.fsPath, '.agent-rules');
+		return path.join(workspaceFolders[0].uri.fsPath, '.claude', 'agents');
 	}
-	return path.join(os.homedir(), '.claude', 'agent-rules');
+	return path.join(os.homedir(), '.claude', 'agents');
 }
 
 export async function setRuleFolder(folder: string): Promise<void> {

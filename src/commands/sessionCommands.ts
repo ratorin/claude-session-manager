@@ -7,16 +7,11 @@ import * as path from 'path';
 import { SessionTreeProvider, SessionItem } from '../providers/sessionTreeProvider';
 import { BookmarkTreeProvider } from '../providers/bookmarkTreeProvider';
 import { TagTreeProvider, TagSessionItem } from '../providers/tagTreeProvider';
-import { MemoryTreeProvider, MemoryFileItem, MemoryGroupItem } from '../providers/memoryTreeProvider';
+import { MemoryTreeProvider, MemoryFileItem } from '../providers/memoryTreeProvider';
 import * as dataStore from '../models/dataStore';
 import { showSessionPreview, showMemoryPreview, updatePreviewTitle } from '../panels/webviewPanel';
 import { loadMemoryFiles, deleteMemoryFile, mergeMemoryFiles, extractFromMemory, addToIndex } from '../utils/memoryManager';
-import { moveToTrash } from '../utils/agentUtils';
-
-// VS Code設定から値を取得するヘルパー
-function getConfig<T>(key: string, defaultValue: T): T {
-	return vscode.workspace.getConfiguration('claudeManager').get<T>(key, defaultValue);
-}
+import { getConfig } from '../utils/config';
 
 export interface SessionCommandsDeps {
 	sessionProvider: SessionTreeProvider;

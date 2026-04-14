@@ -1,77 +1,22 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-import { SessionTreeProvider, SessionItem, SessionDecorationProvider } from './providers/sessionTreeProvider';
+import { SessionTreeProvider, SessionDecorationProvider } from './providers/sessionTreeProvider';
 import { BookmarkTreeProvider } from './providers/bookmarkTreeProvider';
-import { TagTreeProvider, TagSessionItem } from './providers/tagTreeProvider';
-import { MemoryTreeProvider, MemoryFileItem, MemoryGroupItem } from './providers/memoryTreeProvider';
-import { AgentTreeProvider, AgentItem, MigrationBannerItem } from './providers/agentTreeProvider';
-import { showSessionPreview, showMemoryPreview, updatePreviewTitle } from './panels/webviewPanel';
-import { showAgentFormPanel } from './panels/agentFormPanel';
-import { showAgentPreview } from './panels/agentPreviewPanel';
-import { showOrgChart } from './panels/orgChartPanel';
-import { shouldShowInOrgChart, moveToTrash } from './utils/agentUtils';
+import { TagTreeProvider } from './providers/tagTreeProvider';
+import { MemoryTreeProvider } from './providers/memoryTreeProvider';
+import { AgentTreeProvider } from './providers/agentTreeProvider';
+import { shouldShowInOrgChart } from './utils/agentUtils';
 import { AgentWatcher } from './watchers/agentWatcher';
-// detectionComparePanel は Phase 4 で削除済み
-import { modelCliMap } from './utils/cliBuilder';
 import { TaskTracker } from './watchers/taskTracker';
 import { UsageMonitor } from './utils/usageMonitor';
 import * as dataStore from './models/dataStore';
-import { AgentConfig } from './models/types';
-import { loadMemoryFiles, deleteMemoryFile, mergeMemoryFiles, extractFromMemory, addToIndex } from './utils/memoryManager';
-import { resolveRuleFilePath } from './agents/agentManager';
-import { syncParentRuleFile, syncAllParentRuleFiles, hasCircularRef } from './agents/parentChildSync';
-import {
-	createSessionForAgent, autoCreateSessionIfNeeded,
-	readFileTail, generateSimpleTestament, generateDetailedTestament,
-	appendSessionHistoryToRuleFile, SessionServiceDeps,
-} from './services/sessionService';
-import {
-	buildDescription, updateRuleFrontmatter, autoGenerateRuleFile,
-	ensureAgentFolderFiles, addAffinitySettings,
-	generateDirectorRuleFile, buildDirectorDescription,
-} from './services/agentService';
-import {
-	ensureSubagentHooks, registerCsmAskAgentHook, writeOrgInfoToMemory,
-} from './services/hookService';
+import { SessionServiceDeps } from './services/sessionService';
 import { registerSessionCommands } from './commands/sessionCommands';
 import { registerAgentCommands } from './commands/agentCommands';
 import { registerMigrationCommands } from './commands/migrationCommands';
 import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
-import {
-	parseFrontmatter, generateFrontmatter, updateFrontmatterInContent,
-	migrateAutoToYaml, isLegacyAutoFormat, hasFrontmatter, sanitizeForYaml,
-} from './utils/frontmatterUtils';
+import { getConfig } from './utils/config';
 
-// VS Code設定から値を取得するヘルパー
-function getConfig<T>(key: string, defaultValue: T): T {
-	return vscode.workspace.getConfiguration('claudeManager').get<T>(key, defaultValue);
-}
-
-// 出力先ファイルパスの安全性検証（H-2: パストラバーサル対策）
-function validateOutputFile(filePath: string): boolean {
-	try {
-		const resolved = path.resolve(filePath);
-		// ワークスペースフォルダ配下を許可
-		const workspaceFolders = vscode.workspace.workspaceFolders;
-		if (workspaceFolders) {
-			for (const folder of workspaceFolders) {
-				if (resolved.startsWith(folder.uri.fsPath)) { return true; }
-			}
-		}
-		// tmpフォルダ配下を許可
-		const tmpDir = os.tmpdir();
-		if (resolved.startsWith(tmpDir)) { return true; }
-		// ホームディレクトリ配下の .claude を許可
-		const claudeDir = path.join(os.homedir(), '.claude');
-		if (resolved.startsWith(claudeDir)) { return true; }
-		return false;
-	} catch {
-		return false;
-	}
-}
 
 export function activate(context: vscode.ExtensionContext) {
 	// session-manager.json マイグレーション: agents[] → agentSessions（一度だけ実行）
@@ -260,7 +205,6 @@ export function activate(context: vscode.ExtensionContext) {
 	}
 
 
-	// ファイル末尾だけ読み取る（巨大JSONL対策・非同期・fdリーク対策済み）
 	// OutputChannel（エラーログ出力用）— 起動時に即作成
 	const extensionOutputChannel = vscode.window.createOutputChannel('CSM Session Manager');
 	context.subscriptions.push(extensionOutputChannel);

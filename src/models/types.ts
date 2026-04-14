@@ -157,6 +157,6 @@ export interface ManagerData {
 	notes: Record<string, string>; // セッションID → メモ
 	agents?: AgentConfig[]; // レガシー（後方互換・読み取り専用）— 新規書き込み禁止
 	agentSessions?: Record<string, AgentSessionBinding>; // エージェント名 → セッション紐づけ（Phase 3+）
-	ruleFolder?: string; // ルールフォルダパス（例: c:/xampp/Project/.agent-rules）
+	ruleFolder?: string; // ルールフォルダパス（例: ~/.claude/agents）
 	taskLogs?: TaskLog[]; // タスクログ
 }

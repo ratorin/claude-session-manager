@@ -15,10 +15,7 @@ import { syncAllParentRuleFiles } from '../agents/parentChildSync';
 import { shouldShowInOrgChart } from '../utils/agentUtils';
 import { ensureSubagentHooks, writeOrgInfoToMemory } from '../services/hookService';
 import { generateDirectorRuleFile, addAffinitySettings } from '../services/agentService';
-
-function getConfig<T>(key: string, defaultValue: T): T {
-	return vscode.workspace.getConfiguration('claudeManager').get<T>(key, defaultValue);
-}
+import { getConfig } from '../utils/config';
 
 export interface OrgChartCommandsDeps {
 	sessionProvider: SessionTreeProvider;

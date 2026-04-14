@@ -10,10 +10,7 @@ import { BookmarkTreeProvider } from '../providers/bookmarkTreeProvider';
 import { MemoryTreeProvider, MemoryFileItem, MemoryGroupItem } from '../providers/memoryTreeProvider';
 import * as dataStore from '../models/dataStore';
 import { moveToTrash } from '../utils/agentUtils';
-
-function getConfig<T>(key: string, defaultValue: T): T {
-	return vscode.workspace.getConfiguration('claudeManager').get<T>(key, defaultValue);
-}
+import { getConfig } from '../utils/config';
 
 export interface UtilityCommandsDeps {
 	sessionProvider: SessionTreeProvider;
