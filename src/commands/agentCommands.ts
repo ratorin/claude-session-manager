@@ -16,7 +16,7 @@ import { resolveRuleFilePath } from '../agents/agentManager';
 import { syncParentRuleFile } from '../agents/parentChildSync';
 import { AgentWatcher } from '../watchers/agentWatcher';
 import {
-	autoCreateSessionIfNeeded,
+	autoCreateSessionIfNeeded, createRenewSession,
 	generateSimpleTestament, generateDetailedTestament,
 	appendSessionHistoryToRuleFile, SessionServiceDeps,
 } from '../services/sessionService';
@@ -562,83 +562,8 @@ code { background: var(--vscode-textBlockQuote-background); padding: 8px 12px; d
 			if (createNew === '自動作成') {
 				try {
 					ch.appendLine(`[${new Date().toISOString()}] 新セッション作成中: ${agent.name}`);
-					const { spawn } = require('child_process') as typeof import('child_process');
 					const initPrompt = `セッション引き継ぎ完了。前回の要約: ${trimmedTestament}`;
-
-					const newSessionId = await new Promise<string>((resolve, reject) => {
-						const claudeCmd = process.platform === 'win32' ? 'claude.cmd' : 'claude';
-						const args = [
-							'--agent', agent.name,
-							'-p', initPrompt,
-							'--permission-mode', 'acceptEdits',
-							'--output-format', 'stream-json',
-							'--max-turns', '1',
-						];
-
-						// ネストセッション検出を回避
-						const env = { ...process.env };
-						delete env.CLAUDE_CODE;
-						delete env.CLAUDECODE;
-
-						const child = spawn(claudeCmd, args, {
-							env,
-							cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir(),
-							stdio: ['ignore', 'pipe', 'pipe'],
-							shell: false,
-							windowsHide: true,
-						});
-
-						let output = '';
-						let sessionId = '';
-						const timeout = setTimeout(() => {
-							child.kill('SIGTERM');
-							reject(new Error('新セッション作成がタイムアウトしました（120秒）'));
-						}, 120000);
-
-						child.stdout?.on('data', (data: Buffer) => {
-							output += data.toString('utf-8');
-							// stream-json形式: 各行が独立したJSON
-							const lines = output.split('\n');
-							for (const line of lines) {
-								if (!line.trim()) { continue; }
-								try {
-									const parsed = JSON.parse(line);
-									if (parsed.session_id) {
-										sessionId = parsed.session_id;
-									}
-								} catch {
-									// 不完全な行は次回に持ち越し
-								}
-							}
-						});
-
-						child.stderr?.on('data', (data: Buffer) => {
-							ch.appendLine(`[renew stderr] ${data.toString('utf-8').trim()}`);
-						});
-
-						child.on('close', (code: number | null) => {
-							clearTimeout(timeout);
-							agentWatcher.scheduleUpdate();
-							if (sessionId) {
-								resolve(sessionId);
-							} else if (code === 0) {
-								// stream-jsonでID取得失敗時: 出力から正規表現フォールバック
-								const match = output.match(/"session_id"\s*:\s*"([a-f0-9-]{36})"/);
-								if (match) {
-									resolve(match[1]);
-								} else {
-									reject(new Error('セッションIDを取得できませんでした'));
-								}
-							} else {
-								reject(new Error(`claude CLI がエラーコード ${code} で終了しました`));
-							}
-						});
-
-						child.on('error', (err: Error) => {
-							clearTimeout(timeout);
-							reject(err);
-						});
-					});
+					const newSessionId = await createRenewSession(agent.name, initPrompt, sessionServiceDeps);
 
 					const finalAgent: AgentConfig = { ...updatedAgent, sessionId: newSessionId };
 					await dataStore.addAgent(finalAgent);

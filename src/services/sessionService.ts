@@ -120,6 +120,83 @@ export async function createSessionForAgent(config: AgentConfig, deps: SessionSe
 	});
 }
 
+// セッション更新（renew）: --agent で新セッション作成（引き継ぎメッセージ付き）
+export async function createRenewSession(agentName: string, initPrompt: string, deps: SessionServiceDeps): Promise<string> {
+	const { spawn } = require('child_process') as typeof import('child_process');
+
+	return new Promise<string>((resolve, reject) => {
+		const claudeCmd = process.platform === 'win32' ? 'claude.cmd' : 'claude';
+		const args = [
+			'--agent', agentName,
+			'-p', initPrompt,
+			'--permission-mode', 'acceptEdits',
+			'--output-format', 'stream-json',
+			'--max-turns', '1',
+		];
+
+		const env = { ...process.env };
+		delete env.CLAUDE_CODE;
+		delete env.CLAUDECODE;
+
+		const child = spawn(claudeCmd, args, {
+			env,
+			cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir(),
+			stdio: ['ignore', 'pipe', 'pipe'],
+			shell: false,
+			windowsHide: true,
+		});
+
+		let output = '';
+		let sessionId = '';
+		const timeout = setTimeout(() => {
+			child.kill('SIGTERM');
+			reject(new Error('新セッション作成がタイムアウトしました（120秒）'));
+		}, 120000);
+
+		child.stdout?.on('data', (data: Buffer) => {
+			output += data.toString('utf-8');
+			const lines = output.split('\n');
+			for (const line of lines) {
+				if (!line.trim()) { continue; }
+				try {
+					const parsed = JSON.parse(line);
+					if (parsed.session_id) {
+						sessionId = parsed.session_id;
+					}
+				} catch {
+					// 不完全な行は次回に持ち越し
+				}
+			}
+		});
+
+		child.stderr?.on('data', (data: Buffer) => {
+			deps.outputChannel.appendLine(`[renew stderr] ${data.toString('utf-8').trim()}`);
+		});
+
+		child.on('close', (code: number | null) => {
+			clearTimeout(timeout);
+			deps.agentWatcher.scheduleUpdate();
+			if (sessionId) {
+				resolve(sessionId);
+			} else if (code === 0) {
+				const match = output.match(/"session_id"\s*:\s*"([a-f0-9-]{36})"/);
+				if (match) {
+					resolve(match[1]);
+				} else {
+					reject(new Error('セッションIDを取得できませんでした'));
+				}
+			} else {
+				reject(new Error(`claude CLI がエラーコード ${code} で終了しました`));
+			}
+		});
+
+		child.on('error', (err: Error) => {
+			clearTimeout(timeout);
+			reject(err);
+		});
+	});
+}
+
 // エージェント保存時にセッションを自動作成（固定セッション＋sessionId未設定の場合）
 export async function autoCreateSessionIfNeeded(config: AgentConfig, deps: SessionServiceDeps): Promise<AgentConfig> {
 	// 使い捨てセッション or 既にsessionIdがある場合はスキップ
