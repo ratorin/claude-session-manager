@@ -11,7 +11,6 @@ import { AgentConfig } from '../models/types';
 import * as dataStore from '../models/dataStore';
 import { showAgentFormPanel } from '../panels/agentFormPanel';
 import { showAgentPreview } from '../panels/agentPreviewPanel';
-import { modelCliMap } from '../utils/cliBuilder';
 import { resolveRuleFilePath } from '../agents/agentManager';
 import { syncParentRuleFile } from '../agents/parentChildSync';
 import { AgentWatcher } from '../watchers/agentWatcher';
@@ -98,10 +97,7 @@ context.subscriptions.push(
 			},
 			onOpenInTerminal: (a) => {
 				if (!a.sessionId) { return; }
-				const args = ['claude', '--resume', a.sessionId];
-				if (a.ruleFile) { args.push('--append-system-prompt-file', a.ruleFile); }
-				args.push('--model', modelCliMap[a.model] || a.model);
-				if (a.effort) { args.push('--effort', a.effort); }
+				const args = ['claude', '--agent', a.name, '--resume', a.sessionId];
 				if (a.permissionMode) { args.push('--permission-mode', a.permissionMode); }
 				const terminal = vscode.window.createTerminal({ name: `🤖 ${a.displayName || a.name}`, cwd: a.workDir || undefined });
 				terminal.show();
@@ -337,16 +333,8 @@ context.subscriptions.push(
 			}
 		}
 
-		// ターミナルでclaude --resume + 全設定付きで起動
-		const args = ['claude', '--resume', item.agent.sessionId];
-		if (item.agent.ruleFile) {
-			args.push('--append-system-prompt-file', item.agent.ruleFile);
-		}
-		const modelId = modelCliMap[item.agent.model] || item.agent.model;
-		args.push('--model', modelId);
-		if (item.agent.effort) {
-			args.push('--effort', item.agent.effort);
-		}
+		// ターミナルで --agent + --resume で起動（フロントマターからmodel/effort自動適用）
+		const args = ['claude', '--agent', item.agent.name, '--resume', item.agent.sessionId];
 		if (item.agent.permissionMode) {
 			args.push('--permission-mode', item.agent.permissionMode);
 		}

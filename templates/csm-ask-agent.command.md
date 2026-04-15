@@ -40,17 +40,18 @@ c:/xampp/.agent-rules/tmp/agent_{agent-name}_{タスク名}.txt
 
 ### Step 3: コマンド実行
 
-**セッションIDがある場合（--resume で既存セッション継続）:**
+常に `--agent` を使用する。セッションIDがある場合は `--resume` を追加して既存セッションを継続する。
+`--agent` により `agents/<name>.md` のフロントマター（model, effort等）が自動適用されるため、個別指定は不要。
+
+**セッションIDがある場合（既存セッション継続）:**
 ```bash
-claude --resume "{sessionId}" -p "{指示内容}" \
-  --append-system-prompt-file "~/.claude/agents/{agent-name}.md" \
-  --model "{model}" \
-  --effort "{effort}" \
+claude --agent "{agent-name}" --resume "{sessionId}" \
+  -p "{指示内容}" \
   --permission-mode "{permissionMode}" \
   > "{出力ファイル}" 2>&1
 ```
 
-**セッションIDが空の場合（--agent で新規セッション起動）:**
+**セッションIDが空の場合（新規セッション起動）:**
 ```bash
 claude --agent "{agent-name}" -p "{指示内容}" \
   --permission-mode "{permissionMode}" \
@@ -60,7 +61,7 @@ claude --agent "{agent-name}" -p "{指示内容}" \
 - `run_in_background: true` でバックグラウンド実行する
 - 実行開始をユーザーに報告する（「{agent-name} に指示を送りました（mode: {permissionMode}）」）
 
-**フォールバック:** 完了後に出力ファイルが空（0バイト）だった場合、`--resume` が失敗した可能性がある。`--agent` で再試行する:
+**フォールバック:** 完了後に出力ファイルが空（0バイト）だった場合、`--resume` を外して再試行する:
 ```bash
 claude --agent "{agent-name}" -p "{指示内容}" \
   --permission-mode "{permissionMode}" \

@@ -16,26 +16,17 @@ export const modelCliMap: Record<string, string> = {
 };
 
 // AgentConfig から CLI コマンドを組み立てる
+// --agent でフロントマター（model, effort等）が自動適用されるため個別指定は不要
 export function buildCommand(config: AgentConfig): CliCommand {
 	const env: Record<string, string> = {};
 	const parts: string[] = ['claude'];
 
+	// --agent（agents/<name>.mdのフロントマターからmodel/effort等を自動読み込み）
+	parts.push('--agent', config.name);
+
 	// セッションID（fixed モードのみ）
 	if (config.sessionId && config.sessionMode !== 'disposable') {
 		parts.push('--resume', config.sessionId);
-	}
-
-	// モデル（必須）。短縮名を正式モデルIDにマッピングして渡す
-	parts.push('--model', modelCliMap[config.model] || config.model);
-
-	// Effort（設定時のみ。max は Opus のみだが、バリデーションは呼び出し側）
-	if (config.effort) {
-		parts.push('--effort', config.effort);
-	}
-
-	// ルールファイル → --append-system-prompt-file
-	if (config.ruleFile) {
-		parts.push('--append-system-prompt-file', config.ruleFile);
 	}
 
 	// allowedTools → スペース区切りで複数引数
