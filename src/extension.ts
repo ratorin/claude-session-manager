@@ -16,6 +16,7 @@ import { registerMigrationCommands } from './commands/migrationCommands';
 import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
 import { getConfig } from './utils/config';
+import { ensurePreCompactHook } from './services/hookService';
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -24,8 +25,13 @@ export function activate(context: vscode.ExtensionContext) {
 		// マイグレーション失敗は致命的ではないため、エラーを無視
 	});
 
-	// check-dispatch フックのマイグレーション（初回のみユーザー確認付き）
-	// /csm-ask-agent のインストール状態はエージェントツリーのバナーで表示（ensureCsmAskAgent は廃止）
+	// /csm-ask-agent のインストール状態はエージェントツリーのバナーで表示
+
+	// PreCompact hook の自動デプロイ（テンプレート→~/.claude/hooks/ + settings.json登録）
+	const extensionOutputChannelEarly = vscode.window.createOutputChannel('CSM Hook Setup');
+	ensurePreCompactHook(context.extensionPath, extensionOutputChannelEarly).catch(() => {
+		// hook登録失敗は致命的ではない
+	});
 
 	// TreeViewプロバイダーを作成
 	const sessionProvider = new SessionTreeProvider();

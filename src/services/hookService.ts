@@ -118,6 +118,81 @@ export async function ensureSubagentHooks(outputChannel: vscode.OutputChannel): 
 	}
 }
 
+// PreCompact hook を settings.json に登録（テンプレートからスクリプトもデプロイ）
+export async function ensurePreCompactHook(extensionPath: string, outputChannel: vscode.OutputChannel): Promise<void> {
+	const homeDir = os.homedir();
+	const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+	const hooksDir = path.join(homeDir, '.claude', 'hooks');
+	const hookScript = path.join(hooksDir, 'csm-precompact.sh');
+	const CSM_MARKER = 'csm-precompact';
+
+	// 1. テンプレートからスクリプトをデプロイ（存在しなければ）
+	try {
+		await fs.promises.access(hookScript);
+	} catch {
+		const templatePath = path.join(extensionPath, 'templates', 'csm-precompact.sh');
+		try {
+			const content = await fs.promises.readFile(templatePath, 'utf-8');
+			await fs.promises.mkdir(hooksDir, { recursive: true });
+			await fs.promises.writeFile(hookScript, content, 'utf-8');
+			outputChannel.appendLine(`[${new Date().toISOString()}] csm-precompact.sh をデプロイしました`);
+		} catch {
+			// テンプレートが見つからない場合はスキップ
+			return;
+		}
+	}
+
+	// 2. settings.json にPreCompact hookを登録
+	try {
+		let settings: Record<string, unknown> = {};
+		try {
+			const raw = await fs.promises.readFile(settingsPath, 'utf-8');
+			settings = JSON.parse(raw);
+		} catch {
+			return;
+		}
+
+		if (!settings.hooks || typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) {
+			settings.hooks = {};
+		}
+		const hooksObj = settings.hooks as Record<string, unknown>;
+
+		// 既に登録済みか確認
+		const preCompact = hooksObj['PreCompact'];
+		if (Array.isArray(preCompact)) {
+			const alreadyInstalled = preCompact.some((entry: Record<string, unknown>) => {
+				const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+				if (!Array.isArray(innerHooks)) { return false; }
+				return innerHooks.some((hh: Record<string, unknown>) =>
+					typeof hh.command === 'string' && hh.command.includes(CSM_MARKER)
+				);
+			});
+			if (alreadyInstalled) { return; }
+		}
+
+		if (!Array.isArray(hooksObj['PreCompact'])) {
+			hooksObj['PreCompact'] = [];
+		}
+		const preCompactArr = hooksObj['PreCompact'] as Array<Record<string, unknown>>;
+
+		preCompactArr.push({
+			matcher: '*',
+			hooks: [{
+				type: 'command',
+				command: `bash "${hookScript.replace(/\\/g, '/')}"`,
+				timeout: 15,
+			}]
+		});
+
+		const backupPath = settingsPath + `.bak.${Date.now()}`;
+		try { await fs.promises.copyFile(settingsPath, backupPath); } catch { /* */ }
+		await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, '\t'), 'utf-8');
+		outputChannel.appendLine(`[${new Date().toISOString()}] PreCompact hookを settings.json に登録しました`);
+	} catch (err) {
+		outputChannel.appendLine(`[${new Date().toISOString()}] PreCompact hook登録エラー: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
 // settings.json に check-csm-ask-agent hook を登録
 export async function registerCsmAskAgentHook(claudeDir: string): Promise<void> {
 	const settingsPath = path.join(claudeDir, 'settings.json');
