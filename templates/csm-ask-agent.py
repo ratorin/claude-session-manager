@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 """
-/ask-agent 用スタンドアロンスクリプト
+/csm-ask-agent 用スタンドアロンスクリプト
 
 使い方:
-  python ask-agent.py <agent-name>    セッションID・モデル・effort・permissionModeを取得
-  python ask-agent.py --list          全エージェント一覧（名前|displayName|role|parentAgent）
+  python csm-ask-agent.py <agent-name>    セッションID・permissionModeを取得
+  python csm-ask-agent.py --list          全エージェント一覧
+  python csm-ask-agent.py --pending       確認待ち一覧
 """
 import json
 import re
@@ -41,15 +42,14 @@ def read_frontmatter(filepath):
 
 
 def get_agent_info(agent_name):
-    """エージェント名からセッションID・モデル・effort・permissionModeを取得"""
+    """エージェント名からセッションID・permissionModeを取得
+    model/effortは --agent モードでフロントマターから自動適用されるため不要"""
     agent_file = os.path.expanduser(f"~/.claude/agents/{agent_name}.md")
     if not os.path.exists(agent_file):
         print(f"ERROR: Agent file not found: {agent_file}", file=sys.stderr)
         sys.exit(1)
 
     fm = read_frontmatter(agent_file)
-    model = fm.get("model", "opus")
-    effort = fm.get("effort", "high")
     perm = fm.get("permissionMode", "acceptEdits")
 
     # session-manager.json からセッションID取得
@@ -63,7 +63,7 @@ def get_agent_info(agent_name):
     except Exception:
         pass
 
-    print(f"{sid}|{model}|{effort}|{perm}")
+    print(f"{sid}|{perm}")
 
 
 def list_agents():

@@ -23,10 +23,11 @@ agent-name が省略された場合、ユーザーに聞く。
 以下のコマンドで一発取得（クォート問題なし）:
 
 ```bash
-python c:/xampp/.claude/scripts/csm-ask-agent.py {agent-name}
+python ~/.claude/scripts/csm-ask-agent.py {agent-name}
 ```
 
-出力形式: `{sessionId}|{model}|{effort}|{permissionMode}`
+出力形式: `{sessionId}|{permissionMode}`
+（model/effortは `--agent` モードでフロントマターから自動適用されるため不要）
 
 エラー時は `ERROR:` で始まるメッセージが stderr に出る。
 
@@ -35,7 +36,7 @@ python c:/xampp/.claude/scripts/csm-ask-agent.py {agent-name}
 タスク名は指示内容の先頭20文字をファイル名に使える形に変換（日本語OK、スペース→アンダースコア）。
 
 ```
-c:/xampp/.agent-rules/tmp/agent_{agent-name}_{タスク名}.txt
+~/.claude/agents/{agent-name}/tmp/agent_{agent-name}_{タスク名}.txt
 ```
 
 ### Step 3: コマンド実行
