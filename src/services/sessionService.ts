@@ -5,7 +5,6 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as os from 'os';
 import { AgentConfig } from '../models/types';
-import { modelCliMap } from '../utils/cliBuilder';
 import { parseFrontmatter } from '../utils/frontmatterUtils';
 
 // 依存オブジェクト型（activate() 内のクロージャ変数を注入）
@@ -35,19 +34,14 @@ export async function createSessionForAgent(config: AgentConfig, deps: SessionSe
 	const { spawn } = require('child_process') as typeof import('child_process');
 
 	return new Promise<string>((resolve, reject) => {
-		// CLI引数を構築
+		// CLI引数を構築（--agentでフロントマターからmodel/effort自動適用）
 		const args: string[] = [
-			'--model', modelCliMap[config.model] || config.model,
+			'--agent', config.name,
 			'--verbose',
 			'--output-format', 'stream-json',
 			'--max-turns', '1',
 			'-p', `あなたは「${config.name}」です。${config.role || '指示された業務'}を担当します。ルールファイルを確認して準備完了を報告してください。`,
 		];
-
-		// ルールファイルがあれば付与
-		if (config.ruleFile) {
-			args.push('--append-system-prompt-file', config.ruleFile);
-		}
 
 		// 環境変数: ネストセッション検出を回避
 		const env = { ...process.env };

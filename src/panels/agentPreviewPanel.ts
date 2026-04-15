@@ -1,32 +1,39 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import { AgentConfig } from '../models/types';
 import * as dataStore from '../models/dataStore';
-import { getRuleFileInfo } from '../agents/agentManager';
 
 // プレビューパネルの参照
 let previewPanel: vscode.WebviewPanel | undefined;
-// メッセージリスナーのDisposable（累積防止用）
 let messageListenerDisposable: vscode.Disposable | undefined;
 
-// エージェントプレビューを表示（読み取り専用・非同期）
+export interface AgentPreviewCallbacks {
+	onEdit: (agent: AgentConfig) => void;
+	onEditRuleFile: (agent: AgentConfig) => void;
+	onOpenInClaude: (sessionId: string) => void;
+	onOpenInTerminal: (agent: AgentConfig) => void;
+	onRenewSession: (agent: AgentConfig) => void;
+	onLinkSession: (agent: AgentConfig) => void;
+}
+
 export async function showAgentPreview(
 	agent: AgentConfig,
 	isLive: boolean,
 	sessionTitle: string | undefined,
-	onEdit: (agent: AgentConfig) => void,
-	onEditRuleFile: (agent: AgentConfig) => void,
-	onOpenSession: (sessionId: string) => void
+	callbacks: AgentPreviewCallbacks
 ): Promise<void> {
-	const title = `🤖 ${agent.name}`;
+	const displayName = agent.displayName ? `${agent.displayName}（${agent.name}）` : agent.name;
+	const title = `🤖 ${displayName}`;
 	const html = await getPreviewHtml(agent, isLive, sessionTitle);
 
 	if (previewPanel) {
 		previewPanel.reveal(vscode.ViewColumn.One);
 		previewPanel.title = title;
 		previewPanel.webview.html = html;
-		rebindMessages(previewPanel, agent, onEdit, onEditRuleFile, onOpenSession);
+		rebindMessages(previewPanel, agent, callbacks);
 		return;
 	}
 
@@ -45,30 +52,95 @@ export async function showAgentPreview(
 			messageListenerDisposable = undefined;
 		}
 	});
-	rebindMessages(previewPanel, agent, onEdit, onEditRuleFile, onOpenSession);
+	rebindMessages(previewPanel, agent, callbacks);
 }
 
 function rebindMessages(
 	panel: vscode.WebviewPanel,
 	agent: AgentConfig,
-	onEdit: (agent: AgentConfig) => void,
-	onEditRuleFile: (agent: AgentConfig) => void,
-	onOpenSession: (sessionId: string) => void
+	cb: AgentPreviewCallbacks
 ): void {
-	// 古いリスナーを解除して累積を防止
 	if (messageListenerDisposable) {
 		messageListenerDisposable.dispose();
 		messageListenerDisposable = undefined;
 	}
 	messageListenerDisposable = panel.webview.onDidReceiveMessage((message) => {
-		if (message.type === 'edit') {
-			onEdit(agent);
-		} else if (message.type === 'editRuleFile') {
-			onEditRuleFile(agent);
-		} else if (message.type === 'openSession') {
-			if (agent.sessionId) {
-				onOpenSession(agent.sessionId);
-			}
+		switch (message.type) {
+			case 'edit': cb.onEdit(agent); break;
+			case 'editRuleFile': cb.onEditRuleFile(agent); break;
+			case 'openInClaude':
+				if (agent.sessionId) { cb.onOpenInClaude(agent.sessionId); }
+				break;
+			case 'openInTerminal': cb.onOpenInTerminal(agent); break;
+			case 'renewSession': cb.onRenewSession(agent); break;
+			case 'linkSession': cb.onLinkSession(agent); break;
+			case 'openFile':
+				if (message.path) {
+					vscode.workspace.openTextDocument(vscode.Uri.file(message.path)).then(doc => {
+						vscode.window.showTextDocument(doc);
+					});
+				}
+				break;
+			case 'toggleFeature':
+				// TODO/HISTORY の ON/OFF切り替え（フロントマターのフラグ変更）
+				{
+					const isTodo = message.feature === 'todo';
+					const currentValue = isTodo ? agent.todoEnabled : agent.historyEnabled;
+					const newValue = !currentValue;
+
+					// フラグを更新
+					if (isTodo) { agent.todoEnabled = newValue; } else { agent.historyEnabled = newValue; }
+					dataStore.addAgent(agent).then(async () => {
+						// ONにした時、ファイルがなければ作成
+						if (newValue) {
+							const agentDir = path.join(os.homedir(), '.claude', 'agents', agent.name);
+							const fileName = isTodo ? 'TODO.md' : 'HISTORY.md';
+							const filePath = path.join(agentDir, fileName);
+							try {
+								await fs.promises.access(filePath);
+							} catch {
+								await fs.promises.mkdir(agentDir, { recursive: true });
+								const template = isTodo
+									? `# ${agent.displayName || agent.name} — TODO\n\n## 確認待ち\n\n## タスク\n`
+									: `# ${agent.displayName || agent.name} — 歴代セッション記録\n`;
+								await fs.promises.writeFile(filePath, template, 'utf-8');
+							}
+						}
+						// プレビューを再表示
+						const html = await getPreviewHtml(agent, false, undefined);
+						panel.webview.html = html;
+					});
+				}
+				break;
+			case 'toggleTodo':
+				// TODO.mdのチェックボックスを切り替え（非同期）
+				{
+					const todoPath = path.join(os.homedir(), '.claude', 'agents', agent.name, 'TODO.md');
+					fs.promises.readFile(todoPath, 'utf-8').then(content => {
+						const lines = content.split('\n');
+						const lineIdx = message.line as number;
+						if (lineIdx >= 0 && lineIdx < lines.length) {
+							if (message.checked) {
+								lines[lineIdx] = lines[lineIdx].replace('- [ ]', '- [x]');
+							} else {
+								lines[lineIdx] = lines[lineIdx].replace(/- \[[xX]\]/, '- [ ]');
+							}
+							return fs.promises.writeFile(todoPath, lines.join('\n'), 'utf-8');
+						}
+					}).catch(() => { /* 失敗は無視 */ });
+				}
+				break;
+			case 'openCollaborator':
+				if (message.name) {
+					// 連携先エージェントのプレビューを開く（再帰的に自分を呼ぶ）
+					dataStore.getAgents().then(async (agents) => {
+						const target = agents.find(a => a.name === message.name);
+						if (target) {
+							await showAgentPreview(target, false, undefined, cb);
+						}
+					});
+				}
+				break;
 		}
 	});
 }
@@ -77,50 +149,129 @@ function escapeHtml(text: string): string {
 	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-async function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle: string | undefined): Promise<string> {
-	const modelLabel = agent.model === 'opus' ? 'Opus' : agent.model === 'haiku' ? 'Haiku' : 'Sonnet';
-	const modeLabel = agent.sessionMode === 'disposable' ? '使い捨て' : '固定';
-	const statusLabel = isLive ? '🟢 動作中' : '⚪ 停止中';
+// TODO.md をチェックボックス付きHTMLにレンダリング
+function renderTodoMarkdown(content: string): string {
+	return content.split('\n').map((line, i) => {
+		const stripped = line.trim();
+		// 見出し
+		if (stripped.startsWith('### ')) {
+			return `<div class="todo-h3">${escapeHtml(stripped.substring(4))}</div>`;
+		}
+		if (stripped.startsWith('## ')) {
+			return `<div class="todo-h2">${escapeHtml(stripped.substring(3))}</div>`;
+		}
+		if (stripped.startsWith('# ')) {
+			return `<div class="todo-h1">${escapeHtml(stripped.substring(2))}</div>`;
+		}
+		// チェックボックス
+		const checkMatch = stripped.match(/^- \[([ xX])\] (.+)$/);
+		if (checkMatch) {
+			const checked = checkMatch[1] !== ' ';
+			const text = checkMatch[2];
+			return `<label class="todo-item${checked ? ' done' : ''}"><input type="checkbox" data-line="${i}" ${checked ? 'checked' : ''}> ${escapeHtml(text)}</label>`;
+		}
+		// 通常のリスト
+		if (stripped.startsWith('- ')) {
+			return `<div class="todo-list-item">• ${escapeHtml(stripped.substring(2))}</div>`;
+		}
+		// 空行
+		if (!stripped) { return '<div class="todo-spacer"></div>'; }
+		// その他
+		return `<div class="todo-text">${escapeHtml(stripped)}</div>`;
+	}).join('\n');
+}
 
-	// 子エージェント一覧
-	const allAgents = await dataStore.getAgents();
-	const children = allAgents.filter((a) => a.parentAgent === agent.name);
-	const childrenHtml = children.length > 0
-		? children.map((c) => {
-			const cModel = c.model === 'opus' ? 'Ｏ' : c.model === 'haiku' ? 'Ｈ' : 'Ｓ';
-			return `<div class="child-item">${cModel}\u2007${escapeHtml(c.name)}<span class="dim"> — ${escapeHtml(c.role || '役割未設定')}</span></div>`;
-		}).join('')
-		: '<div class="dim">なし</div>';
+// HISTORY.md を簡易HTMLにレンダリング
+function renderHistoryMarkdown(content: string): string {
+	return content.split('\n').map(line => {
+		const stripped = line.trim();
+		if (stripped.startsWith('### ')) {
+			return `<div class="history-date">${escapeHtml(stripped.substring(4))}</div>`;
+		}
+		if (stripped.startsWith('## ')) {
+			return `<div class="history-h2">${escapeHtml(stripped.substring(3))}</div>`;
+		}
+		if (stripped.startsWith('# ')) {
+			return `<div class="history-h1">${escapeHtml(stripped.substring(2))}</div>`;
+		}
+		if (stripped.startsWith('- ')) {
+			return `<div class="history-item">• ${escapeHtml(stripped.substring(2))}</div>`;
+		}
+		if (!stripped) { return ''; }
+		return `<div class="history-text">${escapeHtml(stripped)}</div>`;
+	}).join('\n');
+}
+
+// HISTORY.md / TODO.md の読み込み
+async function readAgentFile(agentName: string, fileName: string): Promise<string> {
+	const agentDir = path.join(os.homedir(), '.claude', 'agents', agentName);
+	const filePath = path.join(agentDir, fileName);
+	try {
+		return await fs.promises.readFile(filePath, 'utf-8');
+	} catch {
+		return '';
+	}
+}
+
+async function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle: string | undefined): Promise<string> {
+	const displayName = agent.displayName ? `${agent.displayName}（${agent.name}）` : agent.name;
+	const modelChar = agent.model === 'sonnet-1m' ? '１'
+		: agent.model === 'opus' ? 'Ｏ'
+		: agent.model === 'haiku' ? 'Ｈ'
+		: 'Ｓ';
+	const modelLabel = agent.model === 'opus' ? 'Opus'
+		: agent.model === 'sonnet-1m' ? 'Sonnet 1M'
+		: agent.model === 'haiku' ? 'Haiku'
+		: 'Sonnet';
+	const statusLabel = isLive ? '🟢 稼働中' : '⚪ 停止中';
+
+	// 役割（日本語優先）
+	const roleText = agent.displayRole || agent.role || '未設定';
 
 	// 親エージェント
-	const parentLabel = agent.parentAgent ? escapeHtml(agent.parentAgent) : 'なし（トップレベル）';
+	const allAgents = await dataStore.getAgents();
+	const parent = agent.parentAgent ? allAgents.find(a => a.name === agent.parentAgent) : undefined;
+	const parentLabel = parent
+		? (parent.displayName ? `${parent.displayName}（${parent.name}）` : parent.name)
+		: agent.parentAgent || 'なし';
 
-	// セッション情報
+	// 子エージェント（再帰ツリー構築）
+	const children = allAgents.filter(a => a.parentAgent === agent.name);
+	function buildChildTree(parentName: string, depth: number): string {
+		const kids = allAgents.filter(a => a.parentAgent === parentName);
+		if (kids.length === 0) { return ''; }
+		return kids.map(c => {
+			const cName = c.displayName ? `${c.displayName}（${c.name}）` : c.name;
+			const indent = '\u2003'.repeat(depth); // 全角スペースでインデント
+			const prefix = depth === 0 ? '├─' : '└─';
+			const subtree = buildChildTree(c.name, depth + 1);
+			return `<div class="child-item">${indent}${prefix} <button class="agent-link" data-name="${escapeHtml(c.name)}">${escapeHtml(cName)}</button> <span class="dim">— ${escapeHtml(c.role || '')}</span></div>${subtree}`;
+		}).join('');
+	}
+	const childTreeHtml = buildChildTree(agent.name, 0);
+
+	// 連携先（兄弟 + qa/researcher）
+	const childNames = new Set(children.map(c => c.name));
+	const siblings = agent.parentAgent
+		? allAgents.filter(a => a.parentAgent === agent.parentAgent && a.name !== agent.name && !childNames.has(a.name))
+		: [];
+	const alreadyListed = new Set([agent.name, ...childNames, ...siblings.map(s => s.name)]);
+	const commons = allAgents.filter(a => ['qa', 'researcher'].includes(a.name) && !alreadyListed.has(a.name));
+	const collaborators = [...siblings, ...commons];
+
+	// セッション
 	const sessionLabel = agent.sessionId
-		? (sessionTitle ? escapeHtml(sessionTitle) : `${agent.sessionId.substring(0, 8)}...`)
+		? (sessionTitle || `${agent.sessionId.substring(0, 12)}...`)
 		: '未紐づけ';
 
-	// ルールファイル内容（非同期）
-	let ruleContent = '';
-	let ruleInfoStr = '';
-	if (agent.ruleFile) {
-		const info = await getRuleFileInfo(agent.ruleFile);
-		if (info) {
-			ruleInfoStr = `📄 ${info.lines}行 (${info.sizeKb}KB)`;
-			try {
-				const raw = await fs.promises.readFile(agent.ruleFile, 'utf-8');
-				ruleContent = escapeHtml(raw);
-			} catch {
-				ruleContent = '（読み込みエラー）';
-			}
-		} else {
-			ruleInfoStr = '⚠ ファイル未検出';
-		}
-	} else {
-		ruleInfoStr = '未設定';
-	}
+	// TODO.md / HISTORY.md
+	const todoContent = await readAgentFile(agent.name, 'TODO.md');
+	const historyContent = await readAgentFile(agent.name, 'HISTORY.md');
+	const hasTodo = todoContent.length > 0;
+	const hasHistory = historyContent.length > 0;
+	const todoOn = agent.todoEnabled === true;
+	const historyOn = agent.historyEnabled === true;
 
-	// H-5: nonce付きCSPヘッダーを追加
 	const nonce = crypto.randomBytes(16).toString('hex');
 
 	return `<!DOCTYPE html>
@@ -140,166 +291,319 @@ async function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle:
 		--btn-bg: var(--vscode-button-background);
 		--btn-fg: var(--vscode-button-foreground);
 		--btn-hover: var(--vscode-button-hoverBackground);
+		--btn-secondary-bg: var(--vscode-button-secondaryBackground);
+		--btn-secondary-fg: var(--vscode-button-secondaryForeground);
+		--btn-secondary-hover: var(--vscode-button-secondaryHoverBackground);
 	}
 	* { margin: 0; padding: 0; box-sizing: border-box; }
 	body {
 		font-family: var(--vscode-font-family);
 		background: var(--bg);
 		color: var(--text);
-		padding: 24px;
+		padding: 20px 24px;
 		max-width: 720px;
 		margin: 0 auto;
 	}
+
+	/* ヘッダー */
 	.header {
 		display: flex;
 		align-items: center;
-		gap: 12px;
-		margin-bottom: 20px;
-		padding-bottom: 16px;
-		border-bottom: 1px solid var(--border);
+		gap: 10px;
+		margin-bottom: 12px;
 	}
-	.header-name {
-		font-size: 20px;
-		font-weight: 600;
-	}
+	.header-name { font-size: 18px; font-weight: 600; }
 	.header-model {
-		font-size: 13px;
+		font-size: 12px;
 		padding: 2px 10px;
 		border-radius: 12px;
 		background: rgba(226, 126, 74, 0.15);
 		color: var(--accent);
 		font-weight: 600;
 	}
-	.header-status {
-		font-size: 13px;
-		margin-left: auto;
+	.header-status { font-size: 12px; margin-left: auto; }
+	.btn-settings {
+		background: none; border: none; cursor: pointer;
+		font-size: 16px; color: var(--text-dim); padding: 4px;
 	}
-	.btn-edit {
-		padding: 6px 16px;
+	.btn-settings:hover { color: var(--text); }
+
+	/* アクションボタン */
+	.actions { margin-bottom: 16px; }
+	.btn-primary {
+		display: inline-block;
+		padding: 8px 24px;
 		background: var(--btn-bg);
 		color: var(--btn-fg);
-		border: none;
-		border-radius: 4px;
-		cursor: pointer;
-		font-size: 12px;
-		font-weight: 600;
-	}
-	.btn-edit:hover { background: var(--btn-hover); }
-
-	.section {
-		margin-bottom: 20px;
-	}
-	.section-title {
-		font-size: 12px;
-		font-weight: 600;
-		color: var(--text-dim);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
+		border: none; border-radius: 4px;
+		cursor: pointer; font-size: 13px; font-weight: 600;
 		margin-bottom: 8px;
 	}
-	.info-grid {
-		display: grid;
-		grid-template-columns: 100px 1fr;
-		gap: 6px 12px;
-		font-size: 13px;
+	.btn-primary:hover { background: var(--btn-hover); }
+	.btn-secondary {
+		padding: 4px 12px;
+		background: var(--btn-secondary-bg);
+		color: var(--btn-secondary-fg);
+		border: none; border-radius: 3px;
+		cursor: pointer; font-size: 11px;
+		margin-right: 6px;
 	}
-	.info-label {
-		color: var(--text-dim);
-		font-weight: 500;
-	}
-	.info-value {
-		color: var(--text);
-	}
-	.dim { color: var(--text-dim); }
+	.btn-secondary:hover { background: var(--btn-secondary-hover); }
 
-	.child-item {
-		font-size: 13px;
-		padding: 4px 0;
+	/* セクション */
+	.section {
+		margin-bottom: 16px;
+		border-top: 1px solid var(--border);
+		padding-top: 12px;
 	}
-
-	.session-link {
-		color: var(--accent);
-		cursor: pointer;
-		text-decoration: none;
-		font-size: 13px;
-	}
-	.session-link:hover { text-decoration: underline; }
-
-	.rule-block {
-		margin-top: 8px;
-		background: var(--surface);
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		padding: 12px 16px;
-		font-size: 12px;
-		font-family: var(--vscode-editor-font-family);
-		white-space: pre-wrap;
-		max-height: 400px;
-		overflow-y: auto;
-		line-height: 1.6;
-	}
-	.rule-header {
+	.section-header {
 		display: flex;
 		align-items: center;
 		gap: 8px;
+		margin-bottom: 8px;
 	}
-	.rule-edit-link {
+	.section-title {
+		font-size: 13px; font-weight: 600;
+	}
+	.section-badge {
+		font-size: 10px;
+		padding: 1px 6px;
+		border-radius: 8px;
+		background: rgba(100,200,100,0.15);
+		color: #6c6;
+	}
+	.section-action {
+		margin-left: auto;
 		color: var(--accent);
 		cursor: pointer;
-		font-size: 12px;
-		margin-left: auto;
+		font-size: 11px;
+		background: none; border: none;
 	}
-	.rule-edit-link:hover { text-decoration: underline; }
+	.section-action:hover { text-decoration: underline; }
+
+	/* 情報グリッド */
+	.info-grid {
+		display: grid;
+		grid-template-columns: 90px 1fr;
+		gap: 4px 12px;
+		font-size: 12px;
+	}
+	.info-label { color: var(--text-dim); }
+	.dim { color: var(--text-dim); }
+
+	/* リスト */
+	.agent-link {
+		color: var(--accent); cursor: pointer;
+		background: none; border: none; font-size: 12px;
+		padding: 0;
+	}
+	.agent-link:hover { text-decoration: underline; }
+	.child-item, .collab-item { font-size: 12px; padding: 2px 0; }
+
+	/* コンテンツブロック */
+	.content-block {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		padding: 10px 14px;
+		font-size: 12px;
+		font-family: var(--vscode-editor-font-family);
+		white-space: pre-wrap;
+		max-height: 200px;
+		overflow-y: auto;
+		line-height: 1.5;
+	}
+	.empty-msg { font-size: 12px; color: var(--text-dim); font-style: italic; }
+
+	/* ON/OFFトグルボタン */
+	.toggle-btn {
+		font-size: 10px; padding: 1px 8px; border-radius: 8px;
+		border: 1px solid; cursor: pointer; font-weight: 600;
+	}
+	.toggle-btn.on {
+		background: rgba(100,200,100,0.15); color: #6c6; border-color: rgba(100,200,100,0.3);
+	}
+	.toggle-btn.off {
+		background: rgba(150,150,150,0.1); color: var(--text-dim); border-color: rgba(150,150,150,0.2);
+	}
+	.toggle-btn:hover { opacity: 0.8; }
+
+	/* TODO */
+	.todo-block {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		padding: 10px 14px;
+		max-height: 300px;
+		overflow-y: auto;
+	}
+	.todo-h1 { font-size: 14px; font-weight: 700; margin: 8px 0 4px; }
+	.todo-h2 { font-size: 13px; font-weight: 600; margin: 8px 0 4px; color: var(--accent); }
+	.todo-h3 { font-size: 12px; font-weight: 600; margin: 6px 0 2px; }
+	.todo-item {
+		display: block; font-size: 12px; padding: 2px 0; cursor: pointer;
+	}
+	.todo-item:hover { background: rgba(255,255,255,0.03); }
+	.todo-item.done { text-decoration: line-through; opacity: 0.5; }
+	.todo-item input { margin-right: 6px; cursor: pointer; }
+	.todo-list-item { font-size: 12px; padding: 1px 0 1px 8px; }
+	.todo-text { font-size: 12px; padding: 1px 0; }
+	.todo-spacer { height: 6px; }
+
+	/* HISTORY */
+	.history-block {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		padding: 10px 14px;
+		max-height: 300px;
+		overflow-y: auto;
+		font-size: 12px;
+	}
+	.history-h1 { font-size: 14px; font-weight: 700; margin: 6px 0 4px; }
+	.history-h2 { font-size: 13px; font-weight: 600; margin: 6px 0 4px; }
+	.history-date {
+		font-size: 12px; font-weight: 600; margin: 8px 0 2px;
+		color: var(--accent);
+		border-bottom: 1px solid var(--border);
+		padding-bottom: 2px;
+	}
+	.history-item { padding: 1px 0 1px 8px; }
+	.history-text { padding: 1px 0; }
 </style>
 </head>
 <body>
+
+<!-- ヘッダー -->
 <div class="header">
-	<div class="header-name">🤖 ${escapeHtml(agent.name)}</div>
-	<div class="header-model">${modelLabel}</div>
+	<div class="header-name">🤖 ${escapeHtml(displayName)}</div>
+	<div class="header-model">${modelChar} ${modelLabel}</div>
 	<div class="header-status">${statusLabel}</div>
-	<button class="btn-edit" id="btn-edit">設定</button>
+	<button class="btn-settings" id="btn-settings" title="設定">⚙</button>
 </div>
 
+<!-- アクションボタン -->
+<div class="actions">
+	${agent.sessionId
+		? '<button class="btn-primary" id="btn-claude">▶ Claudeで開く</button><br>'
+		: '<button class="btn-primary" id="btn-link" style="background:var(--btn-secondary-bg);color:var(--btn-secondary-fg)">🔗 セッションを紐づけ</button><br>'
+	}
+	${agent.ruleFile ? '<button class="btn-secondary" id="btn-rule">📄 ルール</button>' : ''}
+	${agent.sessionId ? '<button class="btn-secondary" id="btn-terminal">💻 ターミナル</button>' : ''}
+	${agent.sessionId ? '<button class="btn-secondary" id="btn-renew">🔄 引き継ぎ</button>' : ''}
+	${agent.sessionId ? '<button class="btn-secondary" id="btn-link">🔗 紐づけ</button>' : ''}
+	<button class="btn-secondary" id="btn-settings2">⚙ 設定</button>
+</div>
+
+<!-- 基本情報 -->
 <div class="section">
 	<div class="section-title">基本情報</div>
 	<div class="info-grid">
 		<div class="info-label">役割</div>
-		<div class="info-value">${escapeHtml(agent.role || '未設定')}</div>
-		<div class="info-label">親エージェント</div>
-		<div class="info-value">${parentLabel}</div>
-		<div class="info-label">セッション運用</div>
-		<div class="info-value">${modeLabel}</div>
-		${agent.workDir ? `<div class="info-label">作業フォルダ</div><div class="info-value">${escapeHtml(agent.workDir)}</div>` : ''}
+		<div>${escapeHtml(roleText)}</div>
+		<div class="info-label">親</div>
+		<div>${escapeHtml(parentLabel)}</div>
+		<div class="info-label">セッション</div>
+		<div>${escapeHtml(sessionLabel)}</div>
+		${agent.permissionMode ? `<div class="info-label">権限モード</div><div>${escapeHtml(agent.permissionMode)}</div>` : ''}
 	</div>
 </div>
 
+<!-- 子エージェント（ツリー表示） -->
+${children.length > 0 ? `
 <div class="section">
-	<div class="section-title">セッション</div>
-	${agent.sessionId
-		? `<a class="session-link" id="link-session">${sessionLabel}</a>`
-		: `<div class="dim">未紐づけ</div>`
+	<div class="section-title">👥 配下エージェント</div>
+	${childTreeHtml}
+</div>
+` : ''}
+
+<!-- 連携先 -->
+${collaborators.length > 0 ? `
+<div class="section">
+	<div class="section-title">🔗 連携先エージェント</div>
+	${collaborators.map(c => {
+		const cName = c.displayName ? `${c.displayName}（${c.name}）` : c.name;
+		return `<div class="collab-item"><button class="agent-link" data-name="${escapeHtml(c.name)}">${escapeHtml(cName)}</button> <span class="dim">— ${escapeHtml(c.role || '')}</span></div>`;
+	}).join('')}
+</div>
+` : ''}
+
+<!-- TODO -->
+<div class="section">
+	<div class="section-header">
+		<div class="section-title">📋 TODO</div>
+		<button class="toggle-btn ${todoOn ? 'on' : 'off'}" id="btn-toggle-todo">${todoOn ? 'ON' : 'OFF'}</button>
+		${hasTodo ? '<button class="section-action" id="btn-edit-todo">編集</button>' : ''}
+	</div>
+	${hasTodo
+		? `<div class="todo-block">${renderTodoMarkdown(todoContent)}</div>`
+		: `<div class="empty-msg">OFFの状態です。ONにするとTODO管理が有効になります</div>`
 	}
 </div>
 
+<!-- HISTORY -->
 <div class="section">
-	<div class="section-title">子エージェント</div>
-	${childrenHtml}
-</div>
-
-<div class="section">
-	<div class="rule-header">
-		<div class="section-title">ルールファイル</div>
-		<span class="dim" style="font-size:12px">${ruleInfoStr}</span>
-		${agent.ruleFile ? '<a class="rule-edit-link" id="link-editRule">編集</a>' : ''}
+	<div class="section-header">
+		<div class="section-title">📜 HISTORY</div>
+		<button class="toggle-btn ${historyOn ? 'on' : 'off'}" id="btn-toggle-history">${historyOn ? 'ON' : 'OFF'}</button>
+		${hasHistory ? '<button class="section-action" id="btn-edit-history">編集</button>' : ''}
 	</div>
-	${ruleContent ? `<div class="rule-block">${ruleContent}</div>` : ''}
+	${hasHistory
+		? `<div class="history-block">${renderHistoryMarkdown(historyContent)}</div>`
+		: `<div class="empty-msg">OFFの状態です。ONにするとセッション履歴記録が有効になります</div>`
+	}
 </div>
 
 <script nonce="${nonce}">
 	const vscode = acquireVsCodeApi();
-	document.getElementById('btn-edit')?.addEventListener('click', () => vscode.postMessage({ type: 'edit' }));
-	document.getElementById('link-editRule')?.addEventListener('click', () => vscode.postMessage({ type: 'editRuleFile' }));
-	document.getElementById('link-session')?.addEventListener('click', () => vscode.postMessage({ type: 'openSession' }));
+	document.getElementById('btn-settings')?.addEventListener('click', () => vscode.postMessage({ type: 'edit' }));
+	document.getElementById('btn-settings2')?.addEventListener('click', () => vscode.postMessage({ type: 'edit' }));
+	document.getElementById('btn-claude')?.addEventListener('click', () => vscode.postMessage({ type: 'openInClaude' }));
+	document.getElementById('btn-rule')?.addEventListener('click', () => vscode.postMessage({ type: 'editRuleFile' }));
+	document.getElementById('btn-terminal')?.addEventListener('click', () => vscode.postMessage({ type: 'openInTerminal' }));
+	document.getElementById('btn-renew')?.addEventListener('click', () => vscode.postMessage({ type: 'renewSession' }));
+	document.getElementById('btn-link')?.addEventListener('click', () => vscode.postMessage({ type: 'linkSession' }));
+
+	// TODO/HISTORY 編集
+	document.getElementById('btn-edit-todo')?.addEventListener('click', () => {
+		vscode.postMessage({ type: 'openFile', path: '${escapeHtml(path.join(os.homedir(), '.claude', 'agents', agent.name, 'TODO.md').replace(/\\/g, '/'))}' });
+	});
+	document.getElementById('btn-edit-history')?.addEventListener('click', () => {
+		vscode.postMessage({ type: 'openFile', path: '${escapeHtml(path.join(os.homedir(), '.claude', 'agents', agent.name, 'HISTORY.md').replace(/\\/g, '/'))}' });
+	});
+
+	// 連携先・子エージェントリンク
+	document.querySelectorAll('.agent-link').forEach(el => {
+		el.addEventListener('click', () => {
+			vscode.postMessage({ type: 'openCollaborator', name: el.dataset.name });
+		});
+	});
+
+	// TODO チェックボックスのトグル
+	document.querySelectorAll('.todo-item input[type="checkbox"]').forEach(cb => {
+		cb.addEventListener('change', (e) => {
+			const input = e.target;
+			const line = parseInt(input.dataset.line);
+			const checked = input.checked;
+			const label = input.parentElement;
+			if (checked) { label.classList.add('done'); } else { label.classList.remove('done'); }
+			vscode.postMessage({ type: 'toggleTodo', line: line, checked: checked });
+		});
+	});
+
+	// TODO/HISTORY ON/OFFトグル
+	document.getElementById('btn-toggle-todo')?.addEventListener('click', () => {
+		vscode.postMessage({ type: 'toggleFeature', feature: 'todo' });
+	});
+	document.getElementById('btn-toggle-history')?.addEventListener('click', () => {
+		vscode.postMessage({ type: 'toggleFeature', feature: 'history' });
+	});
+
+	// HISTORYを最下部にスクロール
+	const historyBlock = document.querySelector('.history-block');
+	if (historyBlock) {
+		historyBlock.scrollTop = historyBlock.scrollHeight;
+	}
 </script>
 </body>
 </html>`;

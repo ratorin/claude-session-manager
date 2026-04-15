@@ -3,119 +3,99 @@
 # CSM v0.5.0+
 # 設計原則: VSIXインストール時に自動デプロイ、csm/プレフィックスで名前空間分離
 
-INPUT_JSON=$(cat)
-
-# セッションIDとトランスクリプトパスを取得
-SESSION_ID=$(echo "$INPUT_JSON" | python -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    print(d.get('session_id', ''))
-except:
-    print('')
-" 2>/dev/null)
-
-TRANSCRIPT=$(echo "$INPUT_JSON" | python -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    print(d.get('transcript_path', ''))
-except:
-    print('')
-" 2>/dev/null)
-
-# セッションIDがなければスキップ
-if [ -z "$SESSION_ID" ]; then
-  exit 0
-fi
-
-# session-manager.json からエージェント名を特定
-SM_FILE="$HOME/.claude/session-manager.json"
-if [ ! -f "$SM_FILE" ]; then
-  exit 0
-fi
-
-AGENT_NAME=$(python -c "
-import json, sys
-try:
-    with open('$SM_FILE', 'r') as f:
-        data = json.load(f)
-    bindings = data.get('agentSessions', {})
-    for name, info in bindings.items():
-        if info.get('sessionId') == '$SESSION_ID':
-            print(name)
-            sys.exit(0)
-except:
-    pass
-print('')
-" 2>/dev/null)
-
-# エージェントに紐づいていなければスキップ
-if [ -z "$AGENT_NAME" ]; then
-  exit 0
-fi
-
-# HISTORY.mdのパス
-HISTORY_FILE="$HOME/.claude/agents/$AGENT_NAME/HISTORY.md"
-if [ ! -f "$HISTORY_FILE" ]; then
-  exit 0
-fi
-
-# トランスクリプトから直近のやり取りを要約（簡易方式: 末尾から抽出）
-SUMMARY=$(python -c "
+# 全処理をPythonに委譲（シェル変数のインライン展開によるインジェクションを防止）
+python -c "
 import sys, json, os
+from datetime import datetime
 
-transcript = '$TRANSCRIPT'
-if not transcript or not os.path.exists(transcript):
-    sys.exit(0)
+def main():
+    # stdinからhook入力を読み取り
+    try:
+        input_data = json.load(sys.stdin)
+    except Exception:
+        return
 
-try:
-    # 末尾64KBを読む
-    size = os.path.getsize(transcript)
-    read_size = min(65536, size)
-    with open(transcript, 'rb') as f:
-        f.seek(max(0, size - read_size))
-        tail = f.read().decode('utf-8', errors='replace')
+    session_id = input_data.get('session_id', '')
+    transcript_path = input_data.get('transcript_path', '')
+    if not session_id:
+        return
 
-    lines = [l for l in tail.split('\n') if l.strip()]
-    if len(lines) > 1:
-        lines = lines[1:]  # 先頭行は途中切れの可能性
+    # session-manager.json からエージェント名を特定
+    sm_file = os.path.join(os.path.expanduser('~'), '.claude', 'session-manager.json')
+    if not os.path.isfile(sm_file):
+        return
 
-    parts = []
-    for line in lines[-20:]:
-        try:
-            entry = json.loads(line)
-            if entry.get('type') == 'user' and entry.get('message', {}).get('role') == 'user':
-                content = entry['message'].get('content', '')
-                if isinstance(content, str) and content:
-                    parts.append('[User] ' + content[:100])
-            elif entry.get('type') == 'assistant' and entry.get('message', {}).get('role') == 'assistant':
-                content = entry['message'].get('content', '')
-                if isinstance(content, str) and content:
-                    parts.append('[Asst] ' + content[:150])
-                elif isinstance(content, list):
-                    text = ''.join(b.get('text', '') for b in content if b.get('type') == 'text')
-                    if text:
-                        parts.append('[Asst] ' + text[:150])
-        except:
-            pass
+    agent_name = ''
+    try:
+        with open(sm_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        bindings = data.get('agentSessions', {})
+        for name, info in bindings.items():
+            if info.get('sessionId') == session_id:
+                agent_name = name
+                break
+    except Exception:
+        return
 
-    if parts:
-        print('\n'.join(parts[-4:]))
-except:
-    pass
-" 2>/dev/null)
+    if not agent_name:
+        return
 
-# 要約があればHISTORY.mdに追記
-if [ -n "$SUMMARY" ]; then
-  DATE_STR=$(date +%Y-%m-%d)
-  TIME_STR=$(date +%H:%M)
-  {
-    echo ""
-    echo "### $DATE_STR $TIME_STR (compact前自動記録)"
-    echo "$SUMMARY"
-  } >> "$HISTORY_FILE"
-fi
+    # HISTORY.mdのパス
+    history_file = os.path.join(os.path.expanduser('~'), '.claude', 'agents', agent_name, 'HISTORY.md')
+    if not os.path.isfile(history_file):
+        return
+
+    # トランスクリプトから直近のやり取りを要約
+    if not transcript_path or not os.path.exists(transcript_path):
+        return
+
+    try:
+        size = os.path.getsize(transcript_path)
+        read_size = min(65536, size)
+        with open(transcript_path, 'rb') as f:
+            f.seek(max(0, size - read_size))
+            tail = f.read().decode('utf-8', errors='replace')
+
+        lines = [l for l in tail.split('\n') if l.strip()]
+        if len(lines) > 1:
+            lines = lines[1:]  # 先頭行は途中切れの可能性
+
+        parts = []
+        for line in lines[-20:]:
+            try:
+                entry = json.loads(line)
+                msg = entry.get('message', {})
+                if entry.get('type') == 'user' and msg.get('role') == 'user':
+                    content = msg.get('content', '')
+                    if isinstance(content, str) and content:
+                        parts.append('[User] ' + content[:100])
+                elif entry.get('type') == 'assistant' and msg.get('role') == 'assistant':
+                    content = msg.get('content', '')
+                    if isinstance(content, str) and content:
+                        parts.append('[Asst] ' + content[:150])
+                    elif isinstance(content, list):
+                        text = ''.join(b.get('text', '') for b in content if b.get('type') == 'text')
+                        if text:
+                            parts.append('[Asst] ' + text[:150])
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
+
+        if not parts:
+            return
+
+        # HISTORY.mdに追記
+        now = datetime.now()
+        date_str = now.strftime('%Y-%m-%d')
+        time_str = now.strftime('%H:%M')
+        summary = '\n'.join(parts[-4:])
+
+        with open(history_file, 'a', encoding='utf-8') as f:
+            f.write(f'\n### {date_str} {time_str} (compact前自動記録)\n{summary}\n')
+    except Exception:
+        pass
+
+main()
+" 2>/dev/null
 
 # コンパクションを許可（ブロックしない）
 exit 0
