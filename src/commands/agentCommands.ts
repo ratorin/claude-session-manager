@@ -130,10 +130,13 @@ context.subscriptions.push(
 	vscode.commands.registerCommand('claudeManager.addAgent', () => {
 		showAgentFormPanel(undefined, '', async (config) => {
 			if (!config.sessionId) { config.sessionId = ''; }
-			// ルール生成 + セッション自動作成 + 保存
+			// ルール生成 → ファイル書き込み → セッション自動作成 → 紐づけ保存
 			const [ruleConfig, ruleBody] = await prepareAgentRule(config, true);
+			await dataStore.addAgent(ruleConfig, ruleBody); // 先にファイルを作成（CLIが読めるように）
 			const finalConfig = await autoCreateSessionIfNeeded(ruleConfig, sessionServiceDeps);
-			await dataStore.addAgent(finalConfig, ruleBody);
+			if (finalConfig.sessionId !== ruleConfig.sessionId) {
+				await dataStore.addAgent(finalConfig); // セッションID紐づけを更新
+			}
 			await syncParentRuleFile(finalConfig.parentAgent, getExtensionOutputChannel());
 			refreshAll();
 			vscode.window.showInformationMessage(`「${finalConfig.name}」をエージェントとして登録しました`);
