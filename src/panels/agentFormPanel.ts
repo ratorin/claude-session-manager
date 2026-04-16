@@ -8,13 +8,13 @@ import { shouldShowInOrgChart } from '../utils/agentUtils';
 // フォームパネルの参照
 let formPanel: vscode.WebviewPanel | undefined;
 // 最新のコールバックを保持（パネル再利用時に古いコールバックが残るバグ対策）
-let currentOnSave: ((config: AgentConfig) => void) | undefined;
+let currentOnSave: ((config: AgentConfig) => void | Promise<void>) | undefined;
 
 // エージェント設定フォームをWebviewで表示
 export function showAgentFormPanel(
 	existing: AgentConfig | undefined,
 	sessionId: string,
-	onSave: (config: AgentConfig) => void
+	onSave: (config: AgentConfig) => void | Promise<void>
 ): void {
 	const title = existing ? `🤖 ${existing.name} の設定` : '🤖 エージェント登録';
 	currentOnSave = onSave;
@@ -41,7 +41,11 @@ export function showAgentFormPanel(
 
 	formPanel.webview.onDidReceiveMessage(async (message) => {
 		if (message.type === 'save') {
-			currentOnSave?.(message.config as AgentConfig);
+			try {
+				await currentOnSave?.(message.config as AgentConfig);
+			} catch (err) {
+				vscode.window.showErrorMessage(`エージェント保存エラー: ${err instanceof Error ? err.message : String(err)}`);
+			}
 			formPanel?.dispose();
 		} else if (message.type === 'cancel') {
 			formPanel?.dispose();
