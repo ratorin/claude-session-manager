@@ -286,12 +286,44 @@ export async function moveAgentScope(name: string, targetScope: 'global' | 'proj
 	if (!existing) { return false; }
 	if (existing.scope === targetScope) { return false; }
 
+	// 旧パスを記録
+	const oldFilePath = existing.filePath;
+	const oldDir = oldFilePath ? path.dirname(oldFilePath) : '';
+	const oldSubFolder = oldDir ? path.join(oldDir, name) : '';
+
 	// 新スコープにファイルを作成
 	const def: Parameters<typeof agentFileManager.writeAgentFile>[0] = {
 		...existing,
 		scope: targetScope,
 	};
-	await agentFileManager.writeAgentFile(def);
+	const newFilePath = await agentFileManager.writeAgentFile(def);
+
+	// サブフォルダ（TODO.md/HISTORY.md）を移動
+	const newDir = path.dirname(newFilePath);
+	const newSubFolder = path.join(newDir, name);
+	if (oldSubFolder) {
+		try {
+			await fs.promises.access(oldSubFolder);
+			await fs.promises.mkdir(newSubFolder, { recursive: true });
+			const files = await fs.promises.readdir(oldSubFolder);
+			for (const file of files) {
+				const src = path.join(oldSubFolder, file);
+				const dest = path.join(newSubFolder, file);
+				try {
+					await fs.promises.access(dest);
+					// 既に存在する場合はマージ（末尾に追記）
+					const srcContent = await fs.promises.readFile(src, 'utf-8');
+					await fs.promises.appendFile(dest, '\n' + srcContent, 'utf-8');
+				} catch {
+					await fs.promises.copyFile(src, dest);
+				}
+			}
+			// 旧サブフォルダを.trashに移動
+			const trashDir = path.join(oldDir, '.trash');
+			await fs.promises.mkdir(trashDir, { recursive: true });
+			await fs.promises.rename(oldSubFolder, path.join(trashDir, `${name}.${Date.now()}`));
+		} catch { /* サブフォルダが存在しない場合は無視 */ }
+	}
 
 	// 旧スコープのファイルを削除
 	await agentFileManager.deleteAgentFile(name);

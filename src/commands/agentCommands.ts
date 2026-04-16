@@ -49,7 +49,13 @@ async function saveAgentWithRule(
 	oldName: string | undefined,
 	oldParent: string | undefined,
 	isNewAgent: boolean = false,
+	oldScope?: 'global' | 'project',
 ): Promise<void> {
+	// スコープ変更時: ファイルを移動
+	const effectiveName = oldName || config.name;
+	if (oldScope && config.scope && oldScope !== config.scope) {
+		await dataStore.moveAgentScope(effectiveName, config.scope);
+	}
 	// ルール本文を生成
 	const [ruleConfig, ruleBody] = await prepareAgentRule(config, isNewAgent);
 	// 名前変更時: 旧ファイルを削除
@@ -82,8 +88,9 @@ context.subscriptions.push(
 			onEdit: (a) => {
 				const oldName = a.name;
 				const oldParent = a.parentAgent;
+				const oldScope = a.scope;
 				showAgentFormPanel(a, a.sessionId, async (config) => {
-					await saveAgentWithRule(config, oldName, oldParent);
+					await saveAgentWithRule(config, oldName, oldParent, false, oldScope);
 					vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
 				});
 			},
@@ -163,8 +170,9 @@ context.subscriptions.push(
 
 		const oldName = existing.name;
 		const oldParent = existing.parentAgent;
+		const oldScope = existing.scope;
 		showAgentFormPanel(existing, sessionId, async (config) => {
-			await saveAgentWithRule(config, oldName, oldParent);
+			await saveAgentWithRule(config, oldName, oldParent, false, oldScope);
 			vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
 		});
 	})
@@ -177,8 +185,9 @@ context.subscriptions.push(
 		if (!existing) { return; }
 		const oldName = existing.name;
 		const oldParent = existing.parentAgent;
+		const oldScope = existing.scope;
 		showAgentFormPanel(existing, sessionId, async (config) => {
-			await saveAgentWithRule(config, oldName, oldParent);
+			await saveAgentWithRule(config, oldName, oldParent, false, oldScope);
 			refreshAll();
 			vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
 		});
