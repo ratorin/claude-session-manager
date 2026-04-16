@@ -102,13 +102,14 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		const currentWorkspace = (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '')
 			.toLowerCase().replace(/\\/g, '/');
 
-		// scope: "project" のエージェントは workDir が現在のワークスペース配下のものだけ表示
+		// scope: "project" のエージェントは現在のワークスペースに属するもののみ表示
 		const agents = allAgents.filter((a) => {
 			if (a.scope !== 'project') { return true; } // グローバルエージェントは常に表示
-			if (!a.workDir) { return true; }             // workDirなしは常に表示
-			if (!currentWorkspace) { return true; }       // ワークスペース不明時は表示
-			const agentDir = a.workDir.toLowerCase().replace(/\\/g, '/');
-			return agentDir.startsWith(currentWorkspace) || currentWorkspace.startsWith(agentDir);
+			if (!currentWorkspace) { return true; }      // ワークスペース不明時は表示
+			// プロジェクトスコープ: ruleFileのパスまたはworkDirでワークスペース一致判定
+			const checkPath = (a.ruleFile || a.workDir || '').toLowerCase().replace(/\\/g, '/');
+			if (!checkPath) { return true; }             // パス情報なしは表示
+			return checkPath.startsWith(currentWorkspace) || currentWorkspace.startsWith(checkPath.split('/.claude/')[0] || '');
 		});
 
 		if (agents.length === 0) { return []; }
