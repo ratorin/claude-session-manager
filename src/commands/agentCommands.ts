@@ -12,6 +12,7 @@ import * as dataStore from '../models/dataStore';
 import { showAgentFormPanel } from '../panels/agentFormPanel';
 import { showAgentPreview } from '../panels/agentPreviewPanel';
 import { resolveRuleFilePath } from '../agents/agentManager';
+import { normalizeModel } from '../utils/agentUtils';
 import { syncParentRuleFile } from '../agents/parentChildSync';
 import { AgentWatcher } from '../watchers/agentWatcher';
 import {
@@ -277,18 +278,8 @@ context.subscriptions.push(
 					'合わせる', 'そのまま'
 				);
 				if (answer === '合わせる') {
-					// 実際のモデルから内部モデル名に変換（日付付きID対応）
-					function resolveModel(raw: string): string {
-						if (raw.includes('[1m]')) {
-							return raw.includes('sonnet') ? 'sonnet-1m' : 'opus';
-						}
-						if (raw.includes('opus')) { return 'opus'; }
-						if (raw.includes('sonnet')) { return 'sonnet'; }
-						if (raw.includes('haiku')) { return 'haiku'; }
-						return raw;
-					}
-					const newModel = picked.actualModel ? resolveModel(picked.actualModel) : picked.actualModel;
-					agentToSave = { ...agentToSave, model: newModel as typeof item.agent.model };
+					const newModel = picked.actualModel ? normalizeModel(picked.actualModel) : item.agent.model;
+					agentToSave = { ...agentToSave, model: newModel };
 				}
 			}
 		}

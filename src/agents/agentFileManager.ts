@@ -415,7 +415,7 @@ export async function saveAgentConfig(config: AgentConfig, body?: string): Promi
 	const def: Partial<AgentDefinition> & { name: string } = {
 		name: config.name,
 		displayName: config.displayName || existing?.displayName,
-		description: existing?.description || config.role || '',
+		description: config.role || existing?.description || '', // roleが更新されたらdescriptionも更新
 		displayDescription: config.displayDescription || existing?.displayDescription,
 		model: config.model,
 		memory: existing?.memory || 'project',

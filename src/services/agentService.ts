@@ -148,33 +148,19 @@ export async function addAffinitySettings(): Promise<void> {
 	}
 }
 
-// 取締役専用ルールファイル生成
-export async function generateDirectorRuleFile(config: AgentConfig): Promise<AgentConfig> {
+// 取締役専用ルール生成（prepareAgentRuleと同方式）
+// 戻り値: [更新されたconfig, ルール本文]
+export async function prepareDirectorRule(config: AgentConfig): Promise<[AgentConfig, string]> {
 	const description = buildDirectorDescription(config);
+	const agentsDir = getAgentsDir(config.scope);
+	if (!agentsDir) { return [config, description]; }
 
-	if (config.ruleFile) {
-		await updateRuleFrontmatter(config.ruleFile, config, description);
-		return config;
-	}
-	const ruleFolder = await dataStore.getRuleFolderForScope(config.scope);
-	if (!ruleFolder) { return config; }
-	const filePath = path.join(ruleFolder, `${config.name}.md`);
-	try {
-		await fs.promises.access(filePath);
-		await updateRuleFrontmatter(filePath, config, description);
-		return { ...config, ruleFile: filePath };
-	} catch {
-		// ファイルが存在しない → 新規作成
-	}
-	try {
-		await fs.promises.mkdir(ruleFolder, { recursive: true });
-		const frontmatter = generateFrontmatter(config, description);
-		const content = frontmatter + '\n\n<!-- 以下にカスタムルールを自由に追記してください。このエリアはCSMによる自動更新の対象外です。 -->\n';
-		await fs.promises.writeFile(filePath, content, 'utf-8');
-		return { ...config, ruleFile: filePath };
-	} catch {
-		return config;
-	}
+	// agents/<name>/ フォルダに TODO.md / HISTORY.md を作成
+	const agentFolder = path.join(agentsDir, config.name);
+	await ensureAgentFolderFiles(agentFolder, config.name);
+
+	const ruleFilePath = path.join(agentsDir, `${config.name}.md`);
+	return [{ ...config, ruleFile: ruleFilePath }, description];
 }
 
 // 取締役用 description テキストを構築

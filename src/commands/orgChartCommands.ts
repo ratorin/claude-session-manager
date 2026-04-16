@@ -14,7 +14,7 @@ import { showSessionPreview } from '../panels/webviewPanel';
 import { syncAllParentRuleFiles } from '../agents/parentChildSync';
 import { shouldShowInOrgChart } from '../utils/agentUtils';
 import { ensureSubagentHooks, writeOrgInfoToMemory } from '../services/hookService';
-import { generateDirectorRuleFile, addAffinitySettings } from '../services/agentService';
+import { prepareDirectorRule, addAffinitySettings } from '../services/agentService';
 import { getConfig } from '../utils/config';
 
 export interface OrgChartCommandsDeps {
@@ -126,8 +126,8 @@ context.subscriptions.push(
 			sessionMode: 'fixed',
 		};
 		showAgentFormPanel(preset, '', async (config) => {
-			const finalConfig = await generateDirectorRuleFile(config);
-			await dataStore.addAgent(finalConfig);
+			const [finalConfig, ruleBody] = await prepareDirectorRule(config);
+			await dataStore.addAgent(finalConfig, ruleBody);
 			await writeOrgInfoToMemory(finalConfig);
 			await ensureSubagentHooks(extensionOutputChannel);
 			await addAffinitySettings();
