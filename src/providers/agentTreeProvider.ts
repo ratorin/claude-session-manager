@@ -188,11 +188,18 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 
 		// scope: "project" のエージェントはワークスペース一致判定（フィルタON時は非表示、OFF時は灰色表示）
 		const isOtherProject = (a: AgentConfig): boolean => {
-			if (a.scope !== 'project') { return false; }
 			if (!currentWorkspace) { return false; }
-			const checkPath = (a.ruleFile || a.workDir || '').toLowerCase().replace(/\\/g, '/');
-			if (!checkPath) { return false; }
-			return !(checkPath.startsWith(currentWorkspace) || currentWorkspace.startsWith(checkPath.split('/.claude/')[0] || ''));
+			// workDirが設定されていて、現在のワークスペースと一致しない場合は「他プロジェクト」
+			if (a.workDir) {
+				const agentDir = a.workDir.toLowerCase().replace(/\\/g, '/');
+				return !(agentDir.startsWith(currentWorkspace) || currentWorkspace.startsWith(agentDir));
+			}
+			// プロジェクトスコープ: ruleFileのパスでワークスペース一致判定
+			if (a.scope === 'project' && a.ruleFile) {
+				const checkPath = a.ruleFile.toLowerCase().replace(/\\/g, '/');
+				return !checkPath.startsWith(currentWorkspace);
+			}
+			return false; // workDir未設定のグローバルエージェントは「他プロジェクト」扱いしない
 		};
 		const agents = this.hideOtherProjects
 			? allAgents.filter((a) => !isOtherProject(a))
