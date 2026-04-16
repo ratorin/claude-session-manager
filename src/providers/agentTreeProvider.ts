@@ -27,6 +27,13 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 	}
 	private activeAgentNamesFn: () => Set<string>;
 	private getVisibleTasksFn: ((agentName: string) => TaskLog[]) | undefined;
+	private hideOtherProjects: boolean = false;
+
+	setHideOtherProjects(hide: boolean): void {
+		this.hideOtherProjects = hide;
+		this.refresh();
+	}
+	getHideOtherProjects(): boolean { return this.hideOtherProjects; }
 
 	constructor(
 		getSessions: () => ParsedSession[],
@@ -102,15 +109,17 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		const currentWorkspace = (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '')
 			.toLowerCase().replace(/\\/g, '/');
 
-		// scope: "project" のエージェントは現在のワークスペースに属するもののみ表示
-		const agents = allAgents.filter((a) => {
-			if (a.scope !== 'project') { return true; } // グローバルエージェントは常に表示
-			if (!currentWorkspace) { return true; }      // ワークスペース不明時は表示
-			// プロジェクトスコープ: ruleFileのパスまたはworkDirでワークスペース一致判定
+		// scope: "project" のエージェントはワークスペース一致判定（フィルタON時は非表示、OFF時は灰色表示）
+		const isOtherProject = (a: AgentConfig): boolean => {
+			if (a.scope !== 'project') { return false; }
+			if (!currentWorkspace) { return false; }
 			const checkPath = (a.ruleFile || a.workDir || '').toLowerCase().replace(/\\/g, '/');
-			if (!checkPath) { return true; }             // パス情報なしは表示
-			return checkPath.startsWith(currentWorkspace) || currentWorkspace.startsWith(checkPath.split('/.claude/')[0] || '');
-		});
+			if (!checkPath) { return false; }
+			return !(checkPath.startsWith(currentWorkspace) || currentWorkspace.startsWith(checkPath.split('/.claude/')[0] || ''));
+		};
+		const agents = this.hideOtherProjects
+			? allAgents.filter((a) => !isOtherProject(a))
+			: allAgents;
 
 		if (agents.length === 0) { return []; }
 
@@ -194,7 +203,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				const hasTasks = this.getVisibleTasksFn ? this.getVisibleTasksFn(agent.name).length > 0 : false;
 				const hasChildrenFlag = childMap.has(agent.name) || hasTasks;
 				const ws = this.watcherStates.get(agent.name);
-				result.push(new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel));
+				result.push(new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent)));
 			}
 
 			// グローバルエージェント の仮想親ノード
@@ -223,7 +232,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			const hasTasks = this.getVisibleTasksFn ? this.getVisibleTasksFn(agent.name).length > 0 : false;
 			const hasChildren = childMap.has(agent.name) || hasTasks;
 			const ws = this.watcherStates.get(agent.name);
-			result.push(new AgentItem(agent, isLive, sessionTitle, true, hasChildren, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel));
+			result.push(new AgentItem(agent, isLive, sessionTitle, true, hasChildren, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent)));
 		}
 
 		// タスクログ
@@ -250,7 +259,8 @@ export class AgentItem extends vscode.TreeItem {
 		hasChildren: boolean = false,
 		ruleStr: string = '',
 		modelMismatch: boolean = false,
-		actualModel?: string
+		actualModel?: string,
+		public readonly isOtherProject: boolean = false,
 	) {
 		// モデル頭文字（会話一覧と同じ全角表記）
 		const modelChar = agent.model === 'opus' ? 'Ｏ'
@@ -306,20 +316,26 @@ export class AgentItem extends vscode.TreeItem {
 		// ⚪ 停止中（紐づけあり） = circle-outline + foreground
 		// ⚪ 停止中（未紐づけ） = circle-outline + disabledForeground
 		// 🟡 応答待ち（将来拡張用スタブ）= circle-filled + yellow
-		const agentStatus: 'running' | 'idle' | 'unlinked' =
-			isLive ? 'running'
-			: !agent.sessionId ? 'unlinked'
-			: 'idle';
-		switch (agentStatus) {
-			case 'running':
-				this.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('terminal.ansiGreen'));
-				break;
-			case 'idle':
-				this.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('foreground'));
-				break;
-			case 'unlinked':
-				this.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('disabledForeground'));
-				break;
+		// 他プロジェクトのエージェントは灰色表示
+		if (isOtherProject) {
+			this.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('disabledForeground'));
+			this.description = `🔒 ${agent.scope === 'project' ? '他プロジェクト' : ''} ${this.description || ''}`.trim();
+		} else {
+			const agentStatus: 'running' | 'idle' | 'unlinked' =
+				isLive ? 'running'
+				: !agent.sessionId ? 'unlinked'
+				: 'idle';
+			switch (agentStatus) {
+				case 'running':
+					this.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('terminal.ansiGreen'));
+					break;
+				case 'idle':
+					this.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('foreground'));
+					break;
+				case 'unlinked':
+					this.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('disabledForeground'));
+					break;
+			}
 		}
 
 		// contextValue: セッション紐づけで分岐（新形式では ruleFile 不要）

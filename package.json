@@ -300,6 +300,12 @@
 				"category": "Claude Session Manager"
 			},
 			{
+				"command": "claudeManager.toggleAgentFilter",
+				"title": "他プロジェクトのエージェント表示切替",
+				"icon": "$(eye)",
+				"category": "Claude Session Manager"
+			},
+			{
 				"command": "claudeManager.openProjectInVSC",
 				"title": "VS Codeで開く",
 				"icon": "$(folder-opened)",
@@ -401,6 +407,11 @@
 					"command": "claudeManager.openSettings",
 					"when": "view == claudeSessions",
 					"group": "navigation@999"
+				},
+				{
+					"command": "claudeManager.toggleAgentFilter",
+					"when": "view == claudeAgents",
+					"group": "navigation"
 				},
 				{
 					"command": "claudeManager.toggleBookmarkFilter",

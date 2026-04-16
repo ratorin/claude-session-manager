@@ -282,6 +282,15 @@ export function activate(context: vscode.ExtensionContext) {
 		sessionProvider, bookmarkProvider, memoryProvider, refreshAll,
 	});
 
+	// エージェントフィルター: 他プロジェクトのエージェントを非表示/表示切り替え
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.toggleAgentFilter', () => {
+			const current = agentProvider.getHideOtherProjects();
+			agentProvider.setHideOtherProjects(!current);
+			vscode.window.showInformationMessage(`他プロジェクトのエージェント: ${!current ? '非表示' : '表示（灰色）'}`);
+		})
+	);
+
 	// タスクログ自動クリーンアップ（起動時）
 	dataStore.cleanupTaskLogs();
 
