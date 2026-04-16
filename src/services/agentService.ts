@@ -102,6 +102,7 @@ function getAgentsDir(scope?: 'global' | 'project'): string | undefined {
 
 // 部署フォルダに TODO.md / HISTORY.md が存在しなければテンプレートを作成
 export async function ensureAgentFolderFiles(agentFolder: string, agentName: string): Promise<void> {
+	await fs.promises.mkdir(agentFolder, { recursive: true });
 	const todoPath = path.join(agentFolder, 'TODO.md');
 	const historyPath = path.join(agentFolder, 'HISTORY.md');
 	try {
