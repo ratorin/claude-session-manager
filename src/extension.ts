@@ -252,7 +252,7 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.createTreeView('claudeBookmarks', { treeDataProvider: bookmarkProvider }),
 		vscode.window.createTreeView('claudeTags', { treeDataProvider: tagProvider }),
 		vscode.window.createTreeView('claudeMemory', { treeDataProvider: memoryProvider }),
-		vscode.window.createTreeView('claudeAgents', { treeDataProvider: agentProvider }),
+		vscode.window.createTreeView('claudeAgents', { treeDataProvider: agentProvider, dragAndDropController: agentProvider, canSelectMany: false }),
 	);
 
 	// セッション・メモリ関連コマンド登録

@@ -9,8 +9,14 @@ import { shouldShowInOrgChart } from '../utils/agentUtils';
 
 type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem;
 
-// エージェント管理サイドバーのTreeDataProvider（ツリー構造対応）
-export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>, vscode.Disposable {
+// D&DのMIMEタイプ
+const AGENT_MIME = 'application/vnd.csm.agent';
+
+// エージェント管理サイドバーのTreeDataProvider（ツリー構造対応 + D&D）
+export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>, vscode.TreeDragAndDropController<AgentTreeNode>, vscode.Disposable {
+	// D&D対応
+	readonly dropMimeTypes = [AGENT_MIME];
+	readonly dragMimeTypes = [AGENT_MIME];
 	private _onDidChangeTreeData = new vscode.EventEmitter<AgentTreeNode | undefined>();
 	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
@@ -56,6 +62,77 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 
 	refresh(): void {
 		this._onDidChangeTreeData.fire(undefined);
+	}
+
+	// D&D: ドラッグ開始 — エージェント名をDataTransferに格納
+	handleDrag(sources: readonly AgentTreeNode[], dataTransfer: vscode.DataTransfer): void {
+		const agentItems = sources.filter((s): s is AgentItem => s instanceof AgentItem);
+		if (agentItems.length === 0) { return; }
+		dataTransfer.set(AGENT_MIME, new vscode.DataTransferItem(agentItems[0].agent.name));
+	}
+
+	// D&D: ドロップ — 親子関係を変更
+	async handleDrop(target: AgentTreeNode | undefined, dataTransfer: vscode.DataTransfer): Promise<void> {
+		const item = dataTransfer.get(AGENT_MIME);
+		if (!item) { return; }
+		const draggedName = item.value as string;
+		if (!draggedName) { return; }
+
+		const agents = await dataStore.getAgents();
+		const dragged = agents.find(a => a.name === draggedName);
+		if (!dragged) { return; }
+
+		let newParent: string | undefined;
+		let newShowInOrgChart: boolean | undefined;
+
+		if (!target) {
+			// トップレベルにドロップ → 組織図トップ（親なし）
+			newParent = undefined;
+			newShowInOrgChart = true;
+		} else if (target instanceof AgentItem) {
+			// エージェントの上にドロップ → そのエージェントを親に
+			if (target.agent.name === draggedName) { return; } // 自分自身にはドロップ不可
+			newParent = target.agent.name;
+			newShowInOrgChart = true;
+
+			// 循環参照チェック
+			const { hasCircularRef } = await import('../agents/parentChildSync');
+			if (hasCircularRef(draggedName, target.agent.name, agents)) {
+				vscode.window.showWarningMessage('循環参照になるため設定できません');
+				return;
+			}
+		} else if (target instanceof GlobalAgentsSectionItem) {
+			// グローバルセクションにドロップ → グローバルエージェント
+			newParent = undefined;
+			newShowInOrgChart = false;
+		} else {
+			return; // バナー等へのドロップは無視
+		}
+
+		// 旧親の同期用
+		const oldParent = dragged.parentAgent;
+
+		// 更新
+		const updated: AgentConfig = {
+			...dragged,
+			parentAgent: newParent,
+			showInOrgChart: newShowInOrgChart,
+		};
+		await dataStore.addAgent(updated);
+
+		// 親子ルール同期
+		const { syncParentRuleFile } = await import('../agents/parentChildSync');
+		const ch = vscode.window.createOutputChannel('CSM D&D');
+		if (oldParent && oldParent !== newParent) {
+			await syncParentRuleFile(oldParent, ch);
+		}
+		if (newParent) {
+			await syncParentRuleFile(newParent, ch);
+		}
+
+		this.refresh();
+		const targetLabel = newParent || (newShowInOrgChart ? '組織図トップ' : 'グローバル');
+		vscode.window.showInformationMessage(`「${dragged.displayName || dragged.name}」を「${targetLabel}」に移動しました`);
 	}
 
 	getTreeItem(element: AgentTreeNode): vscode.TreeItem {
