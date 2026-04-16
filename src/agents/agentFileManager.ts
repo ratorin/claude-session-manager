@@ -213,12 +213,35 @@ export async function getAllAgents(): Promise<AgentDefinition[]> {
 	// グローバルエージェント に和訳を適用
 	globalAgents = applyGlobalAgentsI18n(globalAgents);
 
-	// プロジェクトが優先（同名はプロジェクトのみ残す）
-	const projectNames = new Set(projectAgents.map(a => a.name));
-	const merged = [
-		...projectAgents,
-		...globalAgents.filter(a => !projectNames.has(a.name)),
-	];
+	// 追加ディレクトリのスキャン: VS Codeの追加作業ディレクトリの .claude/agents/ も読む
+	const additionalAgents: AgentDefinition[] = [];
+	const scannedDirs = new Set([globalDir.toLowerCase(), (projectDir || '').toLowerCase()].filter(Boolean));
+	const workspaceFolders = vscode.workspace.workspaceFolders || [];
+	for (const folder of workspaceFolders) {
+		const dir = path.join(folder.uri.fsPath, '.claude', 'agents');
+		if (scannedDirs.has(dir.toLowerCase())) { continue; }
+		scannedDirs.add(dir.toLowerCase());
+		const agents = await scanAgentsDir(dir, 'project');
+		additionalAgents.push(...agents);
+	}
+	// workDirが設定されたグローバルエージェントのworkDir/.claude/agents/ もスキャン
+	for (const agent of globalAgents) {
+		if (!agent.workDir) { continue; }
+		const dir = path.join(agent.workDir, '.claude', 'agents');
+		if (scannedDirs.has(dir.toLowerCase())) { continue; }
+		scannedDirs.add(dir.toLowerCase());
+		const agents = await scanAgentsDir(dir, 'project');
+		additionalAgents.push(...agents);
+	}
+
+	// マージ: プロジェクト > 追加ディレクトリ > グローバル（同名は先勝ち）
+	const seenNames = new Set<string>();
+	const merged: AgentDefinition[] = [];
+	for (const a of [...projectAgents, ...additionalAgents, ...globalAgents]) {
+		if (seenNames.has(a.name)) { continue; }
+		seenNames.add(a.name);
+		merged.push(a);
+	}
 
 	cachedAgents = merged;
 	cachedTimestamp = now;
