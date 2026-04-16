@@ -59,22 +59,23 @@ export async function updateRuleFrontmatter(filePath: string, config: AgentConfi
 
 // エージェント作成・更新時にルール本文を生成し、agents/<name>/ にTODO/HISTORYを配置
 // 戻り値: [更新されたconfig, ルール本文]
-export async function prepareAgentRule(config: AgentConfig): Promise<[AgentConfig, string]> {
+export async function prepareAgentRule(config: AgentConfig, isNewAgent: boolean = false): Promise<[AgentConfig, string]> {
 	const description = buildDescription(config);
 	const agentsDir = getAgentsDir(config.scope);
 	if (!agentsDir) { return [config, description]; }
 
-	// 名前重複チェック: 他スコープに同名エージェントが存在する場合はエラー
-	const otherScope = config.scope === 'global' ? 'project' : 'global';
-	const otherDir = getAgentsDir(otherScope);
-	if (otherDir) {
-		const otherFile = path.join(otherDir, `${config.name}.md`);
-		try {
-			await fs.promises.access(otherFile);
-			throw new Error(`同名のエージェントが${otherScope === 'global' ? 'グローバル' : 'プロジェクト'}スコープに既に存在します: ${config.name}`);
-		} catch (err) {
-			if (err instanceof Error && err.message.includes('同名')) { throw err; }
-			// ファイルが存在しない → OK
+	// 名前重複チェック: 新規作成時のみ、他スコープに同名エージェントが存在する場合はエラー
+	if (isNewAgent) {
+		const otherScope = config.scope === 'global' ? 'project' : 'global';
+		const otherDir = getAgentsDir(otherScope);
+		if (otherDir) {
+			const otherFile = path.join(otherDir, `${config.name}.md`);
+			try {
+				await fs.promises.access(otherFile);
+				throw new Error(`同名のエージェントが${otherScope === 'global' ? 'グローバル' : 'プロジェクト'}スコープに既に存在します: ${config.name}`);
+			} catch (err) {
+				if (err instanceof Error && err.message.includes('同名')) { throw err; }
+			}
 		}
 	}
 

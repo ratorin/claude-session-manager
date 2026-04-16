@@ -48,9 +48,10 @@ async function saveAgentWithRule(
 	config: AgentConfig,
 	oldName: string | undefined,
 	oldParent: string | undefined,
+	isNewAgent: boolean = false,
 ): Promise<void> {
 	// ルール本文を生成
-	const [ruleConfig, ruleBody] = await prepareAgentRule(config);
+	const [ruleConfig, ruleBody] = await prepareAgentRule(config, isNewAgent);
 	// 名前変更時: 旧ファイルを削除
 	if (oldName && ruleConfig.name !== oldName) {
 		await dataStore.removeAgent(oldName);
@@ -118,7 +119,7 @@ context.subscriptions.push(
 context.subscriptions.push(
 	vscode.commands.registerCommand('claudeManager.registerAgent', (item: SessionItem) => {
 		showAgentFormPanel(undefined, item.session.id, async (config) => {
-			await saveAgentWithRule(config, undefined, undefined);
+			await saveAgentWithRule(config, undefined, undefined, true);
 			vscode.window.showInformationMessage(`「${config.name}」をエージェントとして登録しました`);
 		});
 	})
@@ -130,7 +131,7 @@ context.subscriptions.push(
 		showAgentFormPanel(undefined, '', async (config) => {
 			if (!config.sessionId) { config.sessionId = ''; }
 			// ルール生成 + セッション自動作成 + 保存
-			const [ruleConfig, ruleBody] = await prepareAgentRule(config);
+			const [ruleConfig, ruleBody] = await prepareAgentRule(config, true);
 			const finalConfig = await autoCreateSessionIfNeeded(ruleConfig, sessionServiceDeps);
 			await dataStore.addAgent(finalConfig, ruleBody);
 			await syncParentRuleFile(finalConfig.parentAgent, getExtensionOutputChannel());
