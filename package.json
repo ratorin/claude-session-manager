@@ -695,6 +695,12 @@
 					"maximum": 5000,
 					"description": "セッション一覧に表示する最大件数。多すぎると動作が重くなる場合があります"
 				},
+				"claudeManager.additionalAgentDirs": {
+					"type": "array",
+					"default": [],
+					"items": { "type": "string" },
+					"markdownDescription": "追加でスキャンするプロジェクトフォルダのリスト。各フォルダの `.claude/agents/` 内のエージェント定義を読み込みます。\n\n例: `[\"c:\\\\workspace\\\\CMS\", \"c:\\\\GDrive\"]`"
+				},
 				"claudeManager.sessionFilterMode": {
 					"type": "string",
 					"default": "all",

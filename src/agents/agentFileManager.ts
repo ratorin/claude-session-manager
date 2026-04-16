@@ -224,6 +224,16 @@ export async function getAllAgents(): Promise<AgentDefinition[]> {
 		const agents = await scanAgentsDir(dir, 'project');
 		additionalAgents.push(...agents);
 	}
+	// 設定で指定された追加プロジェクトフォルダの .claude/agents/ をスキャン
+	const additionalDirs: string[] = vscode.workspace.getConfiguration('claudeManager').get<string[]>('additionalAgentDirs', []);
+	for (const baseDir of additionalDirs) {
+		if (!baseDir) { continue; }
+		const dir = path.join(baseDir, '.claude', 'agents');
+		if (scannedDirs.has(dir.toLowerCase())) { continue; }
+		scannedDirs.add(dir.toLowerCase());
+		const agents = await scanAgentsDir(dir, 'project');
+		additionalAgents.push(...agents);
+	}
 	// workDirが設定されたグローバルエージェントのworkDir/.claude/agents/ もスキャン
 	for (const agent of globalAgents) {
 		if (!agent.workDir) { continue; }
