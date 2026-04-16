@@ -1,10 +1,43 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { ParsedSession, SimpleMessage, MemoryFile } from '../models/types';
 import { loadSessionFull } from '../utils/sessionLoader';
 import * as dataStore from '../models/dataStore';
+
+// ガバナンスイベントの型
+interface GovernanceEvent {
+	id: string;
+	sessionId: string | null;
+	eventType: string;
+	toolName: string;
+	hookPhase: string;
+	payload: Record<string, unknown>;
+	timestamp: string;
+}
+
+// governance-events.jsonlからセッションIDに該当するイベントを読み込む
+async function loadGovernanceEvents(sessionId: string): Promise<GovernanceEvent[]> {
+	const eventsFile = path.join(os.homedir(), '.claude', 'governance-events.jsonl');
+	try {
+		const content = await fs.promises.readFile(eventsFile, 'utf-8');
+		const events: GovernanceEvent[] = [];
+		for (const line of content.split('\n')) {
+			if (!line.trim()) { continue; }
+			try {
+				const event = JSON.parse(line) as GovernanceEvent;
+				if (event.sessionId === sessionId) {
+					events.push(event);
+				}
+			} catch { /* パース失敗は無視 */ }
+		}
+		return events;
+	} catch {
+		return [];
+	}
+}
 
 // H-6: ファイルパスの安全性検証（ワークスペース・tmp・.claude 配下のみ許可）
 function isAllowedFilePath(filePath: string): boolean {
@@ -121,6 +154,7 @@ export async function showSessionPreview(session: ParsedSession, context: vscode
 	const tags = await dataStore.getTagsForSession(session.id);
 	const title = `💬 ${session.customName || session.claudeTitle || session.firstMessage.substring(0, 30)}`;
 	const agent = await dataStore.getAgentBySessionId(session.id);
+	const govEvents = await loadGovernanceEvents(session.id);
 
 	// セッション情報をモジュール変数に保持（ハンドラーから参照）
 	currentSession = session;
@@ -128,7 +162,7 @@ export async function showSessionPreview(session: ParsedSession, context: vscode
 
 	if (previewPanel) {
 		previewPanel.title = title;
-		previewPanel.webview.html = getSessionHtml(fullSession, note, tags, agent);
+		previewPanel.webview.html = getSessionHtml(fullSession, note, tags, agent, govEvents);
 		previewPanel.reveal(vscode.ViewColumn.One);
 	} else {
 		previewPanel = vscode.window.createWebviewPanel(
@@ -137,7 +171,7 @@ export async function showSessionPreview(session: ParsedSession, context: vscode
 			vscode.ViewColumn.One,
 			{ enableScripts: true }
 		);
-		previewPanel.webview.html = getSessionHtml(fullSession, note, tags, agent);
+		previewPanel.webview.html = getSessionHtml(fullSession, note, tags, agent, govEvents);
 		previewPanel.onDidDispose(() => {
 			previewPanel = undefined;
 			currentSession = null;
@@ -208,7 +242,7 @@ export async function showSessionPreview(session: ParsedSession, context: vscode
 	}
 }
 
-function getSessionHtml(session: ParsedSession, note: string, tags: string[], agent?: import('../models/types').AgentConfig): string {
+function getSessionHtml(session: ParsedSession, note: string, tags: string[], agent?: import('../models/types').AgentConfig, govEvents: GovernanceEvent[] = []): string {
 	// エージェント情報をヘッダに表示
 	const agentHeaderHtml = agent
 		? `<div class="agent-badge">
@@ -565,6 +599,39 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 			<textarea class="note-textarea" id="noteInput" placeholder="この会話の役割や目的をメモ...">${escapeHtml(note)}</textarea>
 		</div>
 	</div>
+	${govEvents.length > 0 ? `
+	<!-- ガバナンスイベント -->
+	<div style="padding: 6px 16px; border-top: 1px solid var(--vscode-panel-border); font-size: 0.8em;">
+		<details>
+			<summary style="cursor:pointer; font-weight:600; color: var(--vscode-descriptionForeground);">🛡 Actions Log (${govEvents.length}件)</summary>
+			<table style="width:100%; border-collapse:collapse; margin-top:4px; font-size:0.9em;">
+				<tr style="border-bottom:1px solid var(--vscode-panel-border);">
+					<th style="text-align:left; padding:2px 6px;">時刻</th>
+					<th style="text-align:left; padding:2px 6px;">種別</th>
+					<th style="text-align:left; padding:2px 6px;">ツール</th>
+					<th style="text-align:left; padding:2px 6px;">内容</th>
+				</tr>
+				${govEvents.map(e => {
+					const time = e.timestamp ? new Date(e.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '';
+					const typeLabel = e.eventType === 'secret_detected' ? '🔑 秘密鍵'
+						: e.eventType === 'policy_violation' ? '⚠ ポリシー'
+						: e.eventType === 'approval_requested' ? '🚨 承認要求'
+						: e.eventType === 'security_finding' ? '🔒 セキュリティ'
+						: e.eventType;
+					const detail = e.payload
+						? (e.payload.filePath || e.payload.commandName || (e.payload.secretTypes as string[])?.join(', ') || JSON.stringify(e.payload).substring(0, 60))
+						: '';
+					return `<tr style="border-bottom:1px solid var(--vscode-panel-border); opacity:0.85;">
+						<td style="padding:2px 6px; white-space:nowrap;">${time}</td>
+						<td style="padding:2px 6px;">${typeLabel}</td>
+						<td style="padding:2px 6px;">${e.toolName}</td>
+						<td style="padding:2px 6px;">${escapeHtml(String(detail))}</td>
+					</tr>`;
+				}).join('')}
+			</table>
+		</details>
+	</div>
+	` : ''}
 
 	<!-- 下部: 会話 -->
 	<div class="chat-panel">

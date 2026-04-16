@@ -16,7 +16,7 @@ import { registerMigrationCommands } from './commands/migrationCommands';
 import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
 import { getConfig } from './utils/config';
-import { ensurePreCompactHook } from './services/hookService';
+import { ensurePreCompactHook, ensureGovernanceHook } from './services/hookService';
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -30,6 +30,10 @@ export function activate(context: vscode.ExtensionContext) {
 	// PreCompact hook の自動デプロイ（テンプレート→~/.claude/hooks/ + settings.json登録）
 	const extensionOutputChannelEarly = vscode.window.createOutputChannel('CSM Hook Setup');
 	ensurePreCompactHook(context.extensionPath, extensionOutputChannelEarly).catch(() => {
+		// hook登録失敗は致命的ではない
+	});
+	// Governance Capture hookの自動デプロイ（JSONL記録）
+	ensureGovernanceHook(context.extensionPath, extensionOutputChannelEarly).catch(() => {
 		// hook登録失敗は致命的ではない
 	});
 

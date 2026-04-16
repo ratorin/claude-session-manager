@@ -193,6 +193,86 @@ export async function ensurePreCompactHook(extensionPath: string, outputChannel:
 	}
 }
 
+// CSM Governance Capture hookを settings.json に登録（PreToolUse/PostToolUse）
+export async function ensureGovernanceHook(extensionPath: string, outputChannel: vscode.OutputChannel): Promise<void> {
+	const homeDir = os.homedir();
+	const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+	const hooksDir = path.join(homeDir, '.claude', 'hooks');
+	const hookScript = path.join(hooksDir, 'csm-governance-capture.js');
+	const CSM_MARKER = 'csm-governance-capture';
+
+	// 1. テンプレートからスクリプトをデプロイ
+	try {
+		await fs.promises.access(hookScript);
+	} catch {
+		const templatePath = path.join(extensionPath, 'templates', 'csm-governance-capture.js');
+		try {
+			const content = await fs.promises.readFile(templatePath, 'utf-8');
+			await fs.promises.mkdir(hooksDir, { recursive: true });
+			await fs.promises.writeFile(hookScript, content, 'utf-8');
+			outputChannel.appendLine(`[${new Date().toISOString()}] csm-governance-capture.js をデプロイしました`);
+		} catch {
+			return;
+		}
+	}
+
+	// 2. settings.json にPreToolUse/PostToolUse hookを登録
+	try {
+		let settings: Record<string, unknown> = {};
+		try {
+			const raw = await fs.promises.readFile(settingsPath, 'utf-8');
+			settings = JSON.parse(raw);
+		} catch {
+			return;
+		}
+
+		if (!settings.hooks || typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) {
+			settings.hooks = {};
+		}
+		const hooksObj = settings.hooks as Record<string, unknown>;
+		const scriptCmd = `node "${hookScript.replace(/\\/g, '/')}"`;
+		let changed = false;
+
+		for (const eventKey of ['PreToolUse', 'PostToolUse']) {
+			const entries = hooksObj[eventKey];
+			// 既に登録済みか確認
+			if (Array.isArray(entries)) {
+				const alreadyInstalled = entries.some((entry: Record<string, unknown>) => {
+					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+					if (!Array.isArray(innerHooks)) { return false; }
+					return innerHooks.some((hh: Record<string, unknown>) =>
+						typeof hh.command === 'string' && hh.command.includes(CSM_MARKER)
+					);
+				});
+				if (alreadyInstalled) { continue; }
+			}
+
+			if (!Array.isArray(hooksObj[eventKey])) {
+				hooksObj[eventKey] = [];
+			}
+			const arr = hooksObj[eventKey] as Array<Record<string, unknown>>;
+			arr.push({
+				matcher: 'Bash|Write|Edit|MultiEdit',
+				hooks: [{
+					type: 'command',
+					command: scriptCmd,
+					timeout: 10,
+				}]
+			});
+			changed = true;
+		}
+
+		if (changed) {
+			const backupPath = settingsPath + `.bak.${Date.now()}`;
+			try { await fs.promises.copyFile(settingsPath, backupPath); } catch { /* */ }
+			await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, '\t'), 'utf-8');
+			outputChannel.appendLine(`[${new Date().toISOString()}] CSM Governance hookを settings.json に登録しました`);
+		}
+	} catch (err) {
+		outputChannel.appendLine(`[${new Date().toISOString()}] Governance hook登録エラー: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
 // settings.json に check-csm-ask-agent hook を登録
 export async function registerCsmAskAgentHook(claudeDir: string): Promise<void> {
 	const settingsPath = path.join(claudeDir, 'settings.json');
