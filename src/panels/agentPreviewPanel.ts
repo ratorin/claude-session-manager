@@ -9,6 +9,7 @@ import * as dataStore from '../models/dataStore';
 // プレビューパネルの参照
 let previewPanel: vscode.WebviewPanel | undefined;
 let messageListenerDisposable: vscode.Disposable | undefined;
+let currentSessionTitle: string | undefined;
 
 export interface AgentPreviewCallbacks {
 	onEdit: (agent: AgentConfig) => void;
@@ -25,6 +26,7 @@ export async function showAgentPreview(
 	sessionTitle: string | undefined,
 	callbacks: AgentPreviewCallbacks
 ): Promise<void> {
+	currentSessionTitle = sessionTitle;
 	const displayName = agent.displayName ? `${agent.displayName}（${agent.name}）` : agent.name;
 	const title = `🤖 ${displayName}`;
 	const html = await getPreviewHtml(agent, isLive, sessionTitle);
@@ -106,8 +108,8 @@ function rebindMessages(
 								await fs.promises.writeFile(filePath, template, 'utf-8');
 							}
 						}
-						// プレビューを再表示
-						const html = await getPreviewHtml(agent, false, undefined);
+						// プレビューを再表示（sessionTitleを保持）
+						const html = await getPreviewHtml(agent, false, currentSessionTitle);
 						panel.webview.html = html;
 					});
 				}
@@ -259,9 +261,11 @@ async function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle:
 	const commons = allAgents.filter(a => ['qa', 'researcher'].includes(a.name) && !alreadyListed.has(a.name));
 	const collaborators = [...siblings, ...commons];
 
-	// セッション
+	// セッション: 名前とIDを併記
 	const sessionLabel = agent.sessionId
-		? (sessionTitle || `${agent.sessionId.substring(0, 12)}...`)
+		? (sessionTitle
+			? `${sessionTitle}  \`${agent.sessionId.substring(0, 8)}...\``
+			: `\`${agent.sessionId.substring(0, 16)}...\``)
 		: '未紐づけ';
 
 	// TODO.md / HISTORY.md
