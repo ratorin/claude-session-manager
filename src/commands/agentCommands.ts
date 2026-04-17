@@ -21,6 +21,7 @@ import {
 	appendSessionHistoryToRuleFile, SessionServiceDeps,
 } from '../services/sessionService';
 import { prepareAgentRule } from '../services/agentService';
+import { ensureSessionAgentInjectHook } from '../services/hookService';
 
 export interface AgentCommandsDeps {
 	sessionProvider: SessionTreeProvider;
@@ -42,6 +43,22 @@ export function registerAgentCommands(
 		sessionServiceDeps, refreshAll, getExtensionOutputChannel,
 		updateStatusBar, extensionOutputChannel,
 	} = deps;
+
+// 初回エージェント登録時: 役割自動認識(SessionStart hook)の有効化を提案
+const SESSION_INJECT_ASKED_KEY = 'csm.sessionAgentInject.asked';
+async function promptSessionInjectIfFirstTime(context: vscode.ExtensionContext): Promise<void> {
+	if (context.globalState.get<boolean>(SESSION_INJECT_ASKED_KEY)) { return; }
+	await context.globalState.update(SESSION_INJECT_ASKED_KEY, true);
+	const choice = await vscode.window.showInformationMessage(
+		'エージェントを作成しました。紐づけ後にClaudeが自動で役割を認識する機能を有効化しますか？\n（SessionStart hookを~/.claude/settings.jsonに登録します）',
+		'有効化',
+		'後で',
+	);
+	if (choice === '有効化') {
+		await ensureSessionAgentInjectHook(context.extensionPath, extensionOutputChannel);
+		vscode.window.showInformationMessage('役割自動認識を有効化しました。次回セッション開始時から動作します。');
+	}
+}
 
 // エージェント保存共通ヘルパー（body生成 + 名前変更対応 + 親子同期）
 async function saveAgentWithRule(
@@ -128,6 +145,7 @@ context.subscriptions.push(
 		showAgentFormPanel(undefined, item.session.id, async (config) => {
 			await saveAgentWithRule(config, undefined, undefined, true);
 			vscode.window.showInformationMessage(`「${config.name}」をエージェントとして登録しました`);
+			await promptSessionInjectIfFirstTime(context);
 		});
 	})
 );
@@ -147,6 +165,7 @@ context.subscriptions.push(
 			await syncParentRuleFile(finalConfig.parentAgent, getExtensionOutputChannel());
 			refreshAll();
 			vscode.window.showInformationMessage(`「${finalConfig.name}」をエージェントとして登録しました`);
+			await promptSessionInjectIfFirstTime(context);
 		});
 	})
 );
