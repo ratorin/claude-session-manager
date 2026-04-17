@@ -165,17 +165,45 @@ export async function ensureSessionAgentInjectHook(extensionPath: string, output
 		}
 		const hooksObj = settings.hooks as Record<string, unknown>;
 
-		// 既に登録済みか確認
+		// 既に登録済みか確認（旧bash版をNode.js版に自動マイグレーション）
 		const sessionStart = hooksObj['SessionStart'];
 		if (Array.isArray(sessionStart)) {
-			const alreadyInstalled = sessionStart.some((entry: Record<string, unknown>) => {
+			let needsMigration = false;
+			let alreadyNodeInstalled = false;
+
+			for (const entry of sessionStart as Array<Record<string, unknown>>) {
 				const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
-				if (!Array.isArray(innerHooks)) { return false; }
-				return innerHooks.some((hh: Record<string, unknown>) =>
-					typeof hh.command === 'string' && hh.command.includes(CSM_MARKER)
-				);
-			});
-			if (alreadyInstalled) { return; }
+				if (!Array.isArray(innerHooks)) { continue; }
+				for (const hh of innerHooks) {
+					if (typeof hh.command !== 'string') { continue; }
+					if (!hh.command.includes(CSM_MARKER)) { continue; }
+					if (hh.command.includes('.sh')) {
+						needsMigration = true; // 旧bash版が存在
+					} else if (hh.command.includes('.js')) {
+						alreadyNodeInstalled = true; // 新Node.js版が存在
+					}
+				}
+			}
+
+			if (alreadyNodeInstalled && !needsMigration) { return; } // 最新版がインストール済み
+
+			if (needsMigration) {
+				// bash版エントリを削除してNode.js版に置き換え
+				hooksObj['SessionStart'] = (sessionStart as Array<Record<string, unknown>>).map((entry) => {
+					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+					if (!Array.isArray(innerHooks)) { return entry; }
+					const hasOldHook = innerHooks.some((hh) =>
+						typeof hh.command === 'string' && hh.command.includes(CSM_MARKER) && hh.command.includes('.sh')
+					);
+					if (!hasOldHook) { return entry; }
+					// bash版を除去
+					const filtered = innerHooks.filter((hh) =>
+						!(typeof hh.command === 'string' && hh.command.includes(CSM_MARKER))
+					);
+					return filtered.length === 0 ? null : { ...entry, hooks: filtered };
+				}).filter(Boolean);
+				outputChannel.appendLine(`[${new Date().toISOString()}] csm-session-agent-inject: bash版→Node.js版へ自動マイグレーション`);
+			}
 		}
 
 		if (!Array.isArray(hooksObj['SessionStart'])) {
