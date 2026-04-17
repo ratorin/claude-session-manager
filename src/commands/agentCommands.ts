@@ -262,10 +262,16 @@ context.subscriptions.push(
 			});
 		}
 
-		if (sessionItems.length === 0) {
-			vscode.window.showInformationMessage('紐づけ可能なセッションがありません');
-			return;
-		}
+		// リスト末尾に「+ 新しいセッションを作成」オプションを追加
+		const NEW_SESSION_ID = '__csm_new_session__';
+		sessionItems.push({
+			label: '$(add) 新しいセッションを作成してこのエージェントに紐づける',
+			description: `claude --agent ${item.agent.name} で新規セッションを起動`,
+			sessionId: NEW_SESSION_ID,
+			actualModel: undefined,
+			alreadyLinked: false,
+			linkedAgentName: undefined,
+		});
 
 		const isAlreadyLinked = !!item.agent.sessionId;
 
@@ -280,10 +286,33 @@ context.subscriptions.push(
 		}
 
 		const picked = await vscode.window.showQuickPick(sessionItems, {
-			placeHolder: '紐づけるセッションを選択',
+			placeHolder: '紐づけるセッションを選択（または末尾で新規作成）',
 			title: `「${item.agent.displayName || item.agent.name}」に${isAlreadyLinked ? 'セッションを変更' : 'セッションを紐づけ'}`,
 		});
 		if (!picked) { return; }
+
+		// 新規セッション作成パス
+		if (picked.sessionId === NEW_SESSION_ID) {
+			try {
+				const newSessionId = await vscode.window.withProgress(
+					{
+						location: vscode.ProgressLocation.Notification,
+						title: `「${item.agent.name}」の新規セッションを作成中...`,
+						cancellable: false,
+					},
+					async () => {
+						const { createSessionForAgent } = await import('../services/sessionService');
+						return createSessionForAgent(item.agent, sessionServiceDeps);
+					}
+				);
+				await dataStore.addAgent({ ...item.agent, sessionId: newSessionId });
+				refreshAll();
+				vscode.window.showInformationMessage(`新規セッションを作成して「${item.agent.name}」に紐づけました`);
+			} catch (err) {
+				vscode.window.showErrorMessage(`新規セッション作成に失敗しました: ${err instanceof Error ? err.message : String(err)}`);
+			}
+			return;
+		}
 
 		// 他エージェントに紐づけ済みの場合は警告
 		if (picked.alreadyLinked && picked.linkedAgentName !== item.agent.name) {
