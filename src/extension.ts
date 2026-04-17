@@ -17,9 +17,13 @@ import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
 import { getConfig } from './utils/config';
 import { ensurePreCompactHook, ensureGovernanceHook, ensureSessionAgentInjectHook } from './services/hookService';
+import { runV04Migration } from './services/migrationService';
 
 
 export function activate(context: vscode.ExtensionContext) {
+	// パッケージバージョン取得
+	const currentVersion: string = context.extension.packageJSON?.version ?? '0.0.0';
+
 	// session-manager.json マイグレーション: agents[] → agentSessions（一度だけ実行）
 	dataStore.migrateAgentsToAgentSessions().catch(() => {
 		// マイグレーション失敗は致命的ではないため、エラーを無視
@@ -27,8 +31,13 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// /csm-ask-agent のインストール状態はエージェントツリーのバナーで表示
 
-	// PreCompact hook の自動デプロイ（テンプレート→~/.claude/hooks/ + settings.json登録）
+	// v0.4.x マイグレーション（バージョン追跡＋バックスラッシュ自動修正）
 	const extensionOutputChannelEarly = vscode.window.createOutputChannel('CSM Hook Setup');
+	runV04Migration(context, currentVersion, extensionOutputChannelEarly).catch(() => {
+		// マイグレーション失敗は致命的ではない
+	});
+
+	// PreCompact hook の自動デプロイ（テンプレート→~/.claude/hooks/ + settings.json登録）
 	ensurePreCompactHook(context.extensionPath, extensionOutputChannelEarly).catch(() => {
 		// hook登録失敗は致命的ではない
 	});
