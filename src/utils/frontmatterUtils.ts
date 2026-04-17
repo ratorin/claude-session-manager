@@ -272,9 +272,17 @@ export function parseFrontmatterExtended(content: string): ParsedFrontmatterExte
 			} else if (/^\d+$/.test(rawValue)) {
 				data[key] = parseInt(rawValue, 10);
 			} else {
-				// クォート除去
-				const unquoted = rawValue.replace(/^(["'])(.*)\1$/, '$2');
-				data[key] = unquoted;
+				// クォート除去 + エスケープ解除
+				const quoteMatch = rawValue.match(/^(["'])(.*)\1$/);
+				if (quoteMatch && quoteMatch[1] === '"') {
+					// ダブルクォート: \\ → \, \" → " をデコード
+					data[key] = quoteMatch[2].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+				} else if (quoteMatch) {
+					// シングルクォート: エスケープなし
+					data[key] = quoteMatch[2];
+				} else {
+					data[key] = rawValue;
+				}
 			}
 		}
 		i++;
