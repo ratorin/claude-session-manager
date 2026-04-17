@@ -237,15 +237,27 @@ export class AgentWatcher implements vscode.Disposable {
 		const cfg = configModel.toLowerCase();
 		const act = actualModel.toLowerCase();
 		if (cfg === act) { return true; }
-		// 短縮名マッピングで比較
-		const map: Record<string, string> = {
-			'opus': 'claude-opus-4-6',
-			'sonnet': 'claude-sonnet-4-6',
-			'sonnet-1m': 'claude-sonnet-4-6[1m]',
-			'haiku': 'claude-haiku-4-5',
+
+		// 短縮名 → 正式IDプレフィックスのマッピング（バージョン番号は問わない）
+		const prefixMap: Record<string, string> = {
+			'opus':     'claude-opus-',
+			'sonnet':   'claude-sonnet-',
+			'haiku':    'claude-haiku-',
+			'sonnet-1m': 'claude-sonnet-',
 		};
-		const expanded = map[cfg] || cfg;
-		return expanded === act || act.includes(cfg) || act.startsWith(expanded.replace('[1m]', ''));
+		const prefix = prefixMap[cfg];
+		if (prefix) {
+			// 短縮名「opus」→「claude-opus-」で始まるなら一致
+			if (act.startsWith(prefix)) { return true; }
+		}
+
+		// 逆方向: actualModelが短縮名を含む（例: claude-opus-4-7 → "opus" を含む）
+		if (act.includes(cfg)) { return true; }
+
+		// 1Mコンテキスト: sonnet-1m ↔ claude-sonnet-*[1m]
+		if (cfg === 'sonnet-1m' && act.includes('sonnet') && act.includes('[1m]')) { return true; }
+
+		return false;
 	}
 
 	private async update(): Promise<void> {
