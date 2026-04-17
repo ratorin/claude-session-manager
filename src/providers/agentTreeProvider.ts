@@ -621,8 +621,8 @@ async function isSessionAgentInjectInstalled(): Promise<boolean> {
 			if (!Array.isArray(innerHooks)) { return false; }
 			return innerHooks.some((hh: Record<string, unknown>) =>
 				typeof hh.command === 'string' &&
-				hh.command.includes('csm-session-agent-inject') &&
-				hh.command.includes('.js')
+				hh.command.includes('csm-session-agent-inject')
+				// .sh版も.js版もインストール済みとみなす（マイグレーション中も非表示）
 			);
 		});
 	} catch {
