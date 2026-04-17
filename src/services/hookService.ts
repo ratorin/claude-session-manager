@@ -123,19 +123,28 @@ export async function ensureSessionAgentInjectHook(extensionPath: string, output
 	const homeDir = os.homedir();
 	const settingsPath = path.join(homeDir, '.claude', 'settings.json');
 	const hooksDir = path.join(homeDir, '.claude', 'hooks');
-	const hookScript = path.join(hooksDir, 'csm-session-agent-inject.sh');
+	// Node.js版スクリプト（bash+python非依存、Windows対応）
+	const hookScript = path.join(hooksDir, 'csm-session-agent-inject.js');
 	const CSM_MARKER = 'csm-session-agent-inject';
 
-	// 1. テンプレートからスクリプトをデプロイ（存在しなければ）
+	// 1. テンプレートからスクリプトをデプロイ（存在しなければ、または古いsh版なら置き換え）
+	const oldShScript = path.join(hooksDir, 'csm-session-agent-inject.sh');
 	try {
 		await fs.promises.access(hookScript);
 	} catch {
-		const templatePath = path.join(extensionPath, 'templates', 'csm-session-agent-inject.sh');
+		const templatePath = path.join(extensionPath, 'templates', 'csm-session-agent-inject.js');
 		try {
 			const content = await fs.promises.readFile(templatePath, 'utf-8');
 			await fs.promises.mkdir(hooksDir, { recursive: true });
 			await fs.promises.writeFile(hookScript, content, 'utf-8');
-			outputChannel.appendLine(`[${new Date().toISOString()}] csm-session-agent-inject.sh をデプロイしました`);
+			// 古いsh版は.trashに退避
+			try {
+				await fs.promises.access(oldShScript);
+				const trashDir = path.join(hooksDir, '.trash');
+				await fs.promises.mkdir(trashDir, { recursive: true });
+				await fs.promises.rename(oldShScript, path.join(trashDir, `csm-session-agent-inject.sh.${Date.now()}`));
+			} catch { /* shファイルが存在しない場合は無視 */ }
+			outputChannel.appendLine(`[${new Date().toISOString()}] csm-session-agent-inject.js をデプロイしました`);
 		} catch {
 			return;
 		}
@@ -177,7 +186,7 @@ export async function ensureSessionAgentInjectHook(extensionPath: string, output
 			matcher: '*',
 			hooks: [{
 				type: 'command',
-				command: `bash "${hookScript.replace(/\\/g, '/')}"`,
+				command: `node "${hookScript.replace(/\\/g, '/')}"`,
 				timeout: 10,
 			}]
 		});

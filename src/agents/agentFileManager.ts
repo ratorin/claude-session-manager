@@ -46,7 +46,7 @@ export interface AgentDefinition {
 	/** CSM独自: 日本語役割説明（UI表示用） */
 	displayRole?: string;
 	/** CSM独自: 推論努力レベル */
-	effort?: 'low' | 'medium' | 'high' | 'max';
+	effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 	/** CSM独自: Extended Thinking */
 	thinkingEnabled?: boolean;
 	/** CSM独自: 組織図表示 */
@@ -137,7 +137,7 @@ async function parseAgentFile(filePath: string, scope: 'global' | 'project'): Pr
 function normalizeEffort(raw: unknown): AgentDefinition['effort'] {
 	if (!raw) { return undefined; }
 	const s = String(raw);
-	if (s === 'low' || s === 'medium' || s === 'high' || s === 'max') { return s; }
+	if (s === 'low' || s === 'medium' || s === 'high' || s === 'xhigh' || s === 'max') { return s; }
 	return undefined;
 }
 

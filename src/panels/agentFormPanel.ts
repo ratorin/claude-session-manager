@@ -573,6 +573,10 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 			<input type="radio" name="effort" id="effort-high" value="high" ${!v.effort || v.effort === 'high' ? 'checked' : ''}>
 			<label for="effort-high">High<div class="radio-sub">深い推論（推奨）</div></label>
 		</div>
+		<div class="radio-option" id="effort-option-xhigh">
+			<input type="radio" name="effort" id="effort-xhigh" value="xhigh" ${v.effort === 'xhigh' ? 'checked' : ''}>
+			<label for="effort-xhigh">XHigh<div class="radio-sub">超高深度（v2.1.111+）</div></label>
+		</div>
 		<div class="radio-option" id="effort-option-max">
 			<input type="radio" name="effort" id="effort-max" value="max" ${v.effort === 'max' ? 'checked' : ''}>
 			<label for="effort-max">Max<div class="radio-sub">最大（Opus専用）</div></label>
