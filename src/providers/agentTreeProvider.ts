@@ -7,7 +7,7 @@ import { getRuleFileInfo, resolveRuleFilePath } from '../agents/agentManager';
 import { isLegacyAutoFormat, hasFrontmatter } from '../utils/frontmatterUtils';
 import { shouldShowInOrgChart } from '../utils/agentUtils';
 
-type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem;
+type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem | SessionInjectInstallBannerItem;
 
 // D&DのMIMEタイプ
 const AGENT_MIME = 'application/vnd.csm.agent';
@@ -145,6 +145,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		if (element instanceof MigrationBannerItem) { return []; }
 		if (element instanceof CsmAskAgentInstallBannerItem) { return []; }
 		if (element instanceof AskAgentMigrationBannerItem) { return []; }
+		if (element instanceof SessionInjectInstallBannerItem) { return []; }
 		if (element instanceof GlobalAgentsSectionItem) {
 			// グローバルエージェント を返す
 			const allAgents = await dataStore.getAgents();
@@ -253,6 +254,16 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			const csmAskAgentInstalled = await isCsmAskAgentInstalled();
 			if (!csmAskAgentInstalled) {
 				result.push(new CsmAskAgentInstallBannerItem());
+			}
+
+			// エージェント役割自動認識バナー: 未有効化かつエージェントが存在する時のみ
+			const sessionInjectInstalled = await isSessionAgentInjectInstalled();
+			if (!sessionInjectInstalled) {
+				const allAgentsForBanner = await dataStore.getAgents();
+				const hasLinkedAgent = allAgentsForBanner.some(a => !!a.sessionId);
+				if (hasLinkedAgent) {
+					result.push(new SessionInjectInstallBannerItem());
+				}
 			}
 
 			// 旧ask-agent移行バナー
@@ -500,6 +511,25 @@ export class GlobalAgentsSectionItem extends vscode.TreeItem {
 }
 
 // /csm-ask-agent グローバルインストールバナー
+// SessionStart エージェント役割注入hookの有効化バナー
+export class SessionInjectInstallBannerItem extends vscode.TreeItem {
+	constructor() {
+		super('🤖 エージェント役割自動認識を有効化', vscode.TreeItemCollapsibleState.None);
+		this.description = 'セッション開始時に役割を自動注入';
+		this.tooltip = new vscode.MarkdownString(
+			`**エージェント役割自動認識**\n\n` +
+			`CSMで紐づけたエージェントの役割定義をセッション開始時に自動注入します。\n\n` +
+			`有効化すると、次回セッション開始時からClaudeが自分の役割を自動認識します。`
+		);
+		this.iconPath = new vscode.ThemeIcon('sparkle', new vscode.ThemeColor('charts.purple'));
+		this.contextValue = 'sessionInjectInstallBanner';
+		this.command = {
+			command: 'claudeManager.enableSessionAgentInject',
+			title: 'エージェント役割自動認識を有効化',
+		};
+	}
+}
+
 export class CsmAskAgentInstallBannerItem extends vscode.TreeItem {
 	constructor() {
 		super('🔧 /csm-ask-agent をインストール', vscode.TreeItemCollapsibleState.None);
@@ -575,6 +605,29 @@ async function isCsmAskAgentInstalled(): Promise<boolean> {
 		}
 	}
 	return true;
+}
+
+// SessionStart エージェント注入hookがNode.js版で設定済みかチェック
+async function isSessionAgentInjectInstalled(): Promise<boolean> {
+	const homeDir = require('os').homedir();
+	const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+	try {
+		const raw = await fs.promises.readFile(settingsPath, 'utf-8');
+		const settings = JSON.parse(raw);
+		const sessionStart = settings?.hooks?.SessionStart;
+		if (!Array.isArray(sessionStart)) { return false; }
+		return sessionStart.some((entry: Record<string, unknown>) => {
+			const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+			if (!Array.isArray(innerHooks)) { return false; }
+			return innerHooks.some((hh: Record<string, unknown>) =>
+				typeof hh.command === 'string' &&
+				hh.command.includes('csm-session-agent-inject') &&
+				hh.command.includes('.js')
+			);
+		});
+	} catch {
+		return false;
+	}
 }
 
 // 旧形式のルールファイルを持つエージェントを検出

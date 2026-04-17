@@ -16,7 +16,7 @@ import { registerMigrationCommands } from './commands/migrationCommands';
 import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
 import { getConfig } from './utils/config';
-import { ensurePreCompactHook, ensureGovernanceHook } from './services/hookService';
+import { ensurePreCompactHook, ensureGovernanceHook, ensureSessionAgentInjectHook } from './services/hookService';
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -290,6 +290,15 @@ export function activate(context: vscode.ExtensionContext) {
 			const current = agentProvider.getHideOtherProjects();
 			agentProvider.setHideOtherProjects(!current);
 			vscode.window.showInformationMessage(`他プロジェクトのエージェント: ${!current ? '非表示' : '表示（灰色）'}`);
+		})
+	);
+
+	// エージェント役割自動認識の有効化（バナーからのボタン）
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.enableSessionAgentInject', async () => {
+			await ensureSessionAgentInjectHook(context.extensionPath, extensionOutputChannel);
+			agentProvider.refresh();
+			vscode.window.showInformationMessage('エージェント役割自動認識を有効化しました。次回セッション開始時から動作します。');
 		})
 	);
 

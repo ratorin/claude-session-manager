@@ -306,6 +306,12 @@
 				"category": "Claude Session Manager"
 			},
 			{
+				"command": "claudeManager.enableSessionAgentInject",
+				"title": "エージェント役割自動認識を有効化",
+				"icon": "$(sparkle)",
+				"category": "Claude Session Manager"
+			},
+			{
 				"command": "claudeManager.openProjectInVSC",
 				"title": "VS Codeで開く",
 				"icon": "$(folder-opened)",
