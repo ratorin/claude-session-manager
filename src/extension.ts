@@ -3,7 +3,7 @@ import { SessionTreeProvider, SessionDecorationProvider } from './providers/sess
 import { BookmarkTreeProvider } from './providers/bookmarkTreeProvider';
 import { TagTreeProvider } from './providers/tagTreeProvider';
 import { MemoryTreeProvider } from './providers/memoryTreeProvider';
-import { AgentTreeProvider } from './providers/agentTreeProvider';
+import { AgentTreeProvider, AgentDecorationProvider } from './providers/agentTreeProvider';
 import { shouldShowInOrgChart } from './utils/agentUtils';
 import { AgentWatcher } from './watchers/agentWatcher';
 import { TaskTracker } from './watchers/taskTracker';
@@ -58,6 +58,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// デコレーションプロバイダーを登録
 	context.subscriptions.push(vscode.window.registerFileDecorationProvider(sessionDecoProvider));
+	const agentDecoProvider = new AgentDecorationProvider();
+	context.subscriptions.push(vscode.window.registerFileDecorationProvider(agentDecoProvider));
 
 	// セッションロード完了時にブックマーク・タグを自動リフレッシュ
 	sessionProvider.onDidRefresh(() => {

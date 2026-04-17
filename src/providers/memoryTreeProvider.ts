@@ -11,7 +11,7 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNod
 	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
 	// プロジェクトフィルター: true なら現在のプロジェクトメモリのみ表示（グローバル除外）
-	private projectFilterEnabled = false;
+	private projectFilterEnabled = true;
 
 	dispose(): void {
 		this._onDidChangeTreeData.dispose();

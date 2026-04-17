@@ -427,6 +427,11 @@ export class AgentItem extends vscode.TreeItem {
 		const linked = agent.sessionId ? 'Linked' : '';
 		this.contextValue = `agentItem${linked}`;
 
+		// 他プロジェクトは装飾プロバイダで灰色化する用のresourceUriを設定
+		if (isOtherProject) {
+			this.resourceUri = vscode.Uri.parse(`csm-agent-other://${agent.name}`);
+		}
+
 		// クリックでプレビューを表示
 		this.command = {
 			command: 'claudeManager.previewAgent',
@@ -434,6 +439,24 @@ export class AgentItem extends vscode.TreeItem {
 			arguments: [this],
 		};
 	}
+}
+
+// 他プロジェクトのエージェントを灰色化する装飾プロバイダ
+export class AgentDecorationProvider implements vscode.FileDecorationProvider {
+	private _onDidChange = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
+	readonly onDidChangeFileDecorations = this._onDidChange.event;
+
+	provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
+		if (uri.scheme === 'csm-agent-other') {
+			return {
+				color: new vscode.ThemeColor('disabledForeground'),
+				tooltip: '他プロジェクトのエージェント',
+			};
+		}
+		return undefined;
+	}
+
+	refresh(): void { this._onDidChange.fire(undefined); }
 }
 
 // マイグレーションバナーのTreeItem
@@ -462,14 +485,16 @@ export class MigrationBannerItem extends vscode.TreeItem {
 // グローバルエージェント セクションのTreeItem
 export class GlobalAgentsSectionItem extends vscode.TreeItem {
 	constructor() {
-		super('📦 グローバルエージェント', vscode.TreeItemCollapsibleState.Expanded);
+		super('📦 グローバルエージェント', vscode.TreeItemCollapsibleState.Collapsed);
 		this.description = '組織図に含まれない汎用エージェント';
 		this.tooltip = new vscode.MarkdownString(
 			`**グローバルエージェント**\n\n` +
 			`組織図とは無関係な汎用エージェント群。\n` +
 			`コード審査、テスト、セキュリティ等の機能を提供します。`
 		);
-		this.iconPath = new vscode.ThemeIcon('package', new vscode.ThemeColor('foreground'));
+		// 装飾プロバイダで灰色化（メインの組織図と区別）
+		this.resourceUri = vscode.Uri.parse('csm-agent-other://global-agents-section');
+		this.iconPath = new vscode.ThemeIcon('package', new vscode.ThemeColor('disabledForeground'));
 		this.contextValue = 'globalAgentsSection';
 	}
 }
