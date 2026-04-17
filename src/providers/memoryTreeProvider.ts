@@ -76,8 +76,15 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNod
 					}
 				}
 			} else {
+				// フィルターOFF: 全プロジェクト表示。自プロジェクトは展開、他は折りたたむ
+				const currentProject = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath?.toLowerCase() || '';
+				const baseName = currentProject ? path.basename(currentProject).toLowerCase() : '';
 				for (const g of groups) {
-					topItems.push(new MemoryGroupItem(g.dir, g.project, g.files));
+					const isCurrent = baseName
+						? (g.project.toLowerCase().includes(baseName) ||
+						   currentProject.includes(g.project.toLowerCase().replace(/\\/g, '/')))
+						: true;
+					topItems.push(new MemoryGroupItem(g.dir, g.project, g.files, isCurrent));
 				}
 			}
 
@@ -186,11 +193,17 @@ export class MemoryGroupItem extends vscode.TreeItem {
 	constructor(
 		public readonly memoryDir: string,
 		public readonly project: string,
-		public readonly files: MemoryFile[]
+		public readonly files: MemoryFile[],
+		isCurrentProject: boolean = true,
 	) {
-		super(`プロジェクト: ${project}`, vscode.TreeItemCollapsibleState.Expanded);
+		const collapsible = isCurrentProject
+			? vscode.TreeItemCollapsibleState.Expanded
+			: vscode.TreeItemCollapsibleState.Collapsed;
+		super(`プロジェクト: ${project}`, collapsible);
 		this.description = `${files.length}件`;
-		this.iconPath = new vscode.ThemeIcon('folder');
+		this.iconPath = isCurrentProject
+			? new vscode.ThemeIcon('folder', new vscode.ThemeColor('charts.blue'))
+			: new vscode.ThemeIcon('folder');
 		this.contextValue = 'memoryProject';
 
 		// プロジェクトパスを算出（memoryDirの2つ上がprojectsDir、1つ上がエンコードされたプロジェクトID）
