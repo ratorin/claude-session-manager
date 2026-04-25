@@ -361,6 +361,84 @@ export async function ensurePreCompactHook(extensionPath: string, outputChannel:
 	}
 }
 
+// CSM PreCompact Summary hook — コンパクション前にCSM_SUMMARY生成・保存（全セッション対象）
+// v0.4.7: csm-precompact-summary.js をデプロイし、文脈保持を強化
+export async function ensurePreCompactSummaryHook(extensionPath: string, outputChannel: vscode.OutputChannel): Promise<void> {
+	const homeDir = os.homedir();
+	const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+	const hooksDir = path.join(homeDir, '.claude', 'hooks');
+	const hookScript = path.join(hooksDir, 'csm-precompact-summary.js');
+	const CSM_MARKER = 'csm-precompact-summary';
+
+	await fs.promises.mkdir(hooksDir, { recursive: true });
+
+	// 1. テンプレートからスクリプトをデプロイ（常に最新に上書き）
+	const templatePath = path.join(extensionPath, 'templates', 'csm-precompact-summary.js');
+	try {
+		const content = await fs.promises.readFile(templatePath, 'utf-8');
+		let needsWrite = true;
+		try {
+			const existing = await fs.promises.readFile(hookScript, 'utf-8');
+			if (existing === content) { needsWrite = false; }
+		} catch { /* not exists */ }
+		if (needsWrite) {
+			await fs.promises.writeFile(hookScript, content, 'utf-8');
+			outputChannel.appendLine(`[${new Date().toISOString()}] csm-precompact-summary.js をデプロイしました`);
+		}
+	} catch {
+		// テンプレートが見つからない場合はスキップ
+		return;
+	}
+
+	// 2. settings.json に PreCompact hook を登録
+	try {
+		let settings: Record<string, unknown> = {};
+		try {
+			const raw = await fs.promises.readFile(settingsPath, 'utf-8');
+			settings = JSON.parse(raw);
+		} catch {
+			return;
+		}
+
+		if (!settings.hooks || typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) {
+			settings.hooks = {};
+		}
+		const hooksObj = settings.hooks as Record<string, unknown>;
+
+		// 既に登録済みか確認
+		const preCompact = hooksObj['PreCompact'];
+		if (Array.isArray(preCompact)) {
+			const alreadyInstalled = (preCompact as Array<Record<string, unknown>>).some((entry) => {
+				const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+				if (!Array.isArray(innerHooks)) { return false; }
+				return innerHooks.some((hh) =>
+					typeof hh.command === 'string' && hh.command.includes(CSM_MARKER)
+				);
+			});
+			if (alreadyInstalled) { return; }
+		}
+
+		if (!Array.isArray(hooksObj['PreCompact'])) {
+			hooksObj['PreCompact'] = [];
+		}
+		(hooksObj['PreCompact'] as Array<Record<string, unknown>>).push({
+			matcher: '*',
+			hooks: [{
+				type: 'command',
+				command: `node "${hookScript.replace(/\\/g, '/')}"`,
+				timeout: 15,
+			}]
+		});
+
+		const backupPath = settingsPath + `.bak.${Date.now()}`;
+		try { await fs.promises.copyFile(settingsPath, backupPath); } catch { /* */ }
+		await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, '\t'), 'utf-8');
+		outputChannel.appendLine(`[${new Date().toISOString()}] PreCompact Summary hookを settings.json に登録しました`);
+	} catch (err) {
+		outputChannel.appendLine(`[${new Date().toISOString()}] PreCompact Summary hook登録エラー: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
 // CSM Stop hook — セッション終了時にHISTORY.mdへ要約追記（historyEnabled:trueのみ）
 export async function ensureSessionStopHook(extensionPath: string, outputChannel: vscode.OutputChannel): Promise<void> {
 	const homeDir = os.homedir();
@@ -517,10 +595,14 @@ export async function ensureGovernanceHook(extensionPath: string, outputChannel:
 	}
 }
 
-// settings.json に check-csm-ask-agent hook を登録
+// settings.json に csm-check-ask-agent hook を登録
+// v0.4.7: bash+python → Node.js (csm-check-ask-agent.js) に移行。Windows 素環境対応。
 export async function registerCsmAskAgentHook(claudeDir: string): Promise<void> {
 	const settingsPath = path.join(claudeDir, 'settings.json');
-	const hookScriptPath = path.join(claudeDir, 'hooks', 'check-csm-ask-agent.sh').replace(/\\/g, '/');
+	const jsHookPath = path.join(claudeDir, 'hooks', 'csm-check-ask-agent.js').replace(/\\/g, '/');
+	const CSM_MARKER = 'csm-check-ask-agent';
+	// 旧マーカー: 後方互換チェック用
+	const OLD_MARKER = 'check-csm-ask-agent';
 
 	let settings: Record<string, unknown> = {};
 	try {
@@ -530,35 +612,48 @@ export async function registerCsmAskAgentHook(claudeDir: string): Promise<void> 
 		return;
 	}
 
-	const hooksObj = (settings.hooks && typeof settings.hooks === 'object' && !Array.isArray(settings.hooks))
-		? settings.hooks as Record<string, unknown>
-		: {};
-	const preToolUse = hooksObj['PreToolUse'];
-	if (Array.isArray(preToolUse)) {
-		const alreadyInstalled = preToolUse.some((entry: Record<string, unknown>) => {
-			const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
-			if (!Array.isArray(innerHooks)) { return false; }
-			return innerHooks.some((hh: Record<string, unknown>) =>
-				typeof hh.command === 'string' && hh.command.includes('check-csm-ask-agent')
-			);
-		});
-		if (alreadyInstalled) { return; }
-	}
-
 	if (!settings.hooks || typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) {
 		settings.hooks = {};
 	}
-	const hooks = settings.hooks as Record<string, unknown>;
-	if (!Array.isArray(hooks['PreToolUse'])) {
-		hooks['PreToolUse'] = [];
-	}
-	const preToolUseArr = hooks['PreToolUse'] as Array<Record<string, unknown>>;
+	const hooksObj = settings.hooks as Record<string, unknown>;
+	const preToolUse = hooksObj['PreToolUse'];
 
-	preToolUseArr.push({
+	// 旧 bash 版が存在する場合は node 版に置き換え
+	if (Array.isArray(preToolUse)) {
+		let hasOldBash = false;
+		let hasNewNode = false;
+		for (const entry of preToolUse as Array<Record<string, unknown>>) {
+			const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+			if (!Array.isArray(innerHooks)) { continue; }
+			for (const hh of innerHooks) {
+				if (typeof hh.command !== 'string') { continue; }
+				if (hh.command.includes(OLD_MARKER) && hh.command.startsWith('bash ')) { hasOldBash = true; }
+				if (hh.command.includes(CSM_MARKER) && hh.command.startsWith('node ')) { hasNewNode = true; }
+			}
+		}
+		if (hasNewNode && !hasOldBash) { return; } // 最新版インストール済み
+
+		if (hasOldBash) {
+			// 旧 bash エントリを削除
+			hooksObj['PreToolUse'] = (preToolUse as Array<Record<string, unknown>>).map((entry) => {
+				const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+				if (!Array.isArray(innerHooks)) { return entry; }
+				const filtered = innerHooks.filter((hh) =>
+					!(typeof hh.command === 'string' && hh.command.includes(OLD_MARKER) && hh.command.startsWith('bash '))
+				);
+				return filtered.length === 0 ? null : { ...entry, hooks: filtered };
+			}).filter(Boolean);
+		}
+	}
+
+	if (!Array.isArray(hooksObj['PreToolUse'])) {
+		hooksObj['PreToolUse'] = [];
+	}
+	(hooksObj['PreToolUse'] as Array<Record<string, unknown>>).push({
 		matcher: 'Bash',
 		hooks: [{
 			type: 'command',
-			command: `bash "${hookScriptPath}"`,
+			command: `node "${jsHookPath}"`,
 			timeout: 5,
 		}]
 	});

@@ -275,10 +275,21 @@ export function registerMigrationCommands(
 				const templatesDir = path.join(extensionPath, 'templates');
 				const homeDir = os.homedir();
 				const claudeDir = path.join(homeDir, '.claude');
+
+				// 旧 check-csm-ask-agent.sh が存在する場合は .trash に退避
+				const oldShPath = path.join(claudeDir, 'hooks', 'check-csm-ask-agent.sh');
+				try {
+					await fs.promises.access(oldShPath);
+					const trashDir = path.join(claudeDir, 'hooks', '.trash');
+					await fs.promises.mkdir(trashDir, { recursive: true });
+					await fs.promises.rename(oldShPath, path.join(trashDir, `check-csm-ask-agent.sh.${Date.now()}`));
+				} catch { /* 旧ファイルが存在しない場合は無視 */ }
+
 				const targets = [
 					{ src: 'csm-ask-agent.command.md', dest: path.join(claudeDir, 'commands', 'csm-ask-agent.md') },
 					{ src: 'csm-ask-agent.py', dest: path.join(claudeDir, 'scripts', 'csm-ask-agent.py') },
-					{ src: 'check-csm-ask-agent.sh', dest: path.join(claudeDir, 'hooks', 'check-csm-ask-agent.sh') },
+					// v0.4.7: bash+python → Node.js に移行
+					{ src: 'csm-check-ask-agent.js', dest: path.join(claudeDir, 'hooks', 'csm-check-ask-agent.js') },
 				];
 	
 				let installed = 0;
@@ -308,6 +319,7 @@ export function registerMigrationCommands(
 	);
 	
 	// /csm-ask-agent hookインストール（プロジェクトローカル）
+	// v0.4.7: bash+python → Node.js (csm-check-ask-agent.js) に移行
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.installAskAgentHook', async () => {
 			const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -315,74 +327,64 @@ export function registerMigrationCommands(
 				vscode.window.showWarningMessage('ワークスペースが開かれていません');
 				return;
 			}
-	
+
 			const hookDir = path.join(wsFolder, '.claude', 'hooks');
-			const hookFile = path.join(hookDir, 'check-csm-ask-agent.sh');
+			const hookFile = path.join(hookDir, 'csm-check-ask-agent.js');
 			const settingsFile = path.join(wsFolder, '.claude', 'settings.json');
-	
-			// hookスクリプトを作成
+
+			// テンプレートから csm-check-ask-agent.js をコピー
 			await fs.promises.mkdir(hookDir, { recursive: true });
-			const hookScript = `#!/bin/bash
-	# PreToolUse(Bash) hook: claude -p が --agent/--resume なしで実行されたら警告
-	INPUT_JSON=$(cat)
-	RESULT=$(echo "$INPUT_JSON" | python -c "
-	import sys, json, re
-	try:
-	    d = json.load(sys.stdin)
-	    cmd = d.get('tool_input', {}).get('command', '')
-	except:
-	    print('pass'); sys.exit(0)
-	if 'claude' not in cmd:
-	    print('pass'); sys.exit(0)
-	if re.search(r'claude\\\\s.*(-p|--print)', cmd):
-	    if re.search(r'--agent|--resume', cmd):
-	        print('pass')
-	    else:
-	        print('block')
-	else:
-	    print('pass')
-	" 2>/dev/null)
-	if [ "$RESULT" = "block" ]; then
-	  cat <<'HOOKEOF'
-	{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"block","permissionDecisionReason":"claude -p を --agent/--resume なしで実行しようとしています。/csm-ask-agent スキルを使ってください。"}}
-	HOOKEOF
-	else
-	  echo '{}'
-	fi
-	exit 0
-	`;
-			await fs.promises.writeFile(hookFile, hookScript, 'utf-8');
-	
-			// settings.jsonにhookを追加
+			const templatePath = path.join(context.extensionPath, 'templates', 'csm-check-ask-agent.js');
+			try {
+				const content = await fs.promises.readFile(templatePath, 'utf-8');
+				await fs.promises.writeFile(hookFile, content, 'utf-8');
+			} catch {
+				vscode.window.showErrorMessage('csm-check-ask-agent.js テンプレートが見つかりません');
+				return;
+			}
+
+			// 旧 check-csm-ask-agent.sh が存在する場合は .trash に退避
+			const oldShFile = path.join(hookDir, 'check-csm-ask-agent.sh');
+			try {
+				await fs.promises.access(oldShFile);
+				const trashDir = path.join(hookDir, '.trash');
+				await fs.promises.mkdir(trashDir, { recursive: true });
+				await fs.promises.rename(oldShFile, path.join(trashDir, `check-csm-ask-agent.sh.${Date.now()}`));
+			} catch { /* 旧ファイルが存在しない場合は無視 */ }
+
+			// settings.json にhookを追加
 			let settings: Record<string, unknown> = {};
 			try {
 				const raw = await fs.promises.readFile(settingsFile, 'utf-8');
 				settings = JSON.parse(raw);
 			} catch { /* 新規作成 */ }
-	
+
 			if (!settings.hooks) { settings.hooks = {}; }
 			const hooks = settings.hooks as Record<string, unknown[]>;
 			if (!hooks.PreToolUse) { hooks.PreToolUse = []; }
-	
-			// 既に check-csm-ask-agent が含まれていなければ追加
+
+			// 旧 bash 版エントリを削除して node 版に統合
 			const preToolUse = hooks.PreToolUse as Array<Record<string, unknown>>;
-			const alreadyExists = preToolUse.some(h =>
-				JSON.stringify(h).includes('check-csm-ask-agent')
-			);
+			const jsCmd = `node ${hookFile.replace(/\\/g, '/')}`;
+
+			// 旧エントリ（bash版・旧js版）を除去してから追加
+			const filtered = preToolUse.filter(h => !JSON.stringify(h).includes('check-csm-ask-agent'));
+			const alreadyExists = filtered.some(h => JSON.stringify(h).includes('csm-check-ask-agent'));
 			if (!alreadyExists) {
-				preToolUse.push({
+				filtered.push({
 					matcher: 'Bash',
 					hooks: [{
 						type: 'command',
-						command: `bash ${hookFile.replace(/\\/g, '/')}`,
+						command: jsCmd,
 					}],
 				});
 			}
-	
+			hooks.PreToolUse = filtered;
+
 			await fs.promises.writeFile(settingsFile, JSON.stringify(settings, null, '  '), 'utf-8');
-	
+
 			refreshAll();
-			vscode.window.showInformationMessage('/csm-ask-agent hookをインストールしました。claude -p の安全ガードが有効になります。');
+			vscode.window.showInformationMessage('/csm-ask-agent hookをインストールしました（Node.js版）。claude -p の安全ガードが有効になります。');
 		})
 	);
 	

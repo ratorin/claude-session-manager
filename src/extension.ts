@@ -16,7 +16,7 @@ import { registerMigrationCommands } from './commands/migrationCommands';
 import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
 import { getConfig } from './utils/config';
-import { ensurePreCompactHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook } from './services/hookService';
+import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook } from './services/hookService';
 import { runV04Migration } from './services/migrationService';
 import { initErrorReporter, logError } from './utils/errorReporter';
 
@@ -53,6 +53,10 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// PreCompact hook の自動デプロイ（テンプレート→~/.claude/hooks/ + settings.json登録）
 	ensurePreCompactHook(context.extensionPath, extensionOutputChannelEarly).catch(() => {
+		// hook登録失敗は致命的ではない
+	});
+	// PreCompact Summary hook の自動デプロイ（全セッション対象・CSM_SUMMARY生成で文脈保持強化）
+	ensurePreCompactSummaryHook(context.extensionPath, extensionOutputChannelEarly).catch(() => {
 		// hook登録失敗は致命的ではない
 	});
 	// Stop hook の自動デプロイ（セッション終了時のHISTORY.md追記）
