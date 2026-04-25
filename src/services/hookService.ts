@@ -261,30 +261,45 @@ export async function removeSessionAgentInjectHook(outputChannel: vscode.OutputC
 }
 
 // PreCompact hook を settings.json に登録（テンプレートからスクリプトもデプロイ）
+// v0.4.6: bash/python 依存を排除するため csm-precompact.js (Node.js) に移行
 export async function ensurePreCompactHook(extensionPath: string, outputChannel: vscode.OutputChannel): Promise<void> {
 	const homeDir = os.homedir();
 	const settingsPath = path.join(homeDir, '.claude', 'settings.json');
 	const hooksDir = path.join(homeDir, '.claude', 'hooks');
-	const hookScript = path.join(hooksDir, 'csm-precompact.sh');
+	const hookScript = path.join(hooksDir, 'csm-precompact.js');
+	const oldShScript = path.join(hooksDir, 'csm-precompact.sh');
 	const CSM_MARKER = 'csm-precompact';
 
-	// 1. テンプレートからスクリプトをデプロイ（存在しなければ）
+	await fs.promises.mkdir(hooksDir, { recursive: true });
+
+	// 1. 旧 .sh が存在する場合は .trash/ に退避（Windows 素環境での silent fail を防止）
 	try {
-		await fs.promises.access(hookScript);
-	} catch {
-		const templatePath = path.join(extensionPath, 'templates', 'csm-precompact.sh');
+		await fs.promises.access(oldShScript);
+		const trashDir = path.join(hooksDir, '.trash');
+		await fs.promises.mkdir(trashDir, { recursive: true });
+		await fs.promises.rename(oldShScript, path.join(trashDir, `csm-precompact.sh.${Date.now()}`));
+		outputChannel.appendLine(`[${new Date().toISOString()}] csm-precompact.sh を .trash/ に退避しました`);
+	} catch { /* .sh が存在しない場合は無視 */ }
+
+	// 2. csm-precompact.js をデプロイ（常に最新に上書き）
+	const templatePath = path.join(extensionPath, 'templates', 'csm-precompact.js');
+	try {
+		const content = await fs.promises.readFile(templatePath, 'utf-8');
+		let needsWrite = true;
 		try {
-			const content = await fs.promises.readFile(templatePath, 'utf-8');
-			await fs.promises.mkdir(hooksDir, { recursive: true });
+			const existing = await fs.promises.readFile(hookScript, 'utf-8');
+			if (existing === content) { needsWrite = false; }
+		} catch { /* not exists */ }
+		if (needsWrite) {
 			await fs.promises.writeFile(hookScript, content, 'utf-8');
-			outputChannel.appendLine(`[${new Date().toISOString()}] csm-precompact.sh をデプロイしました`);
-		} catch {
-			// テンプレートが見つからない場合はスキップ
-			return;
+			outputChannel.appendLine(`[${new Date().toISOString()}] csm-precompact.js をデプロイしました`);
 		}
+	} catch {
+		// テンプレートが見つからない場合はスキップ
+		return;
 	}
 
-	// 2. settings.json にPreCompact hookを登録
+	// 3. settings.json にPreCompact hookを登録（既存の .sh エントリを .js に差し替え）
 	try {
 		let settings: Record<string, unknown> = {};
 		try {
@@ -299,10 +314,97 @@ export async function ensurePreCompactHook(extensionPath: string, outputChannel:
 		}
 		const hooksObj = settings.hooks as Record<string, unknown>;
 
-		// 既に登録済みか確認
+		// 旧 .sh コマンドを .js コマンドに置き換え（既存エントリのアップグレード）
+		const jsCommand = `node "${hookScript.replace(/\\/g, '/')}"`;
 		const preCompact = hooksObj['PreCompact'];
+		let updatedOldEntry = false;
 		if (Array.isArray(preCompact)) {
-			const alreadyInstalled = preCompact.some((entry: Record<string, unknown>) => {
+			for (const entry of preCompact as Array<Record<string, unknown>>) {
+				const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+				if (!Array.isArray(innerHooks)) { continue; }
+				for (const hh of innerHooks) {
+					if (typeof hh.command === 'string' && hh.command.includes(CSM_MARKER)) {
+						if (hh.command.startsWith('bash ')) {
+							// 旧 bash エントリを node に更新
+							hh.command = jsCommand;
+							updatedOldEntry = true;
+						} else {
+							// 既に node コマンドで登録済み
+							return;
+						}
+					}
+				}
+			}
+		}
+
+		if (!updatedOldEntry) {
+			// 新規登録
+			if (!Array.isArray(hooksObj['PreCompact'])) {
+				hooksObj['PreCompact'] = [];
+			}
+			(hooksObj['PreCompact'] as Array<Record<string, unknown>>).push({
+				matcher: '*',
+				hooks: [{
+					type: 'command',
+					command: jsCommand,
+					timeout: 15,
+				}]
+			});
+		}
+
+		const backupPath = settingsPath + `.bak.${Date.now()}`;
+		try { await fs.promises.copyFile(settingsPath, backupPath); } catch { /* */ }
+		await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, '\t'), 'utf-8');
+		outputChannel.appendLine(`[${new Date().toISOString()}] PreCompact hookを settings.json に登録しました`);
+	} catch (err) {
+		outputChannel.appendLine(`[${new Date().toISOString()}] PreCompact hook登録エラー: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
+// CSM Stop hook — セッション終了時にHISTORY.mdへ要約追記（historyEnabled:trueのみ）
+export async function ensureSessionStopHook(extensionPath: string, outputChannel: vscode.OutputChannel): Promise<void> {
+	const homeDir = os.homedir();
+	const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+	const hooksDir = path.join(homeDir, '.claude', 'hooks');
+	const hookScript = path.join(hooksDir, 'csm-session-stop.js');
+	const CSM_MARKER = 'csm-session-stop';
+
+	// 1. テンプレートからスクリプトをデプロイ（常に最新に上書き）
+	const templatePath = path.join(extensionPath, 'templates', 'csm-session-stop.js');
+	try {
+		const content = await fs.promises.readFile(templatePath, 'utf-8');
+		await fs.promises.mkdir(hooksDir, { recursive: true });
+		let needsWrite = true;
+		try {
+			const existing = await fs.promises.readFile(hookScript, 'utf-8');
+			if (existing === content) { needsWrite = false; }
+		} catch { /* not exists */ }
+		if (needsWrite) {
+			await fs.promises.writeFile(hookScript, content, 'utf-8');
+			outputChannel.appendLine(`[${new Date().toISOString()}] csm-session-stop.js をデプロイしました`);
+		}
+	} catch {
+		return;
+	}
+
+	// 2. settings.json にStop hookを登録
+	try {
+		let settings: Record<string, unknown> = {};
+		try {
+			const raw = await fs.promises.readFile(settingsPath, 'utf-8');
+			settings = JSON.parse(raw);
+		} catch {
+			return;
+		}
+
+		if (!settings.hooks || typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) {
+			settings.hooks = {};
+		}
+		const hooksObj = settings.hooks as Record<string, unknown>;
+
+		const stopArr = hooksObj['Stop'];
+		if (Array.isArray(stopArr)) {
+			const alreadyInstalled = stopArr.some((entry: Record<string, unknown>) => {
 				const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
 				if (!Array.isArray(innerHooks)) { return false; }
 				return innerHooks.some((hh: Record<string, unknown>) =>
@@ -312,26 +414,26 @@ export async function ensurePreCompactHook(extensionPath: string, outputChannel:
 			if (alreadyInstalled) { return; }
 		}
 
-		if (!Array.isArray(hooksObj['PreCompact'])) {
-			hooksObj['PreCompact'] = [];
+		if (!Array.isArray(hooksObj['Stop'])) {
+			hooksObj['Stop'] = [];
 		}
-		const preCompactArr = hooksObj['PreCompact'] as Array<Record<string, unknown>>;
+		const stopHooks = hooksObj['Stop'] as Array<Record<string, unknown>>;
 
-		preCompactArr.push({
+		stopHooks.push({
 			matcher: '*',
 			hooks: [{
 				type: 'command',
-				command: `bash "${hookScript.replace(/\\/g, '/')}"`,
-				timeout: 15,
+				command: `node "${hookScript.replace(/\\/g, '/')}"`,
+				timeout: 10,
 			}]
 		});
 
 		const backupPath = settingsPath + `.bak.${Date.now()}`;
 		try { await fs.promises.copyFile(settingsPath, backupPath); } catch { /* */ }
 		await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, '\t'), 'utf-8');
-		outputChannel.appendLine(`[${new Date().toISOString()}] PreCompact hookを settings.json に登録しました`);
+		outputChannel.appendLine(`[${new Date().toISOString()}] Stop hook (HISTORY記録) を settings.json に登録しました`);
 	} catch (err) {
-		outputChannel.appendLine(`[${new Date().toISOString()}] PreCompact hook登録エラー: ${err instanceof Error ? err.message : String(err)}`);
+		outputChannel.appendLine(`[${new Date().toISOString()}] Stop hook登録エラー: ${err instanceof Error ? err.message : String(err)}`);
 	}
 }
 
@@ -466,6 +568,16 @@ export async function registerCsmAskAgentHook(claudeDir: string): Promise<void> 
 	await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, '\t'), 'utf-8');
 }
 
+// cwd を Claude Code のプロジェクトフォルダ名形式にエンコード
+// 例: C:\My Project → c--my-project
+function encodeCwdToProjectDir(cwd: string): string {
+	return cwd
+		.toLowerCase()
+		.replace(/\\/g, '/')
+		.replace(/^([a-z]):/, '$1-')
+		.replace(/[\s/]/g, '-');
+}
+
 // MEMORY.mdに組織情報を書き込む（メモリファイル＋ポインタ方式）
 export async function writeOrgInfoToMemory(config: AgentConfig): Promise<void> {
 	try {
@@ -474,8 +586,12 @@ export async function writeOrgInfoToMemory(config: AgentConfig): Promise<void> {
 		try { await fs.promises.access(projectsDir); } catch { return; }
 		const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
 		if (!cwd) { return; }
+		// 現在の cwd に対応するプロジェクトフォルダ名を算出
+		const expectedDir = encodeCwdToProjectDir(cwd);
 		const dirs = await fs.promises.readdir(projectsDir);
 		for (const dir of dirs) {
+			// cwd と一致するプロジェクトフォルダのみ処理する（別プロジェクト汚染防止）
+			if (dir !== expectedDir) { continue; }
 			const memoryDir = path.join(projectsDir, dir, 'memory');
 			const memoryFile = path.join(memoryDir, 'MEMORY.md');
 			let content: string;

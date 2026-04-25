@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager - セッション履歴管理",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.4.2",
+	"version": "0.4.6",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -154,8 +154,20 @@
 			},
 			{
 				"command": "claudeManager.previewAgent",
-				"title": "エージェントプレビュー",
+				"title": "プレビュー画面を開く",
 				"icon": "$(eye)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.copyAgentSessionId",
+				"title": "セッションIDをコピー",
+				"icon": "$(copy)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.copyAgentSessionPath",
+				"title": "セッションパスをコピー",
+				"icon": "$(file-symlink-file)",
 				"category": "Claude Session Manager"
 			},
 			{
@@ -184,7 +196,7 @@
 			},
 			{
 				"command": "claudeManager.openAgentInClaude",
-				"title": "Claudeで開く",
+				"title": "Claudeで開く（IDE）",
 				"icon": "$(play)",
 				"category": "Claude Session Manager"
 			},
@@ -291,6 +303,18 @@
 				"command": "claudeManager.openSettings",
 				"title": "設定を開く",
 				"icon": "$(gear)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.reportIssue",
+				"title": "不具合を報告（GitHub Issue作成）",
+				"icon": "$(bug)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.openErrorLog",
+				"title": "エラーログを開く",
+				"icon": "$(output)",
 				"category": "Claude Session Manager"
 			},
 			{
@@ -527,6 +551,11 @@
 					"group": "inline"
 				},
 				{
+					"command": "claudeManager.previewAgent",
+					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
+					"group": "0_open@0"
+				},
+				{
 					"command": "claudeManager.openAgentInClaude",
 					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
 					"group": "0_open@1"
@@ -542,6 +571,16 @@
 					"group": "0_open"
 				},
 				{
+					"command": "claudeManager.copyAgentSessionId",
+					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
+					"group": "2_copy@1"
+				},
+				{
+					"command": "claudeManager.copyAgentSessionPath",
+					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
+					"group": "2_copy@2"
+				},
+				{
 					"command": "claudeManager.linkSession",
 					"when": "view == claudeAgents && viewItem =~ /^agentItem/",
 					"group": "0_link"
@@ -549,11 +588,6 @@
 				{
 					"command": "claudeManager.editAgent",
 					"when": "view == claudeAgents && viewItem =~ /^agentItem/",
-					"group": "1_edit"
-				},
-				{
-					"command": "claudeManager.editRuleFile",
-					"when": "view == claudeAgents && viewItem =~ /WithRule/",
 					"group": "1_edit"
 				},
 				{
@@ -630,6 +664,14 @@
 						"maximum": 600,
 						"order": 4,
 						"description": "stalled判定の閾値（秒）。この時間セッションの更新がないと停止扱い"
+					},
+					"claudeManager.taskErrorThreshold": {
+						"type": "number",
+						"default": 1800,
+						"minimum": 60,
+						"maximum": 7200,
+						"order": 4,
+						"description": "error判定の閾値（秒）。対話セッションの無操作を誤検知しないよう既定30分。サブエージェント専用に縮めたい場合は600秒などに"
 					},
 					"claudeManager.taskAutoCleanupHours": {
 						"type": "number",

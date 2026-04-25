@@ -18,6 +18,10 @@ let cachedLocalData: LocalManagerData | null = null;
 let cachedLocalDataTimestamp = 0;
 let cachedLocalDataPath: string | undefined;
 
+// 並行書き込み防止: 全 saveData/saveLocalData を Promise チェーンで直列化
+// load → mutate → save の間に別の書き込みが入るとデータが消失するため
+let writeQueue: Promise<void> = Promise.resolve();
+
 // ワークスペースのローカルデータファイルパスを取得
 function getLocalDataFilePath(): string | undefined {
 	const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -47,13 +51,18 @@ async function loadData(): Promise<ManagerData> {
 	return cachedData;
 }
 
-// グローバルデータの保存（保存後にキャッシュを無効化・非同期）
-async function saveData(data: ManagerData): Promise<void> {
-	await fs.promises.mkdir(path.dirname(DATA_FILE), { recursive: true });
-	await fs.promises.writeFile(DATA_FILE, JSON.stringify(data, null, '\t'), 'utf-8');
-	// キャッシュを無効化（次回 loadData() で再読み込みさせる）
-	cachedData = null;
-	cachedDataTimestamp = 0;
+// グローバルデータの保存（書き込みキューで直列化・キャッシュ無効化）
+function saveData(data: ManagerData): Promise<void> {
+	writeQueue = writeQueue.then(async () => {
+		await fs.promises.mkdir(path.dirname(DATA_FILE), { recursive: true });
+		await fs.promises.writeFile(DATA_FILE, JSON.stringify(data, null, '\t'), 'utf-8');
+		// キャッシュを無効化（次回 loadData() で再読み込みさせる）
+		cachedData = null;
+		cachedDataTimestamp = 0;
+	}).catch(() => {
+		// 書き込みエラーはキューを詰まらせないようキャッチのみ（上位で検知済み）
+	});
+	return writeQueue;
 }
 
 // ローカルデータの読み込み（TTLキャッシュ付き・非同期）
@@ -80,15 +89,20 @@ async function loadLocalData(): Promise<LocalManagerData> {
 	return cachedLocalData;
 }
 
-// ローカルデータの保存（保存後にキャッシュを無効化・非同期）
-async function saveLocalData(data: LocalManagerData): Promise<void> {
+// ローカルデータの保存（書き込みキューで直列化・キャッシュ無効化）
+function saveLocalData(data: LocalManagerData): Promise<void> {
 	const filePath = getLocalDataFilePath();
-	if (!filePath) { return; }
-	await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-	await fs.promises.writeFile(filePath, JSON.stringify(data, null, '\t'), 'utf-8');
-	// キャッシュを無効化（次回 loadLocalData() で再読み込みさせる）
-	cachedLocalData = null;
-	cachedLocalDataTimestamp = 0;
+	if (!filePath) { return Promise.resolve(); }
+	writeQueue = writeQueue.then(async () => {
+		await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+		await fs.promises.writeFile(filePath, JSON.stringify(data, null, '\t'), 'utf-8');
+		// キャッシュを無効化（次回 loadLocalData() で再読み込みさせる）
+		cachedLocalData = null;
+		cachedLocalDataTimestamp = 0;
+	}).catch(() => {
+		// 書き込みエラーはキューを詰まらせないようキャッチのみ
+	});
+	return writeQueue;
 }
 
 // ブックマーク操作

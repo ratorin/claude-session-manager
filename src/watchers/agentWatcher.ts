@@ -186,14 +186,16 @@ export class AgentWatcher implements vscode.Disposable {
 
 	// cwdからJSONLファイルパスを算出
 	// Claude Code は cwd をエンコードしてプロジェクトフォルダ名にする
-	// 例: c:\xampp → c--xampp
+	// 例: C:\My Project → c--my-project
+	// v0.4.6: ドライブレター小文字化・空白→'-' を追加して Claude Code の実装と対称化
 	private getJsonlPath(sessionId: string, cwd: string): string | null {
 		if (!cwd || !sessionId) { return null; }
-		// cwdをClaude Code形式のフォルダ名にエンコード
+		// cwdをClaude Code形式のフォルダ名にエンコード（lowercase + 空白も変換）
 		const encoded = cwd
+			.toLowerCase()
 			.replace(/\\/g, '/')
-			.replace(/^([a-zA-Z]):/, '$1-')
-			.replace(/\//g, '-');
+			.replace(/^([a-z]):/, '$1-')
+			.replace(/[\s/]/g, '-');
 		return path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
 	}
 

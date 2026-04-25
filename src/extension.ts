@@ -16,13 +16,25 @@ import { registerMigrationCommands } from './commands/migrationCommands';
 import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
 import { getConfig } from './utils/config';
-import { ensurePreCompactHook, ensureGovernanceHook, ensureSessionAgentInjectHook } from './services/hookService';
+import { ensurePreCompactHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook } from './services/hookService';
 import { runV04Migration } from './services/migrationService';
+import { initErrorReporter, logError } from './utils/errorReporter';
 
 
 export function activate(context: vscode.ExtensionContext) {
 	// パッケージバージョン取得
 	const currentVersion: string = context.extension.packageJSON?.version ?? '0.0.0';
+
+	// エラーレポータ初期化（ローカルログ蓄積）
+	initErrorReporter(currentVersion);
+
+	// プロセス全体の未捕捉エラーを拾う
+	process.on('unhandledRejection', (reason) => {
+		void logError('error', 'unhandledRejection', reason);
+	});
+	process.on('uncaughtException', (err) => {
+		void logError('error', 'uncaughtException', err);
+	});
 
 	// session-manager.json マイグレーション: agents[] → agentSessions（一度だけ実行）
 	dataStore.migrateAgentsToAgentSessions().catch(() => {
@@ -33,12 +45,18 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// v0.4.x マイグレーション（バージョン追跡＋バックスラッシュ自動修正）
 	const extensionOutputChannelEarly = vscode.window.createOutputChannel('CSM Hook Setup');
+	// dispose漏れ防止: Extension Host 共有プロセスでリークしないよう subscriptions に登録
+	context.subscriptions.push(extensionOutputChannelEarly);
 	runV04Migration(context, currentVersion, extensionOutputChannelEarly).catch(() => {
 		// マイグレーション失敗は致命的ではない
 	});
 
 	// PreCompact hook の自動デプロイ（テンプレート→~/.claude/hooks/ + settings.json登録）
 	ensurePreCompactHook(context.extensionPath, extensionOutputChannelEarly).catch(() => {
+		// hook登録失敗は致命的ではない
+	});
+	// Stop hook の自動デプロイ（セッション終了時のHISTORY.md追記）
+	ensureSessionStopHook(context.extensionPath, extensionOutputChannelEarly).catch(() => {
 		// hook登録失敗は致命的ではない
 	});
 	// Governance Capture hookの自動デプロイ（JSONL記録）
