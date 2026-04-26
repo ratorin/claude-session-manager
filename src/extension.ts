@@ -20,6 +20,7 @@ import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook
 import { runV04Migration, runV05Migration } from './services/migrationService';
 import { initErrorReporter, logError } from './utils/errorReporter';
 import { MainTabPanel } from './panels/mainTabPanel';
+import { TabBarPanel } from './panels/tabBarPanel';
 import { HelpFeedbackProvider } from './providers/helpFeedbackProvider';
 import { setLocale, setAutoTranslate } from './services/i18nService';
 
@@ -311,7 +312,24 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.createTreeView('claudeAgents', { treeDataProvider: agentProvider, dragAndDropController: agentProvider, canSelectMany: false }),
 	);
 
-	// T1.10: claudeMain WebviewView Container（3タブ骨格）を登録
+	// TH4: ハイブリッドタブ — defaultTab を取得して activeTab コンテキストを初期化
+	const rawDefaultTab = getConfig<string>('ui.defaultTab', 'sessions');
+	const validTabs = ['sessions', 'agents', 'memory', 'projects'] as const;
+	type TabId = typeof validTabs[number];
+	const defaultTab: TabId = (validTabs as readonly string[]).includes(rawDefaultTab)
+		? (rawDefaultTab as TabId)
+		: 'sessions';
+	void vscode.commands.executeCommand('setContext', 'claudeManager.activeTab', defaultTab);
+
+	// TH4: TabBarPanel（小さな WebView タブバー）を登録
+	const tabBarPanel = new TabBarPanel(defaultTab);
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider(TabBarPanel.viewType, tabBarPanel, {
+			webviewOptions: { retainContextWhenHidden: true },
+		})
+	);
+
+	// T1.10: claudeMain WebviewView Container（projects タブ用 WebView）を登録
 	const mainTabPanel = new MainTabPanel(context.extensionUri);
 	context.subscriptions.push(
 		vscode.window.registerWebviewViewProvider(MainTabPanel.viewType, mainTabPanel, {

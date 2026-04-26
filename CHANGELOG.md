@@ -2,6 +2,36 @@
 
 ## v0.5.0 (2026-04-27)
 
+### v0.5.0 ハイブリッドタブパッチ — タブバー WebView + ネイティブ TreeView
+
+タブバー (小さな WebView 40px) と OS ネイティブ TreeView を組み合わせたハイブリッド構成に変更。
+タブ切り替えで各 TreeView の表示/非表示を制御する。
+
+#### TH1: tabBarPanel.ts — 新規タブバー WebView
+- `claudeTabBar` WebView View Provider を新規作成
+- タブ (sessions / agents / memory / projects) をクリックすると `claudeManager.activeTab` コンテキストキーを更新
+- VS Code テーマカラー連動 CSS、アクセシビリティ対応 (`aria-pressed`, `role="tablist"`)
+- `claudeManager.ui.lastActiveTab` 設定に最後に選択したタブを永続化
+
+#### TH2: package.json — views when 句改訂
+- `claudeTabBar` を `claude-manager` viewContainer 先頭に追加
+- `claudeMain` (projects WebView) は `claudeManager.activeTab == 'projects'` 時のみ表示
+- `claudeSessions` / `claudeBookmarks` / `claudeTags` は `sessions` タブ時のみ表示
+- `claudeAgents` は `agents` タブ時のみ表示
+- `claudeMemory` は `memory` タブ時のみ表示
+- `useNewMainPanel == false` 時は旧来の5ビュー全表示フォールバックを維持
+
+#### TH3: package.json — defaultTab に "memory" を追加
+- `claudeManager.ui.defaultTab` の選択肢に `memory` を追加
+- enum: `["sessions", "agents", "memory", "projects"]`
+
+#### TH4: extension.ts — TabBarPanel 登録 + 起動時 setContext
+- `TabBarPanel` を import し `claudeTabBar` WebViewViewProvider として登録
+- 起動時に `getConfig('ui.defaultTab')` を読んで `setContext('claudeManager.activeTab', defaultTab)` を実行
+- defaultTab バリデーション (sessions/agents/memory/projects 以外は sessions にフォールバック)
+
+---
+
 ### v0.5.0 Sprint 3 — 自律組織 + 引っ越し + 機能追加UI + 仕上げ
 
 #### T3.1: snippetLibrary.ts — スニペットライブラリサービス
