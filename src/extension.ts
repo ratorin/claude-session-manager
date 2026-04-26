@@ -20,6 +20,7 @@ import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook
 import { runV04Migration } from './services/migrationService';
 import { initErrorReporter, logError } from './utils/errorReporter';
 import { MainTabPanel } from './panels/mainTabPanel';
+import { HelpFeedbackProvider } from './providers/helpFeedbackProvider';
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -299,6 +300,13 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.registerWebviewViewProvider(MainTabPanel.viewType, mainTabPanel, {
 			webviewOptions: { retainContextWhenHidden: true },
 		})
+	);
+
+	// T1.13: claudeHelp — Help & Feedback ビュー登録
+	const extensionVersion = context.extension.packageJSON.version as string ?? '0.0.0';
+	const helpFeedbackProvider = new HelpFeedbackProvider(extensionVersion);
+	context.subscriptions.push(
+		vscode.window.createTreeView('claudeHelp', { treeDataProvider: helpFeedbackProvider })
 	);
 
 	// セッション・メモリ関連コマンド登録
