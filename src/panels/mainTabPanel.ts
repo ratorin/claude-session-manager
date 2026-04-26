@@ -29,6 +29,7 @@ import {
 } from '../services/bookmarkService';
 import * as dataStore from '../models/dataStore';
 import { loadMemoryFiles, loadGlobalMemoryFiles } from '../utils/memoryManager';
+import { loadAllSessions } from '../utils/sessionLoader';
 import { buildMiniOrgChartData } from './orgChartPanel';
 
 // -------------------------------------------------------------------
@@ -90,6 +91,8 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			case 'tab-changed':
 				if (message.payload?.tab === 'agents') {
 					await this._sendAgentsData();
+				} else if (message.payload?.tab === 'memory') {
+					await this._sendMemoriesData();
 				}
 				break;
 
@@ -200,6 +203,43 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			case 'refresh-agents':
 				await this._sendAgentsData();
 				break;
+
+			// ---------- セッションタブ (TF1〜TF3) ----------
+
+			case 'refresh-sessions':
+				await this._sendSessionsData();
+				break;
+
+			case 'open-session':
+				// セッションファイルをプレビューで開く
+				if (message.payload?.filePath) {
+					await vscode.commands.executeCommand(
+						'claudeManager.previewSession',
+						{ session: { filePath: String(message.payload.filePath), id: String(message.payload.id ?? '') } }
+					);
+				}
+				break;
+
+			case 'toggle-bookmark-session': {
+				// セッションのブックマークトグル
+				const sid = String(message.payload?.sessionId ?? '');
+				if (sid) {
+					const currentBookmarks = await dataStore.getBookmarks();
+					if (currentBookmarks.includes(sid)) {
+						await dataStore.removeBookmark(sid);
+					} else {
+						await dataStore.addBookmark(sid);
+					}
+					await this._sendSessionsData();
+				}
+				break;
+			}
+
+			// ---------- メモリタブ (TF5) ----------
+
+			case 'refresh-memory':
+				await this._sendMemoriesData();
+				break;
 		}
 	}
 
@@ -209,7 +249,8 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 
 	private async _sendInitialData(): Promise<void> {
 		this._sendProjects();
-		// エージェントタブはアクティブになったときに送信
+		await this._sendSessionsData();
+		// エージェント・メモリタブはアクティブになったときに送信
 	}
 
 	private _sendProjects(): void {
@@ -292,6 +333,81 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 	}
 
 	// ----------------------------------------------------------------
+	// TF1〜TF3: セッションデータ送信
+	// ----------------------------------------------------------------
+
+	private async _sendSessionsData(): Promise<void> {
+		const maxSessions = vscode.workspace.getConfiguration('claudeManager').get<number>('maxSessionsShown', 500);
+		const allSessions = await loadAllSessions(maxSessions);
+		const bookmarks = await dataStore.getBookmarks();
+		const allTags = await dataStore.getAllTags();
+
+		const bookmarkSet = new Set(bookmarks);
+		// タグ逆引きマップ: sessionId → タグ名[]
+		const tagsBySession = new Map<string, string[]>();
+		for (const [tag, ids] of Object.entries(allTags)) {
+			for (const id of ids) {
+				const existing = tagsBySession.get(id) ?? [];
+				existing.push(tag);
+				tagsBySession.set(id, existing);
+			}
+		}
+
+		// 親セッションのみ（isSidechain を除外）
+		const parentSessions = allSessions.filter(s => !s.isSidechain);
+
+		this._view?.webview.postMessage({
+			type: 'sessions-data',
+			sessions: parentSessions.map(s => ({
+				id: s.id,
+				filePath: s.filePath,
+				title: s.customName ?? s.claudeTitle ?? s.firstMessage,
+				project: s.project,
+				lastTimestamp: s.lastTimestamp.getTime(),
+				firstTimestamp: s.firstTimestamp.getTime(),
+				fileSize: s.fileSize,
+				model: s.model ?? '',
+				gitBranch: s.gitBranch ?? '',
+				bookmarked: bookmarkSet.has(s.id),
+				tags: tagsBySession.get(s.id) ?? [],
+			})),
+			bookmarkIds: bookmarks,
+			allTags,
+		});
+	}
+
+	// ----------------------------------------------------------------
+	// TF5: メモリデータ送信
+	// ----------------------------------------------------------------
+
+	private async _sendMemoriesData(): Promise<void> {
+		const [memoryGroups, globalMemory] = await Promise.all([
+			loadMemoryFiles(),
+			loadGlobalMemoryFiles(),
+		]);
+
+		this._view?.webview.postMessage({
+			type: 'memories-data',
+			globalFiles: globalMemory?.files.map(f => ({
+				name: f.name,
+				description: f.description,
+				type: f.type,
+				filePath: f.filePath,
+			})) ?? [],
+			projectGroups: memoryGroups.map(g => ({
+				project: g.project,
+				dir: g.dir,
+				files: g.files.map(f => ({
+					name: f.name,
+					description: f.description,
+					type: f.type,
+					filePath: f.filePath,
+				})),
+			})),
+		});
+	}
+
+	// ----------------------------------------------------------------
 	// プロジェクト↔エージェント紐づけ永続化
 	// (T2.4: csm-project-agents.json に保存)
 	// ----------------------------------------------------------------
@@ -350,6 +466,7 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		const tabSessions = t('tabs.sessions');
 		const tabAgents   = t('tabs.agents');
 		const tabProjects = t('tabs.projects');
+		const tabMemory   = t('tabs.memory') || 'メモリ';
 
 		const homeDir = os.homedir().replace(/\\/g, '/');
 
@@ -882,6 +999,243 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			overflow: hidden;
 			text-overflow: ellipsis;
 		}
+
+		/* ==========================================
+		   セッションタブ (TF1〜TF3)
+		   ========================================== */
+
+		/* ---- 検索ボックス ---- */
+		.search-bar {
+			flex-shrink: 0;
+		}
+		.search-input {
+			width: 100%;
+			padding: 4px 8px;
+			background: var(--vscode-input-background);
+			color: var(--vscode-input-foreground);
+			border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+			border-radius: 3px;
+			font-size: 11px;
+			font-family: inherit;
+			outline: none;
+		}
+		.search-input:focus {
+			border-color: var(--vscode-focusBorder, #007acc);
+		}
+		.search-input::placeholder {
+			color: var(--vscode-input-placeholderForeground);
+		}
+
+		/* ---- ソート/フィルタバー ---- */
+		.sort-filter-bar {
+			display: flex;
+			gap: 4px;
+			align-items: center;
+			flex-shrink: 0;
+			flex-wrap: wrap;
+		}
+		.sort-select {
+			padding: 2px 4px;
+			background: var(--vscode-dropdown-background);
+			color: var(--vscode-dropdown-foreground);
+			border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+			border-radius: 3px;
+			font-size: 10px;
+			font-family: inherit;
+			cursor: pointer;
+		}
+
+		/* ---- セッションカード ---- */
+		.session-card {
+			padding: 5px 8px;
+			border-bottom: 1px solid var(--vscode-panel-border);
+			cursor: pointer;
+			display: flex;
+			align-items: flex-start;
+			gap: 6px;
+			min-width: 0;
+		}
+		.session-card:hover { background: var(--vscode-list-hoverBackground); }
+		.session-card:last-child { border-bottom: none; }
+		.session-card-body { flex: 1; min-width: 0; }
+		.session-card-title {
+			font-size: 11px;
+			font-weight: 500;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			color: var(--vscode-foreground);
+		}
+		.session-card-meta {
+			font-size: 10px;
+			color: var(--vscode-descriptionForeground);
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			margin-top: 1px;
+		}
+		.session-card-tags {
+			display: flex;
+			gap: 2px;
+			flex-wrap: wrap;
+			margin-top: 2px;
+		}
+		.tag-chip {
+			font-size: 8px;
+			padding: 1px 4px;
+			border-radius: 8px;
+			background: rgba(100,181,246,0.1);
+			color: #64b5f6;
+			border: 1px solid rgba(100,181,246,0.2);
+			white-space: nowrap;
+		}
+		.session-card-actions {
+			display: flex;
+			align-items: center;
+			gap: 2px;
+			flex-shrink: 0;
+		}
+		.session-bm-btn {
+			background: transparent;
+			border: none;
+			cursor: pointer;
+			font-size: 12px;
+			padding: 2px;
+			color: var(--vscode-descriptionForeground);
+			line-height: 1;
+			flex-shrink: 0;
+		}
+		.session-bm-btn:hover { color: var(--vscode-foreground); }
+		.session-bm-btn.bookmarked { color: #ffb74d; }
+		.session-model-dot {
+			width: 6px;
+			height: 6px;
+			border-radius: 50%;
+			flex-shrink: 0;
+			margin-top: 4px;
+		}
+		.dot-opus   { background: #b388ff; }
+		.dot-sonnet { background: #64b5f6; }
+		.dot-haiku  { background: #81c784; }
+		.dot-other  { background: var(--vscode-descriptionForeground); }
+
+		/* ---- 折りたたみセクション (details/summary) ---- */
+		.collapse-section {
+			flex-shrink: 0;
+			border: 1px solid var(--vscode-panel-border);
+			border-radius: 3px;
+			overflow: hidden;
+		}
+		.collapse-section[open] { flex-shrink: 0; }
+		.collapse-summary {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			padding: 5px 8px;
+			font-size: 10px;
+			font-weight: 600;
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+			color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-descriptionForeground));
+			background: var(--vscode-sideBarSectionHeader-background, var(--vscode-editor-background));
+			cursor: pointer;
+			user-select: none;
+			list-style: none;
+		}
+		.collapse-summary::-webkit-details-marker { display: none; }
+		.collapse-summary::before {
+			content: '▶';
+			font-size: 8px;
+			margin-right: 4px;
+			transition: transform 0.15s;
+		}
+		details[open] > .collapse-summary::before {
+			transform: rotate(90deg);
+		}
+		.collapse-count {
+			font-size: 9px;
+			padding: 1px 5px;
+			border-radius: 8px;
+			background: var(--vscode-badge-background);
+			color: var(--vscode-badge-foreground);
+		}
+		.collapse-body {
+			padding: 4px 0;
+			background: var(--vscode-editor-background);
+			max-height: 200px;
+			overflow-y: auto;
+		}
+
+		/* ---- タググループ ---- */
+		.tag-group {
+			margin-bottom: 4px;
+		}
+		.tag-group-header {
+			font-size: 10px;
+			font-weight: 600;
+			color: var(--vscode-descriptionForeground);
+			padding: 3px 8px;
+			display: flex;
+			align-items: center;
+			gap: 4px;
+		}
+		.tag-group-sessions { padding: 0 8px; }
+		.tag-session-item {
+			font-size: 10px;
+			padding: 2px 0 2px 12px;
+			cursor: pointer;
+			display: flex;
+			align-items: center;
+			gap: 4px;
+			border-radius: 2px;
+			color: var(--vscode-foreground);
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+		.tag-session-item:hover { background: var(--vscode-list-hoverBackground); }
+
+		/* ==========================================
+		   メモリタブ (TF5)
+		   ========================================== */
+
+		.memory-section { margin-bottom: 8px; }
+		.memory-file-row {
+			display: flex;
+			align-items: baseline;
+			gap: 6px;
+			padding: 3px 8px;
+			font-size: 10px;
+			border-bottom: 1px solid var(--vscode-panel-border);
+			cursor: default;
+		}
+		.memory-file-row:last-child { border-bottom: none; }
+		.memory-file-row:hover { background: var(--vscode-list-hoverBackground); }
+		.memory-file-name {
+			font-weight: 500;
+			color: var(--vscode-foreground);
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			flex: 1;
+		}
+		.memory-file-desc {
+			color: var(--vscode-descriptionForeground);
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			flex: 2;
+		}
+		.memory-project-header {
+			font-size: 10px;
+			font-weight: 600;
+			color: var(--vscode-descriptionForeground);
+			padding: 4px 8px 2px;
+			border-bottom: 1px solid var(--vscode-panel-border);
+			display: flex;
+			align-items: center;
+			gap: 4px;
+		}
 	</style>
 </head>
 <body>
@@ -890,23 +1244,69 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		<button class="tab-btn active" data-tab="sessions" role="tab" aria-selected="true">${tabSessions}</button>
 		<button class="tab-btn" data-tab="agents" role="tab" aria-selected="false">${tabAgents}</button>
 		<button class="tab-btn" data-tab="projects" role="tab" aria-selected="false">${tabProjects}</button>
+		<button class="tab-btn" data-tab="memory" role="tab" aria-selected="false">${tabMemory}</button>
 	</div>
 
 	<!-- タブコンテンツ -->
 	<div class="tab-content">
 
-		<!-- ===== セッションタブ ===== -->
+		<!-- ===== セッションタブ (TF1〜TF3) ===== -->
 		<div class="tab-pane active" id="pane-sessions" role="tabpanel">
+
+			<!-- アクションバー -->
 			<div class="action-bar">
 				<button class="btn primary" id="btn-new-session">＋ 新規セッション</button>
+				<button class="btn icon-btn" id="btn-refresh-sessions" title="更新" aria-label="セッションを更新">↻</button>
 			</div>
-			<div class="info-text">
-				セッション一覧はサイドバーの「会話一覧」をご利用ください。
+
+			<!-- 検索 -->
+			<div class="search-bar">
+				<input type="text" id="session-search" class="search-input"
+					placeholder="タイトル・プロジェクト・ブランチ…" aria-label="セッションを検索">
 			</div>
-			<div class="placeholder">
-				<div class="icon">💬</div>
-				<div>セッションはサイドバーから<br>管理できます</div>
+
+			<!-- ソート/フィルタ -->
+			<div class="sort-filter-bar">
+				<select id="session-sort" class="sort-select" aria-label="ソート順">
+					<option value="updated-desc">新しい順</option>
+					<option value="updated-asc">古い順</option>
+					<option value="size-desc">サイズ順</option>
+					<option value="name">名前順</option>
+				</select>
+				<div class="filter-chips" id="session-period-chips">
+					<button class="filter-chip active" data-period="all" aria-pressed="true">全て</button>
+					<button class="filter-chip" data-period="today" aria-pressed="false">今日</button>
+					<button class="filter-chip" data-period="week" aria-pressed="false">今週</button>
+				</div>
 			</div>
+
+			<!-- セッション一覧 -->
+			<div id="session-list">
+				<div class="placeholder"><div class="icon">💬</div><div>読み込み中...</div></div>
+			</div>
+
+			<!-- ブックマークセクション (TF2) -->
+			<details class="collapse-section" id="session-bookmarks-section" open>
+				<summary class="collapse-summary" aria-label="ブックマークセクション">
+					★ ブックマーク
+					<span class="collapse-count" id="session-bm-count">0</span>
+				</summary>
+				<div class="collapse-body" id="session-bookmarks-list">
+					<div class="placeholder" style="padding:8px;">ブックマークなし</div>
+				</div>
+			</details>
+
+			<!-- タグセクション (TF3) -->
+			<details class="collapse-section" id="session-tags-section">
+				<summary class="collapse-summary" aria-label="タグセクション">
+					🏷️ タグ
+					<span class="collapse-count" id="session-tags-count">0</span>
+				</summary>
+				<div class="collapse-body" id="session-tags-list">
+					<div class="placeholder" style="padding:8px;">タグなし</div>
+				</div>
+			</details>
+
 		</div>
 
 		<!-- ===== エージェントタブ (T2.12〜T2.15) ===== -->
@@ -1014,6 +1414,26 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				</div>
 			</div>
 		</div>
+
+		<!-- ===== メモリタブ (TF5) ===== -->
+		<div class="tab-pane" id="pane-memory" role="tabpanel">
+
+			<div class="action-bar">
+				<button class="btn icon-btn" id="btn-refresh-memory" title="更新" aria-label="メモリを更新">↻</button>
+			</div>
+
+			<!-- グローバルメモリ -->
+			<div class="section-header">🌐 グローバルメモリ</div>
+			<div id="memory-global-list">
+				<div class="placeholder" style="padding:8px;">読み込み中...</div>
+			</div>
+
+			<!-- プロジェクト別メモリ -->
+			<div id="memory-projects-list">
+			</div>
+
+		</div>
+
 	</div>
 
 	<script nonce="${nonce}">
@@ -1039,11 +1459,370 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		});
 
 		// ----------------------------------------------------------------
-		// セッションタブ
+		// セッションタブ (TF1〜TF3)
 		// ----------------------------------------------------------------
 		document.getElementById('btn-new-session').addEventListener('click', () => {
 			vscode.postMessage({ type: 'new-session' });
 		});
+		document.getElementById('btn-refresh-sessions').addEventListener('click', () => {
+			vscode.postMessage({ type: 'refresh-sessions' });
+		});
+
+		// ---- 検索 ----
+		let _sessionSearchTimer = null;
+		document.getElementById('session-search').addEventListener('input', (e) => {
+			clearTimeout(_sessionSearchTimer);
+			_sessionSearchTimer = setTimeout(() => {
+				renderSessionLists();
+			}, 180);
+		});
+
+		// ---- ソート ----
+		document.getElementById('session-sort').addEventListener('change', () => {
+			renderSessionLists();
+		});
+
+		// ---- 期間フィルタチップ ----
+		document.getElementById('session-period-chips').addEventListener('click', (e) => {
+			const chip = e.target.closest('[data-period]');
+			if (!chip) return;
+			document.querySelectorAll('#session-period-chips .filter-chip').forEach(c => {
+				const active = c === chip;
+				c.classList.toggle('active', active);
+				c.setAttribute('aria-pressed', active ? 'true' : 'false');
+			});
+			renderSessionLists();
+		});
+
+		// ================================================================
+		// セッションデータ管理
+		// ================================================================
+		let _sessionsCache = [];
+		let _sessionBookmarkIds = [];
+		let _sessionAllTags = {};
+
+		function getActivePeriod() {
+			const chip = document.querySelector('#session-period-chips .filter-chip.active');
+			return chip ? chip.dataset.period : 'all';
+		}
+
+		function getSessionKeyword() {
+			const el = document.getElementById('session-search');
+			return el ? el.value.trim().toLowerCase() : '';
+		}
+
+		function getSessionSort() {
+			const el = document.getElementById('session-sort');
+			return el ? el.value : 'updated-desc';
+		}
+
+		function formatFileSize(bytes) {
+			if (bytes < 1024) return bytes + 'B';
+			if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + 'KB';
+			return (bytes / (1024 * 1024)).toFixed(1) + 'MB';
+		}
+
+		function formatRelTime(ms) {
+			if (!ms) return '';
+			const diff = Date.now() - ms;
+			const sec = Math.floor(diff / 1000);
+			if (sec < 60) return 'たった今';
+			const min = Math.floor(sec / 60);
+			if (min < 60) return min + '分前';
+			const hr = Math.floor(min / 60);
+			if (hr < 24) return hr + '時間前';
+			const day = Math.floor(hr / 24);
+			if (day < 30) return day + '日前';
+			return Math.floor(day / 30) + 'ヶ月前';
+		}
+
+		function isInPeriod(ts, period) {
+			const now = Date.now();
+			if (period === 'today') {
+				const todayStart = new Date();
+				todayStart.setHours(0, 0, 0, 0);
+				return ts >= todayStart.getTime();
+			}
+			if (period === 'week') {
+				return ts >= now - 7 * 24 * 60 * 60 * 1000;
+			}
+			return true;
+		}
+
+		function applySessionFilters(sessions) {
+			const keyword = getSessionKeyword();
+			const period  = getActivePeriod();
+			return sessions.filter(s => {
+				if (!isInPeriod(s.lastTimestamp, period)) return false;
+				if (keyword) {
+					const haystack = (s.title + ' ' + s.project + ' ' + (s.gitBranch || '')).toLowerCase();
+					if (!haystack.includes(keyword)) return false;
+				}
+				return true;
+			});
+		}
+
+		function applySortSessions(sessions) {
+			const sort = getSessionSort();
+			const arr = sessions.slice();
+			switch (sort) {
+				case 'updated-desc': arr.sort((a, b) => b.lastTimestamp - a.lastTimestamp); break;
+				case 'updated-asc':  arr.sort((a, b) => a.lastTimestamp - b.lastTimestamp); break;
+				case 'size-desc':    arr.sort((a, b) => b.fileSize - a.fileSize); break;
+				case 'name':         arr.sort((a, b) => a.title.localeCompare(b.title, 'ja')); break;
+			}
+			return arr;
+		}
+
+		function modelDotClass(model) {
+			if (!model) return 'dot-other';
+			if (model.includes('opus'))   return 'dot-opus';
+			if (model.includes('sonnet')) return 'dot-sonnet';
+			if (model.includes('haiku'))  return 'dot-haiku';
+			return 'dot-other';
+		}
+
+		function makeSessionCard(s, showBookmarkBtn) {
+			const card = document.createElement('div');
+			card.className = 'session-card';
+			card.setAttribute('role', 'listitem');
+			card.dataset.id = s.id;
+
+			const dot = document.createElement('div');
+			dot.className = 'session-model-dot ' + modelDotClass(s.model);
+			dot.title = s.model || '';
+
+			const body = document.createElement('div');
+			body.className = 'session-card-body';
+
+			const titleEl = document.createElement('div');
+			titleEl.className = 'session-card-title';
+			titleEl.textContent = s.title;
+			titleEl.title = s.title;
+
+			const metaEl = document.createElement('div');
+			metaEl.className = 'session-card-meta';
+			const projShort = s.project.replace(HOME, '~').split('/').slice(-2).join('/');
+			metaEl.textContent = projShort + ' · ' + formatFileSize(s.fileSize) + ' · ' + formatRelTime(s.lastTimestamp);
+
+			body.appendChild(titleEl);
+			body.appendChild(metaEl);
+
+			if (s.tags && s.tags.length > 0) {
+				const tagsEl = document.createElement('div');
+				tagsEl.className = 'session-card-tags';
+				s.tags.forEach(tag => {
+					const chip = document.createElement('span');
+					chip.className = 'tag-chip';
+					chip.textContent = tag;
+					tagsEl.appendChild(chip);
+				});
+				body.appendChild(tagsEl);
+			}
+
+			const actions = document.createElement('div');
+			actions.className = 'session-card-actions';
+
+			if (showBookmarkBtn) {
+				const bmBtn = document.createElement('button');
+				bmBtn.className = 'session-bm-btn' + (s.bookmarked ? ' bookmarked' : '');
+				bmBtn.textContent = s.bookmarked ? '★' : '☆';
+				bmBtn.title = s.bookmarked ? 'ブックマーク解除' : 'ブックマーク追加';
+				bmBtn.setAttribute('aria-label', (s.bookmarked ? 'ブックマーク解除: ' : 'ブックマーク追加: ') + s.title);
+				bmBtn.addEventListener('click', (e) => {
+					e.stopPropagation();
+					vscode.postMessage({ type: 'toggle-bookmark-session', payload: { sessionId: s.id } });
+				});
+				actions.appendChild(bmBtn);
+			}
+
+			card.appendChild(dot);
+			card.appendChild(body);
+			card.appendChild(actions);
+
+			card.addEventListener('click', () => {
+				vscode.postMessage({ type: 'open-session', payload: { id: s.id, filePath: s.filePath } });
+			});
+
+			return card;
+		}
+
+		// ---- セッション一覧をレンダリング ----
+		function renderSessionLists() {
+			const filtered = applySessionFilters(_sessionsCache);
+			const sorted   = applySortSessions(filtered);
+
+			const list = document.getElementById('session-list');
+			if (sorted.length === 0) {
+				list.innerHTML = '<div class="placeholder"><div class="icon">💬</div><div>該当するセッションがありません</div></div>';
+			} else {
+				list.innerHTML = '';
+				sorted.forEach(s => list.appendChild(makeSessionCard(s, true)));
+			}
+		}
+
+		// ---- TF2: ブックマーク一覧 ----
+		function renderBookmarksList(sessions, bookmarkIds) {
+			const bookmarked = sessions.filter(s => bookmarkIds.includes(s.id));
+			const countEl = document.getElementById('session-bm-count');
+			if (countEl) countEl.textContent = String(bookmarked.length);
+
+			const list = document.getElementById('session-bookmarks-list');
+			if (bookmarked.length === 0) {
+				list.innerHTML = '<div style="font-size:10px; color:var(--vscode-descriptionForeground); padding:6px 8px;">ブックマークなし</div>';
+				return;
+			}
+			list.innerHTML = '';
+			bookmarked.forEach(s => {
+				const card = makeSessionCard(s, true);
+				list.appendChild(card);
+			});
+		}
+
+		// ---- TF3: タグ一覧 ----
+		function renderTagsList(sessions, allTags) {
+			const tagNames = Object.keys(allTags).sort();
+			const countEl = document.getElementById('session-tags-count');
+			if (countEl) countEl.textContent = String(tagNames.length);
+
+			const list = document.getElementById('session-tags-list');
+			if (tagNames.length === 0) {
+				list.innerHTML = '<div style="font-size:10px; color:var(--vscode-descriptionForeground); padding:6px 8px;">タグなし</div>';
+				return;
+			}
+			list.innerHTML = '';
+			tagNames.forEach(tag => {
+				const sessionIds = allTags[tag] || [];
+				const tagSessions = sessionIds
+					.map(id => sessions.find(s => s.id === id))
+					.filter(Boolean);
+				if (tagSessions.length === 0) return;
+
+				const group = document.createElement('div');
+				group.className = 'tag-group';
+
+				const header = document.createElement('div');
+				header.className = 'tag-group-header';
+				header.innerHTML = '<span>🏷️</span><span>' + escHtml(tag) + '</span>' +
+					'<span class="collapse-count">' + tagSessions.length + '</span>';
+				group.appendChild(header);
+
+				const sessionListEl = document.createElement('div');
+				sessionListEl.className = 'tag-group-sessions';
+				tagSessions.forEach(s => {
+					const item = document.createElement('div');
+					item.className = 'tag-session-item';
+					item.title = s.title;
+					item.innerHTML = '<span style="font-size:9px;">' + modelDotChar(s.model) + '</span>' +
+						'<span style="overflow:hidden;text-overflow:ellipsis;">' + escHtml(s.title) + '</span>';
+					item.addEventListener('click', () => {
+						vscode.postMessage({ type: 'open-session', payload: { id: s.id, filePath: s.filePath } });
+					});
+					sessionListEl.appendChild(item);
+				});
+				group.appendChild(sessionListEl);
+				list.appendChild(group);
+			});
+		}
+
+		function modelDotChar(model) {
+			if (!model) return '●';
+			if (model.includes('opus'))   return '<span style="color:#b388ff;">●</span>';
+			if (model.includes('sonnet')) return '<span style="color:#64b5f6;">●</span>';
+			if (model.includes('haiku'))  return '<span style="color:#81c784;">●</span>';
+			return '●';
+		}
+
+		// ---- セッションデータ受信時にレンダリング ----
+		function renderSessionsData(data) {
+			_sessionsCache     = data.sessions || [];
+			_sessionBookmarkIds = data.bookmarkIds || [];
+			_sessionAllTags    = data.allTags || {};
+
+			renderSessionLists();
+			renderBookmarksList(_sessionsCache, _sessionBookmarkIds);
+			renderTagsList(_sessionsCache, _sessionAllTags);
+		}
+
+		// ================================================================
+		// メモリタブ (TF5)
+		// ================================================================
+		document.getElementById('btn-refresh-memory').addEventListener('click', () => {
+			vscode.postMessage({ type: 'refresh-memory' });
+		});
+
+		function makeMemoryTypeClass(type) {
+			switch (type) {
+				case 'user':      return 'memory-type-user';
+				case 'feedback':  return 'memory-type-feedback';
+				case 'project':   return 'memory-type-project';
+				case 'reference': return 'memory-type-reference';
+				default:          return 'memory-type-project';
+			}
+		}
+
+		function makeMemoryFileRow(f) {
+			const row = document.createElement('div');
+			row.className = 'memory-file-row';
+			row.title = f.description || f.name;
+
+			const badge = document.createElement('span');
+			badge.className = 'memory-type-badge ' + makeMemoryTypeClass(f.type);
+			badge.textContent = f.type || 'project';
+
+			const nameEl = document.createElement('span');
+			nameEl.className = 'memory-file-name';
+			nameEl.textContent = f.name;
+
+			const descEl = document.createElement('span');
+			descEl.className = 'memory-file-desc';
+			descEl.textContent = f.description || '';
+
+			row.appendChild(badge);
+			row.appendChild(nameEl);
+			row.appendChild(descEl);
+			return row;
+		}
+
+		function renderMemoriesData(data) {
+			// グローバルメモリ
+			const globalList = document.getElementById('memory-global-list');
+			if (!data.globalFiles || data.globalFiles.length === 0) {
+				globalList.innerHTML = '<div style="font-size:10px; color:var(--vscode-descriptionForeground); padding:6px 8px;">グローバルメモリなし</div>';
+			} else {
+				globalList.innerHTML = '';
+				data.globalFiles.forEach(f => globalList.appendChild(makeMemoryFileRow(f)));
+			}
+
+			// プロジェクト別メモリ
+			const projectsList = document.getElementById('memory-projects-list');
+			projectsList.innerHTML = '';
+			if (!data.projectGroups || data.projectGroups.length === 0) {
+				projectsList.innerHTML = '<div style="font-size:10px; color:var(--vscode-descriptionForeground); padding:6px 8px;">プロジェクトメモリなし</div>';
+				return;
+			}
+			data.projectGroups.forEach(g => {
+				const sec = document.createElement('div');
+				sec.className = 'memory-section';
+
+				const hdr = document.createElement('div');
+				hdr.className = 'memory-project-header section-header';
+				const projName = g.project.replace(HOME, '~');
+				hdr.innerHTML = '📁 ' + escHtml(projName) +
+					' <span class="collapse-count">' + (g.files ? g.files.length : 0) + '</span>';
+				sec.appendChild(hdr);
+
+				if (g.files && g.files.length > 0) {
+					g.files.forEach(f => sec.appendChild(makeMemoryFileRow(f)));
+				} else {
+					const empty = document.createElement('div');
+					empty.style.cssText = 'font-size:10px; color:var(--vscode-descriptionForeground); padding:4px 8px;';
+					empty.textContent = 'ファイルなし';
+					sec.appendChild(empty);
+				}
+				projectsList.appendChild(sec);
+			});
+		}
 
 		// ================================================================
 		// プロジェクトタブ (T2.1〜T2.9)
@@ -1517,6 +2296,15 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		window.addEventListener('message', event => {
 			const msg = event.data;
 			switch (msg.type) {
+
+				case 'sessions-data':
+					renderSessionsData(msg);
+					break;
+
+				case 'memories-data':
+					renderMemoriesData(msg);
+					break;
+
 				case 'projects-data':
 					renderProjects(msg.projects);
 					break;
