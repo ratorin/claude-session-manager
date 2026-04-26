@@ -23,10 +23,23 @@
 					"title": "Claude Session Manager",
 					"icon": "$(comment-discussion)"
 				}
+			],
+			"panel": [
+				{
+					"id": "claude-help",
+					"title": "Claude Help",
+					"icon": "$(question)"
+				}
 			]
 		},
 		"views": {
 			"claude-manager": [
+				{
+					"type": "webview",
+					"id": "claudeMain",
+					"name": "Claude Session Manager",
+					"icon": "$(comment-discussion)"
+				},
 				{
 					"id": "claudeSessions",
 					"name": "会話一覧（セッション）",
@@ -51,6 +64,13 @@
 					"id": "claudeMemory",
 					"name": "メモリ管理",
 					"icon": "$(database)"
+				}
+			],
+			"claude-help": [
+				{
+					"id": "claudeHelp",
+					"name": "ヘルプ & フィードバック",
+					"icon": "$(question)"
 				}
 			]
 		},
