@@ -1,6 +1,47 @@
 # 更新履歴
 
-## v0.5.0 (2026-04-26)
+## v0.5.0 (2026-04-27)
+
+### v0.5.0 Sprint 3 — 自律組織 + 引っ越し + 機能追加UI + 仕上げ
+
+#### T3.1: snippetLibrary.ts — スニペットライブラリサービス
+
+- `loadSnippets()`: `data/snippets/core.json` からスニペット一覧をロード（TTLキャッシュ付き）
+- `getByCategory()`: カテゴリ別フィルタ
+- `search()`: タイトル/説明/タグの全文検索
+- `getById()`: ID指定取得
+
+#### T3.2: data/snippets/core.json — 標準スニペット 10件
+
+- **core-001** TDD ワークフロー (workflow) — RED→GREEN→IMPROVE 手順
+- **core-002** セキュリティレビュー手順 (workflow) — コミット前チェックリスト
+- **core-003** コードレビュー標準 (workflow) — 品質チェック + 重大度基準
+- **core-004** 破壊的操作禁止 (constraint) — rm -rf / force push 等の承認必須化
+- **core-005** 他フォルダ編集禁止 (constraint) — workDir スコープ外への書き込み禁止
+- **core-006** 報告フォーマット (communication) — タスク完了報告の標準テンプレート
+- **core-007** エラー報告手順 (communication) — エラー発生時の即時停止・報告フロー
+- **core-008** Read/Edit/Bash ツール注記 (tool-note) — ファイル操作ツールの使い方と注意
+- **core-009** Web検索ツール注記 (tool-note) — プロンプトインジェクション対策付き
+- **core-010** 完了条件チェックリスト (workflow) — 完了前確認の汎用チェックリスト
+
+#### T3.11: helpFeedbackProvider.ts — Discussions リンク追加
+
+- `ディスカッション` エントリを追加 (`comment-discussion` アイコン)
+- URL: `https://github.com/ratorin/claude-session-manager/discussions`
+
+#### T3.21: Help & Feedback 実コンテンツ整備
+
+- GitHub リポジトリ URL を実値で設定済みであることを確認
+  - ドキュメント: `https://github.com/ratorin/claude-session-manager#readme`
+  - 問題を報告: `https://github.com/ratorin/claude-session-manager/issues/new`
+  - ディスカッション: `https://github.com/ratorin/claude-session-manager/discussions`
+  - 変更履歴: `https://github.com/ratorin/claude-session-manager/blob/master/CHANGELOG.md`
+
+#### T3.23: CHANGELOG.md Sprint 3 セクション追加
+
+#### T3.24: README.md v0.5.0 新機能追記
+
+---
 
 ### v0.5.0 Sprint 2 — プロジェクトタブ + エージェント強化 + 組織図
 

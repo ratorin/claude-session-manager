@@ -6,19 +6,35 @@
 
 ## ⚠️ 取締役セッション運用者へ（重要）
 
-### エージェント運用について（v0.4.1 更新）
+### エージェント運用について（v0.4.4 更新）
 
 v0.4.0 よりエージェント定義は **`~/.claude/agents/*.md`**（Claude Code CLI 標準）が **Single Source of Truth** です。
 CSM はエージェント定義ファイルを自動検出・GUI管理し、`session-manager.json` にはブックマーク・タグ等の CSM 独自データのみを保持します。
 
-v0.4.1 では旧形式 `agents[]` からの自動マイグレーションを実施し、`agentSessions` に統一しました。
+v0.4.1: 旧形式 `agents[]` からの自動マイグレーション（`agentSessions` に統一）
+v0.4.2: エージェントプレビューパネル・確認待ち横断ビュー・`/csm-ask-agent` スキル・SessionStart hookによる役割自動注入・extension.ts分割（2776→347行）
+v0.4.3: Windows `.cmd` EINVAL 回避・他プロジェクトのセッションタイトル解決・`/csm-ask-agent` の workDir cd 対応・空sessionId自動クリーンアップ
+v0.4.4: Claude Code v2.1.113（claude.exe ネイティブバイナリ）対応・「Claudeで開く（IDE）」workspace整合チェック・サブエージェント10分タイムアウト対応・エラー自動収集（ローカル）
+v0.4.5: `/csm-ask-agent` スキル指示の刷新（無条件フォールバック禁止、workDir cd 必須、`No conversation found` 時のユーザー確認）
+v0.4.6: 緊急パッチ — MEMORY.md 別プロジェクト汚染防止 / `csm-precompact.sh` → `.js` 移行（Windows silent fail解消）/ dataStore 並行書き込み排他 / セッションパス エンコード非対称解消（大小文字・スペース）/ dead menu削除 / OutputChannel リーク修正
 
 #### 起動方式
 
-部署への指示は `claude --agent <name> -p` で **別プロセス** として起動してください:
+**推奨: `/csm-ask-agent` スキル**（Claude セッション内から使用）
+
+```
+/csm-ask-agent csm-impl "セッション一覧の表示速度を改善して"
+/csm-ask-agent al-debug "見積一覧画面で500エラーが出る。調査して"
+```
+
+- セッションIDがあれば `--resume` で既存セッションに継続、なければ `--agent` で新規起動
+- 完了報告を自動的に返すため、結果確認が不要
+- 出力先: `.agent-rules/tmp/agent_{name}_{タスク名}.txt`
+
+**代替: bash から直接起動**
 
 ```bash
-# 部署に指示（標準）
+# 部署に指示
 echo "指示内容" | claude --agent <部署名> -p > .agent-rules/tmp/agent_{部署名}_{タスク}.txt 2>&1
 
 # 同じ部署に並行タスク
@@ -49,6 +65,19 @@ python c:/xampp/.agent-rules/temp/migrate_agents.py
 ---
 
 ## 主な機能
+
+### v0.5.0 新機能
+
+- **メインタブパネル** — セッション / エージェント / プロジェクト の3タブを統合した WebviewView (`claudeMain`) を新設
+- **プロジェクト管理タブ** — プロジェクトカードグリッド・詳細ペイン・エージェント割当・進捗ダッシュボード・クイックアクション
+- **エージェントタブ強化** — ★ ブックマーク / 最終使用日Top5 / モデル別フィルタ / グローバル+プロジェクトスコープ分離
+- **Cytoscape.js 組織図** — ツリー / 関係 / グループ 3モード切替、ELK レイアウト、PNG/SVG エクスポート対応
+- **使用率バー Sonnet/Opus 5日列** — ステータスバーに5日使用率を追加表示（`claudeManager.usage.show5dColumns` 設定）
+- **スニペットライブラリ** — エージェントロール編集時に "+ 機能追加" ボタンからスニペットを挿入（`data/snippets/core.json` に10件標準搭載）
+- **Help & Feedback ビュー** — ドキュメント・問題報告・ディスカッション・変更履歴へのリンクを下部パネルに常時表示
+- **i18n 辞書** — エージェント/スキル/ツール/UIの日本語辞書を `data/i18n/ja/` に整備、`i18nService.ts` でキャッシュ付き提供
+- **パスユーティリティ** — `~` / `${HOME}` 展開・短縮・クロスプラットフォーム正規化・親子判定 (`pathUtils.ts`)
+- **v0.5.0 マイグレーション** — 起動時に `csm-projects.json` 初期化・i18nパス確認を自動実行
 
 ### 会話管理
 
@@ -82,13 +111,17 @@ python c:/xampp/.agent-rules/temp/migrate_agents.py
 > v0.4.0 より `~/.claude/agents/*.md`（CLI標準）が Single Source of Truth です。CSM のフォームは agents/*.md を直接読み書きします。
 
 - **エージェント登録** — セッションを右クリック → 「エージェントとして登録」
-  - Webviewフォームで部署名・役割・モデル・セッション運用（固定/使い捨て）・スコープ・上司・作業フォルダを一括入力
+  - Webviewフォームで部署名・役割（複数行）・モデル・セッション運用（固定/使い捨て）・スコープ・上司・作業フォルダを一括入力
   - カード型ラジオボタンでモデル・運用モード・スコープを選択、フォルダ選択ダイアログ連携
   - 登録すると `~/.claude/agents/<name>.md` が自動生成される（`agentFileManager.ts` 経由）
-- **エージェントプレビュー** — エージェント一覧でクリックすると読み取り専用プレビューを表示
-  - 名前・モデル・上司・役割・子エージェント一覧・ルールファイル内容を確認
-  - 「設定」ボタンで編集フォームに切り替え
-  - セッション名リンクからセッション履歴プレビューへ遷移
+- **エージェントプレビュー** — エージェント一覧でクリックすると Webview ベースの詳細プレビューを表示
+  - 名前・モデル・上司・役割・配下エージェントツリー・連携先エージェント一覧を確認
+  - TODO.md / HISTORY.md をプレビュー内に表示（トグルで ON/OFF 切替可能）
+  - TODO チェックボックスの操作が TODO.md に即時反映
+  - HISTORY は下追記方式で最下部に自動スクロール
+  - 「設定」ボタンで編集フォームに切り替え、セッション名リンクから履歴プレビューへ遷移
+- **確認待ち横断ビュー** — エージェント管理タイトルバーのチェックリストボタンから起動
+  - 全エージェントの未完了 TODO を横断表示、チェック ON/OFF が各 TODO.md に即時反映
 - **エージェント管理サイドバー** — 登録済みエージェントの一覧表示
   - ライブ状態（🟢/⚪）・モデルバッジ・ルールファイル行数/サイズを表示
   - 使い捨てエージェントは「使い捨て」ラベル表示
@@ -116,7 +149,7 @@ python c:/xampp/.agent-rules/temp/migrate_agents.py
 ### 組織図・ステータスバー
 
 - **組織階層は `parentAgent` フィールドで構築** — 各 `agents/*.md` の frontmatter に `parentAgent: director` のように上司を指定すると、自動的にツリー構造が構築される
-- ステータスバー（左下）に常時 `👥 M`（登録総数）を表示。`enableAgentMonitor: true` 時は `🟢 N 👥 M`（動作中数+登録総数）をリアルタイム更新し、動作中エージェントがいるときは背景色で強調表示（デフォルトOFF）
+- ステータスバー（左下）に常時 `👥 M`（登録総数）を表示。`enableAgentMonitor: true` 時は `🟢 N 👥 M`（動作中数+登録総数）をリアルタイム更新し、動作中エージェントがいるときは背景色で強調表示（デフォルトOFF）。動作中エージェントの和名（日本語名）も表示
 - **AgentWatcher統合監視** — fswatch + jsonlMtime の2方式でエージェント稼働状況を検出。EventEmitter方式で変更時のみUIを更新
 - エージェント一覧は稼働中が自動で上にソートされる
 - ホバーで動作中エージェント名リストをツールチップ表示
@@ -209,7 +242,13 @@ workDir: c:/xampp/Project/csm    # 作業ディレクトリ（CSM独自フィー
 
 - 各 `agents/*.md` の `parentAgent` フィールドから親子関係を自動構築
 - 子エージェント追加/削除/変更時に親ルールファイルの配下エージェントセクションを自動更新
+- **CHILDREN ブロックに連携先エージェント情報を自動生成** — 親ルールの配下セクションに連携先を自動追記
 - 組織図・エージェントツリーの階層表示も `parentAgent` から動的に生成
+
+### Stop フック連携
+
+- セッション終了時の `<!-- CSM_SUMMARY -->` マーカー内容を HISTORY.md / TODO.md に自動追記
+- エージェントの作業成果が自動的に蓄積され、次セッションで引き継がれる
 
 
 ### セッション自動紐づけ
@@ -220,8 +259,9 @@ workDir: c:/xampp/Project/csm    # 作業ディレクトリ（CSM独自フィー
 ### エージェントフォーム拡張
 
 - **推論努力レベル（Effort）** — Low / Medium / High / Max の4段階（MaxはOpus専用でグレーアウト連動）
-- **Extended Thinking** — トグルスイッチでON/OFF（Haikuではグレーアウト）
-- **モデル別UI連動** — モデル選択に応じてEffort Max / Thinking のグレーアウトが自動切替
+- **モデル別UI連動** — モデル選択に応じてEffort Max のグレーアウトが自動切替
+- **役割フィールド複数行対応** — textarea で複数行入力が可能（全体が見えるよう拡張）
+- **紐づけ変更確認ダイアログ** — セッション紐づけ変更時に既存紐づけの確認を表示
 
 ---
 
@@ -374,6 +414,10 @@ VS Code 左のアクティビティバーに 💬 アイコンが表示されま
 
 - 会話一覧から対象セッションを右クリック → 「エージェントとして登録」
 - **親エージェント**: 「取締役」を設定（組織図でツリー表示される）
+- 部署への指示は `/csm-ask-agent` スキルが推奨:
+  ```
+  /csm-ask-agent csm-impl "TreeViewにセッション数バッジを追加して"
+  ```
 - **モデルの使い分け**:
   - 重要な判断・設計タスク → Opus
   - 通常の開発・実装タスク → Sonnet
@@ -448,11 +492,17 @@ VS Code の設定画面（`Ctrl+,`）から `claudeManager` で検索して変�
 | `maxSessionsShown` | number | 500 | 表示する最大セッション数 |
 | `sessionFilterMode` | enum | all | プロジェクト内のみ / すべて |
 
+### エージェントプレビュー
+
+| キー | 型 | デフォルト | 説明 |
+|---|---|---|---|
+| `defaultHistoryEnabled` | boolean | false | エージェントプレビューで HISTORY.md を初期表示する |
+| `defaultTodoEnabled` | boolean | false | エージェントプレビューで TODO.md を初期表示する |
+
 ### その他
 
 | キー | 型 | デフォルト | 説明 |
 |---|---|---|---|
-| `defaultRuleFolder` | string | "" | ルールフォルダパス |
 | `preview.showThinkingBlocks` | boolean | false | AIの思考過程をプレビューに表示 |
 | `trash.folder` | string | "" | ゴミ箱フォルダパス |
 
@@ -465,7 +515,7 @@ VS Code Marketplace または Open VSX Registry で「Claude Session Manager」�
 
 ### VSIX から
 ```bash
-code --install-extension claude-session-manager-0.4.0.vsix
+code --install-extension claude-session-manager-0.4.2.vsix
 ```
 
 ## 動作要件

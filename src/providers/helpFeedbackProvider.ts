@@ -67,6 +67,8 @@ export class HelpFeedbackProvider implements vscode.TreeDataProvider<HelpFeedbac
 		const changelogUrl = `${repoUrl}/blob/master/CHANGELOG.md`;
 		const docsUrl = `${repoUrl}#readme`;
 
+		const discussionsUrl = `${repoUrl}/discussions`;
+
 		const defs: HelpItemDef[] = [
 			{
 				label: 'ドキュメント',
@@ -79,6 +81,12 @@ export class HelpFeedbackProvider implements vscode.TreeDataProvider<HelpFeedbac
 				kind: 'link',
 				uri: issueUrl,
 				icon: 'bug',
+			},
+			{
+				label: 'ディスカッション',
+				kind: 'link',
+				uri: discussionsUrl,
+				icon: 'comment-discussion',
 			},
 			{
 				label: '変更履歴',
