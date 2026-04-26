@@ -1,0 +1,69 @@
+# v0.5.0 Sprint 1 完了報告
+作成: 2026-04-26
+担当: csm-impl
+
+## 概要
+
+v0.5.0 Sprint 1 (T1.1–T1.16) の全タスクを完了し、VSIX v0.5.0 を生成しました。
+
+## 完了タスク一覧
+
+| タスク | 内容 | コミット |
+|--------|------|---------|
+| T1.1 | src/utils/pathUtils.ts — クロスプラットフォームパスユーティリティ | 4715f98 |
+| T1.2 | data/i18n/ja/agents.json 移行 + agentFileManager.ts 更新 | fa6bb25 |
+| T1.3 | data/i18n/ja/skills.json — 30件スキル日本語辞書 | 4adfc07 |
+| T1.4 | data/i18n/ja/tools.json — 20ツール日本語辞書 | a430000 |
+| T1.5 | data/i18n/ja/ui.json — UIテキスト日本語辞書 | a8992eb |
+| T1.6 | src/services/i18nService.ts — 辞書ロード+キャッシュ+翻訳APIスタブ | fcfbb4f |
+| T1.7+T1.8 | src/services/projectService.ts — プロジェクト検出・登録・csm-projects.json | 360a8c9 |
+| T1.9 | src/panels/mainTabPanel.ts — 3タブWebviewView骨格 | 88c29b6 |
+| T1.10 | extension.ts — claudeMain WebviewViewProvider 登録 | 5e05ae2 |
+| T1.11+T1.12 | セッション/エージェントタブ — サイドバーTreeView連携 | d2a91b9 |
+| T1.13 | src/providers/helpFeedbackProvider.ts — Help & Feedback ビュー | f2c3a50 |
+| T1.14 | migrationService.ts — runV05Migration() 追加 + extension.ts 呼び出し | 431a495 |
+| T1.15 | package.json — claudeMain(webview) + claudeHelp(panel) 追加 | d9e297f |
+| T1.16 | package.json — claudeManager.locale + ui.defaultTab 設定キー | 08db388 |
+| Final | v0.5.0 バージョンバンプ + CHANGELOG + VSIX生成 | 785e17d |
+
+## 成果物
+
+- VSIX: claude-session-manager-0.5.0.vsix (766.82 KB, 209ファイル)
+- 新規ファイル: 10ファイル
+- 変更ファイル: 5ファイル（extension.ts, agentFileManager.ts, migrationService.ts, package.json, CHANGELOG.md）
+
+## アーキテクチャメモ
+
+### 3タブWebviewView
+- `claudeMain` = WebviewViewProvider (mainTabPanel.ts)
+- セッション/エージェントタブは既存TreeViewへの導線（Sprint 2でフル実装予定）
+- プロジェクトタブは projectService.ts と直接統合済み
+
+### i18n構造
+```
+data/i18n/ja/
+  agents.json   ← global-agents-i18n.json の移行先（後方互換あり）
+  skills.json   ← 30件
+  tools.json    ← 20件
+  ui.json       ← UIテキスト辞書
+```
+
+### projectService 検出優先順
+1. vscode.workspace.workspaceFolders（現在のWS）
+2. ~/.claude/projects/ ディレクトリ名逆変換
+3. ~/.claude/csm-projects.json（手動登録）
+
+## 既知制限（Sprint 2 以降）
+
+- セッション/エージェントタブはまだTreeViewへの導線のみ（フル実装は Sprint 2）
+- claudeHelp は panel コンテナ（サイドバーではなくパネルエリアに表示）
+- claudeManager.locale 変更後は再起動が必要（動的切り替え未実装）
+
+## 完了条件確認
+
+✅ タブ切り替えが動く（3タブ、CSS+JS実装）
+✅ 既存機能が新UIで全て使える（TreeViewはそのまま維持）
+✅ プロジェクト検出・登録・削除が動く
+✅ i18n辞書ロード+キャッシュが動く
+✅ VSIX 0.5.0 生成成功
+✅ 全タスク1コミット1件（T1.7+T1.8、T1.11+T1.12は仕様通り統合）
