@@ -78,6 +78,18 @@ function shortId(str: string): string {
 	return Math.abs(h).toString(36);
 }
 
+// -------------------------------------------------------------------
+// T3.22 パフォーマンス: discoverProjects キャッシュ (TTL 1500ms)
+// -------------------------------------------------------------------
+
+let _discoverCache: { result: ProjectDef[]; expireAt: number } | null = null;
+const DISCOVER_CACHE_TTL_MS = 1500;
+
+/** キャッシュを無効化する（プロジェクト登録・削除時に呼び出す） */
+export function invalidateDiscoverCache(): void {
+	_discoverCache = null;
+}
+
 /** projects.json を読み込む */
 function loadProjectsFile(): ProjectsFile {
 	try {
@@ -116,6 +128,12 @@ function makeProjectId(absPath: string): string {
  * isCurrent フラグはワークスペース一致時に true になる。
  */
 export function discoverProjects(): ProjectDef[] {
+	// キャッシュヒット: 1.5s 以内の結果を再利用（プロジェクトタブ初期表示 < 1.5s 目標）
+	const now = Date.now();
+	if (_discoverCache && now < _discoverCache.expireAt) {
+		return _discoverCache.result;
+	}
+
 	const seen = new Map<string, ProjectDef>();
 
 	const currentWsFolders = vscode.workspace.workspaceFolders?.map(f => normalize(f.uri.fsPath)) ?? [];
@@ -171,12 +189,16 @@ export function discoverProjects(): ProjectDef[] {
 		}
 	}
 
-	return Array.from(seen.values()).sort((a, b) => {
+	const result = Array.from(seen.values()).sort((a, b) => {
 		// 現在のWSを先頭に、その後はアルファベット順
 		if (a.isCurrent && !b.isCurrent) { return -1; }
 		if (!a.isCurrent && b.isCurrent) { return 1; }
 		return a.name.localeCompare(b.name);
 	});
+
+	// キャッシュ更新
+	_discoverCache = { result, expireAt: Date.now() + DISCOVER_CACHE_TTL_MS };
+	return result;
 }
 
 /**
@@ -203,6 +225,7 @@ export function registerProject(absPath: string, displayName?: string): ProjectD
 	};
 	const updated: ProjectsFile = { projects: [...stored.projects, newProject] };
 	saveProjectsFile(updated);
+	invalidateDiscoverCache();
 	return newProject;
 }
 
@@ -218,6 +241,7 @@ export function removeProject(projectId: string): boolean {
 		projects: stored.projects.filter((_, i) => i !== index),
 	};
 	saveProjectsFile(updated);
+	invalidateDiscoverCache();
 	return true;
 }
 

@@ -1,4 +1,6 @@
+import * as vscode from 'vscode';
 import { AgentConfig } from '../models/types';
+import { isContainedIn, normalize } from './pathUtils';
 
 // CLI コマンドの構造体
 export interface CliCommand {
@@ -93,4 +95,46 @@ export function buildSpawnOptions(config: AgentConfig): {
 		env,
 		cwd: config.workDir || undefined,
 	};
+}
+
+// -------------------------------------------------------------------
+// T3.20 — workDir 互換性チェック (F7)
+// -------------------------------------------------------------------
+
+/**
+ * workDir が現在の VS Code ワークスペースと互換性があるか判定する。
+ *
+ * 新仕様: isContainedIn(workspace, workDir) または isContainedIn(workDir, workspace) のどちらかが真
+ * （= workDir が workspace 配下 or workspace が workDir 配下）
+ *
+ * `claudeManager.askAgent.allowAnyWorkDir: true` の場合は常に true。
+ *
+ * @param workDir  チェック対象の作業ディレクトリ（展開済み絶対パス）
+ * @returns { allowed: boolean; reason?: string }
+ */
+export function isWorkDirCompatible(workDir: string): { allowed: boolean; reason?: string } {
+    const cfg = vscode.workspace.getConfiguration('claudeManager');
+    if (cfg.get<boolean>('askAgent.allowAnyWorkDir', false)) {
+        return { allowed: true };
+    }
+
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    if (folders.length === 0) {
+        // ワークスペースが開かれていない場合は許可（制限なし）
+        return { allowed: true };
+    }
+
+    const normWorkDir = normalize(workDir);
+    for (const folder of folders) {
+        const normWorkspace = normalize(folder.uri.fsPath);
+        if (isContainedIn(normWorkDir, normWorkspace) || isContainedIn(normWorkspace, normWorkDir)) {
+            return { allowed: true };
+        }
+    }
+
+    const workspacePaths = folders.map(f => f.uri.fsPath).join(', ');
+    return {
+        allowed: false,
+        reason: `workDir(${workDir}) is outside workspace(${workspacePaths}). Set claudeManager.askAgent.allowAnyWorkDir=true to disable check.`,
+    };
 }

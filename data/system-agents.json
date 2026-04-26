@@ -1,0 +1,16 @@
+{
+	"_comment": "システムエージェント保護リスト — guarded=true と同等の扱い。このファイルに登録されたエージェントは自律組織構築による削除・解任から保護される。",
+	"version": 1,
+	"systemAgents": [
+		"director",
+		"csm-dev",
+		"csm-impl",
+		"csm-ui",
+		"csm-i18n",
+		"csm-impl-light",
+		"csm-planner",
+		"csm-planning",
+		"csm-tester"
+	],
+	"updatedAt": "2026-04-27"
+}
