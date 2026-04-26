@@ -63,7 +63,9 @@ context.subscriptions.push(
 					encodeURIComponent(sessionId)
 				);
 				vscode.env.openExternal(uri);
-			}
+			},
+			// extensionUri for Cytoscape resource loading
+			context.extensionUri
 		);
 	})
 );

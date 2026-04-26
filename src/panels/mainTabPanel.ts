@@ -1,11 +1,11 @@
 /**
- * mainTabPanel.ts — v0.5.0 T1.9 / T1.10
- * claudeMain WebviewView Container — 3タブ骨格
+ * mainTabPanel.ts — v0.5.0 Sprint 2 T2.1〜T2.15
+ * claudeMain WebviewView Container — 3タブ完全実装
  *
  * タブ構成:
  *   0: セッション (sessions)
- *   1: エージェント (agents)
- *   2: プロジェクト (projects)
+ *   1: エージェント (agents)  — T2.12〜T2.15: ブックマーク/最終使用/フィルタ/スコープ
+ *   2: プロジェクト (projects) — T2.1〜T2.9: カード/詳細ペイン/進捗/メモリ/紐づけ
  *
  * アーキテクチャ:
  *   - WebviewViewProvider として登録
@@ -19,6 +19,17 @@ import * as os from 'os';
 import * as path from 'path';
 import { t } from '../services/i18nService';
 import { discoverProjects, registerProject, removeProject } from '../services/projectService';
+import { computeProgress } from '../services/progressCalculator';
+import {
+	getBookmarks,
+	toggleBookmark,
+	getRecentlyUsed,
+	relativeTime,
+	getAllLastUsed,
+} from '../services/bookmarkService';
+import * as dataStore from '../models/dataStore';
+import { loadMemoryFiles, loadGlobalMemoryFiles } from '../utils/memoryManager';
+import { buildMiniOrgChartData } from './orgChartPanel';
 
 // -------------------------------------------------------------------
 // MainTabPanel — WebviewViewProvider 実装
@@ -73,19 +84,23 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 	private async _handleMessage(message: WebviewMessage): Promise<void> {
 		switch (message.type) {
 			case 'ready':
-				// 初期データをまとめて送信
 				await this._sendInitialData();
 				break;
 
 			case 'tab-changed':
-				// タブ変更通知（将来: 設定保存）
+				if (message.payload?.tab === 'agents') {
+					await this._sendAgentsData();
+				}
 				break;
+
+			// ---------- プロジェクトタブ (T2.1〜T2.9) ----------
 
 			case 'refresh-projects':
 				this._sendProjects();
 				break;
 
 			case 'add-project': {
+				// T2.9: フォルダ選択ダイアログ
 				const folderUris = await vscode.window.showOpenDialog({
 					canSelectFiles: false,
 					canSelectFolders: true,
@@ -107,11 +122,52 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				break;
 
 			case 'open-project':
+				// T2.8: VS Codeで開く
 				if (message.payload?.path) {
 					const uri = vscode.Uri.file(String(message.payload.path));
 					await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: false });
 				}
 				break;
+
+			case 'open-terminal':
+				// T2.8: ターミナルで開く
+				if (message.payload?.path) {
+					const terminal = vscode.window.createTerminal({
+						name: path.basename(String(message.payload.path)),
+						cwd: String(message.payload.path),
+					});
+					terminal.show();
+				}
+				break;
+
+			case 'select-project':
+				// T2.2/T2.3: プロジェクト詳細を送信
+				if (message.payload?.id) {
+					await this._sendProjectDetail(String(message.payload.id));
+				}
+				break;
+
+			case 'assign-agent': {
+				// T2.4: エージェント割当
+				const { projectId, agentName } = (message.payload ?? {}) as Record<string, string>;
+				if (projectId && agentName) {
+					await this._assignAgentToProject(projectId, agentName);
+					await this._sendProjectDetail(projectId);
+				}
+				break;
+			}
+
+			case 'unassign-agent': {
+				// T2.4: エージェント解除
+				const { projectId: pid, agentName: an } = (message.payload ?? {}) as Record<string, string>;
+				if (pid && an) {
+					await this._unassignAgentFromProject(pid, an);
+					await this._sendProjectDetail(pid);
+				}
+				break;
+			}
+
+			// ---------- セッションタブ ----------
 
 			case 'new-session':
 				await vscode.commands.executeCommand('claudeManager.newSession');
@@ -119,8 +175,30 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 
 			case 'open-agent-session':
 				if (message.payload?.agentName) {
-					await vscode.commands.executeCommand('claudeManager.openAgentSession', { name: String(message.payload.agentName) });
+					await vscode.commands.executeCommand(
+						'claudeManager.openAgentSession',
+						{ name: String(message.payload.agentName) }
+					);
 				}
+				break;
+
+			// ---------- エージェントタブ (T2.12〜T2.15) ----------
+
+			case 'toggle-bookmark-agent':
+				// T2.12: ブックマークトグル
+				if (message.payload?.agentName) {
+					const isNowBookmarked = toggleBookmark(String(message.payload.agentName));
+					this._view?.webview.postMessage({
+						type: 'bookmark-updated',
+						agentName: message.payload.agentName,
+						bookmarked: isNowBookmarked,
+					});
+					await this._sendAgentsData();
+				}
+				break;
+
+			case 'refresh-agents':
+				await this._sendAgentsData();
 				break;
 		}
 	}
@@ -131,11 +209,135 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 
 	private async _sendInitialData(): Promise<void> {
 		this._sendProjects();
+		// エージェントタブはアクティブになったときに送信
 	}
 
 	private _sendProjects(): void {
 		const projects = discoverProjects();
 		this._view?.webview.postMessage({ type: 'projects-data', projects });
+	}
+
+	private async _sendProjectDetail(projectId: string): Promise<void> {
+		const projects = discoverProjects();
+		const project = projects.find(p => p.id === projectId);
+		if (!project) { return; }
+
+		// 進捗データ (T2.7)
+		const progress = computeProgress(project);
+
+		// エージェント一覧 (T2.4)
+		const allAgents = await dataStore.getAgents();
+
+		// メモリファイル (T2.5)
+		const memoryGroups = await loadMemoryFiles();
+		const globalMemory = await loadGlobalMemoryFiles();
+
+		// プロジェクト紐づけエージェント名一覧
+		const assignedAgentNames = this._loadProjectAgents(projectId);
+
+		// T2.21: ミニ組織図データ
+		const miniOrgNodes = await buildMiniOrgChartData(assignedAgentNames);
+
+		this._view?.webview.postMessage({
+			type: 'project-detail',
+			project,
+			progress,
+			allAgents: allAgents.map(a => ({
+				name: a.name,
+				displayName: a.displayName,
+				role: a.role,
+				model: a.model,
+				scope: a.scope,
+			})),
+			assignedAgentNames,
+			miniOrgNodes,
+			memoryGroups: memoryGroups.map(g => ({
+				project: g.project,
+				files: g.files.map(f => ({ name: f.name, description: f.description, type: f.type })),
+			})),
+			globalMemoryFiles: globalMemory?.files.map(f => ({
+				name: f.name,
+				description: f.description,
+				type: f.type,
+			})) ?? [],
+		});
+	}
+
+	private async _sendAgentsData(): Promise<void> {
+		// T2.12〜T2.15
+		const allAgents = await dataStore.getAgents();
+		const bookmarks = getBookmarks();
+		const recentNames = getRecentlyUsed(5);
+		const lastUsedMap = getAllLastUsed();
+
+		this._view?.webview.postMessage({
+			type: 'agents-data',
+			agents: allAgents.map(a => ({
+				name: a.name,
+				displayName: a.displayName,
+				role: a.role,
+				displayRole: a.displayRole,
+				model: a.model,
+				scope: a.scope ?? 'global',
+				parentAgent: a.parentAgent,
+				allowedTools: a.allowedTools ?? [],
+				status: a.status ?? 'active',
+				bookmarked: bookmarks.includes(a.name),
+				lastUsed: lastUsedMap[a.name] ?? 0,
+				lastUsedLabel: relativeTime(lastUsedMap[a.name] ?? 0),
+			})),
+			bookmarkedNames: bookmarks,
+			recentNames,
+		});
+	}
+
+	// ----------------------------------------------------------------
+	// プロジェクト↔エージェント紐づけ永続化
+	// (T2.4: csm-project-agents.json に保存)
+	// ----------------------------------------------------------------
+
+	private _getProjectAgentsFile(): string {
+		return path.join(os.homedir(), '.claude', 'csm-project-agents.json');
+	}
+
+	private _loadProjectAgentsAll(): Record<string, string[]> {
+		const filePath = this._getProjectAgentsFile();
+		try {
+			const raw = require('fs').readFileSync(filePath, 'utf-8');
+			const parsed = JSON.parse(raw) as unknown;
+			if (parsed && typeof parsed === 'object') {
+				return parsed as Record<string, string[]>;
+			}
+		} catch { /* ファイルなし or エラー */ }
+		return {};
+	}
+
+	private _loadProjectAgents(projectId: string): string[] {
+		return this._loadProjectAgentsAll()[projectId] ?? [];
+	}
+
+	private _saveProjectAgentsAll(data: Record<string, string[]>): void {
+		const filePath = this._getProjectAgentsFile();
+		try {
+			require('fs').mkdirSync(path.dirname(filePath), { recursive: true });
+			require('fs').writeFileSync(filePath, JSON.stringify(data, null, '\t'), 'utf-8');
+		} catch { /* 書き込み失敗は無視 */ }
+	}
+
+	private async _assignAgentToProject(projectId: string, agentName: string): Promise<void> {
+		const all = this._loadProjectAgentsAll();
+		const current = all[projectId] ?? [];
+		if (!current.includes(agentName)) {
+			const updated = { ...all, [projectId]: [...current, agentName] };
+			this._saveProjectAgentsAll(updated);
+		}
+	}
+
+	private async _unassignAgentFromProject(projectId: string, agentName: string): Promise<void> {
+		const all = this._loadProjectAgentsAll();
+		const current = all[projectId] ?? [];
+		const updated = { ...all, [projectId]: current.filter(n => n !== agentName) };
+		this._saveProjectAgentsAll(updated);
 	}
 
 	// ----------------------------------------------------------------
@@ -149,15 +351,17 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		const tabAgents   = t('tabs.agents');
 		const tabProjects = t('tabs.projects');
 
+		const homeDir = os.homedir().replace(/\\/g, '/');
+
 		return /* html */`<!DOCTYPE html>
 <html lang="ja">
 <head>
 	<meta charset="UTF-8">
 	<meta http-equiv="Content-Security-Policy"
-		content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+		content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>Claude Session Manager</title>
-	<style>
+	<style nonce="${nonce}">
 		*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 		body {
@@ -192,9 +396,7 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			overflow: hidden;
 			text-overflow: ellipsis;
 		}
-		.tab-btn:hover {
-			color: var(--vscode-foreground);
-		}
+		.tab-btn:hover { color: var(--vscode-foreground); }
 		.tab-btn.active {
 			color: var(--vscode-tab-activeForeground, var(--vscode-foreground));
 			border-bottom-color: var(--vscode-focusBorder, #007acc);
@@ -212,62 +414,10 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			flex: 1;
 			overflow-y: auto;
 			padding: 8px;
-		}
-		.tab-pane.active {
-			display: flex;
 			flex-direction: column;
 			gap: 6px;
 		}
-
-		/* ---- プロジェクトリスト ---- */
-		.project-item {
-			display: flex;
-			align-items: center;
-			gap: 6px;
-			padding: 4px 6px;
-			border-radius: 3px;
-			cursor: pointer;
-			min-width: 0;
-		}
-		.project-item:hover {
-			background: var(--vscode-list-hoverBackground);
-		}
-		.project-icon { flex-shrink: 0; font-size: 14px; }
-		.project-info { flex: 1; min-width: 0; }
-		.project-name {
-			font-weight: 500;
-			white-space: nowrap;
-			overflow: hidden;
-			text-overflow: ellipsis;
-		}
-		.project-path {
-			font-size: 10px;
-			color: var(--vscode-descriptionForeground);
-			white-space: nowrap;
-			overflow: hidden;
-			text-overflow: ellipsis;
-		}
-		.project-badge {
-			font-size: 9px;
-			background: var(--vscode-badge-background);
-			color: var(--vscode-badge-foreground);
-			padding: 1px 4px;
-			border-radius: 9px;
-			flex-shrink: 0;
-		}
-		.project-remove {
-			flex-shrink: 0;
-			background: transparent;
-			border: none;
-			color: var(--vscode-descriptionForeground);
-			cursor: pointer;
-			padding: 2px 4px;
-			border-radius: 2px;
-			font-size: 12px;
-			display: none;
-		}
-		.project-item:hover .project-remove { display: inline; }
-		.project-remove:hover { color: var(--vscode-errorForeground); }
+		.tab-pane.active { display: flex; }
 
 		/* ---- アクションボタン ---- */
 		.action-bar {
@@ -280,7 +430,7 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			padding: 4px 8px;
 			background: var(--vscode-button-secondaryBackground, transparent);
 			color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
-			border: 1px solid var(--vscode-button-border, transparent);
+			border: 1px solid var(--vscode-button-border, var(--vscode-panel-border));
 			border-radius: 2px;
 			cursor: pointer;
 			font-size: 11px;
@@ -292,9 +442,24 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		.btn.primary {
 			background: var(--vscode-button-background);
 			color: var(--vscode-button-foreground);
+			border-color: transparent;
 		}
-		.btn.primary:hover {
-			background: var(--vscode-button-hoverBackground);
+		.btn.primary:hover { background: var(--vscode-button-hoverBackground); }
+		.btn.icon-btn {
+			flex: none;
+			padding: 3px 6px;
+		}
+
+		/* ---- セクションヘッダー ---- */
+		.section-header {
+			font-size: 10px;
+			font-weight: 600;
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+			color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-descriptionForeground));
+			padding: 6px 2px 2px;
+			border-bottom: 1px solid var(--vscode-panel-border);
+			margin-bottom: 4px;
 		}
 
 		/* ---- プレースホルダー ---- */
@@ -306,37 +471,432 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		}
 		.placeholder .icon { font-size: 24px; margin-bottom: 8px; }
 
-		/* ---- セクションヘッダー ---- */
-		.section-header {
-			font-size: 10px;
-			font-weight: 600;
-			text-transform: uppercase;
-			letter-spacing: 0.05em;
-			color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-descriptionForeground));
-			padding: 4px 2px 2px;
-			border-bottom: 1px solid var(--vscode-panel-border);
-			margin-bottom: 4px;
-		}
-
 		.info-text {
 			font-size: 11px;
 			color: var(--vscode-descriptionForeground);
 			padding: 4px 2px;
 		}
+
+		/* ==========================================
+		   プロジェクトタブ (T2.1〜T2.9)
+		   ========================================== */
+
+		/* ---- プロジェクトカードグリッド ---- */
+		.project-grid {
+			display: grid;
+			grid-template-columns: 1fr;
+			gap: 6px;
+		}
+		.project-card {
+			background: var(--vscode-editor-background);
+			border: 1px solid var(--vscode-panel-border);
+			border-radius: 4px;
+			padding: 8px 10px;
+			cursor: pointer;
+			transition: border-color 0.15s;
+		}
+		.project-card:hover {
+			border-color: var(--vscode-focusBorder, #007acc);
+		}
+		.project-card.selected {
+			border-color: var(--vscode-focusBorder, #007acc);
+			background: var(--vscode-list-activeSelectionBackground);
+		}
+		.project-card-header {
+			display: flex;
+			align-items: center;
+			gap: 6px;
+			margin-bottom: 4px;
+		}
+		.project-card-name {
+			font-weight: 600;
+			font-size: 12px;
+			flex: 1;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+		.project-card-badges {
+			display: flex;
+			gap: 3px;
+			flex-shrink: 0;
+		}
+		.badge {
+			font-size: 9px;
+			padding: 1px 5px;
+			border-radius: 9px;
+			background: var(--vscode-badge-background);
+			color: var(--vscode-badge-foreground);
+			white-space: nowrap;
+		}
+		.badge-current {
+			background: var(--vscode-statusBarItem-remoteBackground, #007acc);
+			color: var(--vscode-statusBarItem-remoteForeground, #fff);
+		}
+		.badge-manual {
+			background: var(--vscode-badge-background);
+			color: var(--vscode-badge-foreground);
+		}
+		.project-card-meta {
+			font-size: 10px;
+			color: var(--vscode-descriptionForeground);
+			display: flex;
+			gap: 8px;
+			flex-wrap: wrap;
+		}
+		.project-card-path {
+			font-size: 10px;
+			color: var(--vscode-descriptionForeground);
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			margin-top: 2px;
+		}
+		.project-card-actions {
+			display: flex;
+			gap: 4px;
+			margin-top: 6px;
+		}
+		.project-card-btn {
+			padding: 2px 6px;
+			font-size: 10px;
+			background: var(--vscode-button-secondaryBackground, transparent);
+			color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+			border: 1px solid var(--vscode-panel-border);
+			border-radius: 2px;
+			cursor: pointer;
+			font-family: inherit;
+		}
+		.project-card-btn:hover {
+			background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+		}
+		.project-card-btn.danger:hover {
+			background: var(--vscode-inputValidation-errorBackground, rgba(200,0,0,0.1));
+			border-color: var(--vscode-errorForeground);
+			color: var(--vscode-errorForeground);
+		}
+
+		/* ---- プロジェクト詳細ペイン ---- */
+		.detail-pane {
+			border: 1px solid var(--vscode-panel-border);
+			border-radius: 4px;
+			background: var(--vscode-editor-background);
+			overflow: hidden;
+		}
+		.detail-pane-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			padding: 6px 10px;
+			background: var(--vscode-sideBarSectionHeader-background, var(--vscode-editor-background));
+			border-bottom: 1px solid var(--vscode-panel-border);
+			font-size: 11px;
+			font-weight: 600;
+		}
+		.detail-pane-close {
+			background: transparent;
+			border: none;
+			cursor: pointer;
+			color: var(--vscode-descriptionForeground);
+			font-size: 14px;
+			line-height: 1;
+			padding: 0 2px;
+		}
+		.detail-pane-close:hover { color: var(--vscode-foreground); }
+		.detail-section {
+			padding: 8px 10px;
+			border-bottom: 1px solid var(--vscode-panel-border);
+		}
+		.detail-section:last-child { border-bottom: none; }
+		.detail-section-title {
+			font-size: 10px;
+			font-weight: 600;
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+			color: var(--vscode-descriptionForeground);
+			margin-bottom: 6px;
+		}
+		.detail-meta-row {
+			display: flex;
+			gap: 4px;
+			font-size: 11px;
+			margin-bottom: 3px;
+			align-items: flex-start;
+		}
+		.detail-meta-label {
+			color: var(--vscode-descriptionForeground);
+			min-width: 60px;
+			flex-shrink: 0;
+			font-size: 10px;
+		}
+		.detail-meta-value {
+			color: var(--vscode-foreground);
+			word-break: break-all;
+		}
+
+		/* ---- 進捗ダッシュボード ---- */
+		.progress-bar-wrap {
+			background: var(--vscode-progressBar-background, rgba(255,255,255,0.1));
+			border-radius: 2px;
+			height: 4px;
+			margin: 4px 0;
+			overflow: hidden;
+		}
+		.progress-bar-fill {
+			height: 100%;
+			background: var(--vscode-focusBorder, #007acc);
+			transition: width 0.3s;
+		}
+		.progress-stat {
+			display: flex;
+			gap: 8px;
+			font-size: 11px;
+			flex-wrap: wrap;
+		}
+		.progress-stat-item {
+			display: flex;
+			align-items: center;
+			gap: 4px;
+		}
+		.stat-dot {
+			width: 6px;
+			height: 6px;
+			border-radius: 50%;
+			flex-shrink: 0;
+		}
+		.stat-dot-todo { background: var(--vscode-charts-yellow, #e9c46a); }
+		.stat-dot-done { background: var(--vscode-charts-green, #4caf50); }
+		.stat-dot-pending { background: var(--vscode-charts-orange, #f4a261); }
+		.history-item {
+			font-size: 10px;
+			padding: 3px 0;
+			border-bottom: 1px solid var(--vscode-panel-border);
+			display: flex;
+			gap: 4px;
+		}
+		.history-item:last-child { border-bottom: none; }
+		.history-agent { color: var(--vscode-descriptionForeground); min-width: 50px; flex-shrink: 0; }
+		.history-text { color: var(--vscode-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+		/* ---- エージェント割当 ---- */
+		.agent-chip {
+			display: inline-flex;
+			align-items: center;
+			gap: 4px;
+			font-size: 10px;
+			padding: 2px 6px;
+			border-radius: 10px;
+			background: var(--vscode-badge-background);
+			color: var(--vscode-badge-foreground);
+			margin: 2px;
+			cursor: pointer;
+		}
+		.agent-chip:hover { opacity: 0.8; }
+		.agent-chip-remove {
+			font-size: 10px;
+			opacity: 0.7;
+		}
+		.agent-assign-list {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 2px;
+			margin-top: 4px;
+		}
+		.agent-assign-item {
+			font-size: 10px;
+			padding: 2px 6px;
+			border: 1px solid var(--vscode-panel-border);
+			border-radius: 3px;
+			cursor: pointer;
+			background: transparent;
+			color: var(--vscode-foreground);
+			font-family: inherit;
+		}
+		.agent-assign-item:hover {
+			background: var(--vscode-list-hoverBackground);
+		}
+
+		/* ---- メモリリスト ---- */
+		.memory-item {
+			font-size: 10px;
+			padding: 3px 0;
+			border-bottom: 1px solid var(--vscode-panel-border);
+			display: flex;
+			gap: 4px;
+			align-items: baseline;
+		}
+		.memory-item:last-child { border-bottom: none; }
+		.memory-type-badge {
+			font-size: 8px;
+			padding: 1px 4px;
+			border-radius: 2px;
+			flex-shrink: 0;
+		}
+		.memory-type-user { background: rgba(100,181,246,0.15); color: #64b5f6; }
+		.memory-type-feedback { background: rgba(255,183,77,0.15); color: #ffb74d; }
+		.memory-type-project { background: rgba(129,199,132,0.15); color: #81c784; }
+		.memory-type-reference { background: rgba(206,147,216,0.15); color: #ce93d8; }
+		.memory-name { color: var(--vscode-foreground); font-weight: 500; }
+		.memory-desc { color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+		/* ==========================================
+		   エージェントタブ (T2.12〜T2.15)
+		   ========================================== */
+
+		.agent-item {
+			display: flex;
+			align-items: center;
+			gap: 6px;
+			padding: 4px 6px;
+			border-radius: 3px;
+			cursor: pointer;
+			min-width: 0;
+		}
+		.agent-item:hover { background: var(--vscode-list-hoverBackground); }
+		.agent-info { flex: 1; min-width: 0; }
+		.agent-name {
+			font-weight: 500;
+			font-size: 11px;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+		.agent-meta {
+			font-size: 10px;
+			color: var(--vscode-descriptionForeground);
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+		.agent-badges {
+			display: flex;
+			gap: 3px;
+			flex-shrink: 0;
+			align-items: center;
+		}
+		.model-badge {
+			font-size: 9px;
+			padding: 1px 4px;
+			border-radius: 3px;
+			font-weight: 600;
+		}
+		.model-opus { background: rgba(179,136,255,0.15); color: #b388ff; border: 1px solid rgba(179,136,255,0.3); }
+		.model-sonnet { background: rgba(100,181,246,0.15); color: #64b5f6; border: 1px solid rgba(100,181,246,0.3); }
+		.model-haiku { background: rgba(129,199,132,0.15); color: #81c784; border: 1px solid rgba(129,199,132,0.3); }
+		.scope-badge {
+			font-size: 9px;
+			padding: 1px 4px;
+			border-radius: 3px;
+		}
+		.scope-global { color: var(--vscode-descriptionForeground); }
+		.scope-project {
+			background: rgba(100,181,246,0.1);
+			color: #64b5f6;
+		}
+		.bookmark-btn {
+			background: transparent;
+			border: none;
+			cursor: pointer;
+			font-size: 12px;
+			padding: 2px 3px;
+			color: var(--vscode-descriptionForeground);
+			line-height: 1;
+		}
+		.bookmark-btn:hover { color: var(--vscode-foreground); }
+		.bookmark-btn.bookmarked { color: #ffb74d; }
+
+		/* ---- フィルタチップ (T2.14) ---- */
+		.filter-section {
+			padding: 0 0 4px;
+		}
+		.filter-label {
+			font-size: 10px;
+			color: var(--vscode-descriptionForeground);
+			margin-bottom: 3px;
+		}
+		.filter-chips {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 3px;
+		}
+		.filter-chip {
+			font-size: 10px;
+			padding: 2px 6px;
+			border-radius: 10px;
+			border: 1px solid var(--vscode-panel-border);
+			background: transparent;
+			color: var(--vscode-foreground);
+			cursor: pointer;
+			font-family: inherit;
+			white-space: nowrap;
+		}
+		.filter-chip:hover { background: var(--vscode-list-hoverBackground); }
+		.filter-chip.active {
+			background: var(--vscode-focusBorder, #007acc);
+			color: #fff;
+			border-color: transparent;
+		}
+		.filter-clear {
+			font-size: 10px;
+			color: var(--vscode-descriptionForeground);
+			background: transparent;
+			border: none;
+			cursor: pointer;
+			padding: 2px 4px;
+			font-family: inherit;
+		}
+		.filter-clear:hover { color: var(--vscode-foreground); }
+
+		/* ---- ミニ組織図 (T2.21) ---- */
+		.mini-org-tree {
+			display: flex;
+			flex-direction: column;
+			gap: 2px;
+		}
+		.mini-org-node {
+			display: flex;
+			align-items: center;
+			gap: 4px;
+			padding: 2px 4px;
+			border-radius: 3px;
+			font-size: 10px;
+			border: 1px solid var(--vscode-panel-border);
+			background: var(--vscode-editor-background);
+		}
+		.mini-org-node.indent-1 { margin-left: 16px; }
+		.mini-org-node.indent-2 { margin-left: 32px; }
+		.mini-org-indent {
+			color: var(--vscode-descriptionForeground);
+			font-size: 9px;
+		}
+		.mini-org-model {
+			font-size: 8px;
+			padding: 1px 3px;
+			border-radius: 2px;
+			flex-shrink: 0;
+		}
+		.mini-org-name {
+			font-weight: 500;
+			flex: 1;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
 	</style>
 </head>
 <body>
 	<!-- タブバー -->
-	<div class="tab-bar">
-		<button class="tab-btn active" data-tab="sessions">${tabSessions}</button>
-		<button class="tab-btn" data-tab="agents">${tabAgents}</button>
-		<button class="tab-btn" data-tab="projects">${tabProjects}</button>
+	<div class="tab-bar" role="tablist">
+		<button class="tab-btn active" data-tab="sessions" role="tab" aria-selected="true">${tabSessions}</button>
+		<button class="tab-btn" data-tab="agents" role="tab" aria-selected="false">${tabAgents}</button>
+		<button class="tab-btn" data-tab="projects" role="tab" aria-selected="false">${tabProjects}</button>
 	</div>
 
 	<!-- タブコンテンツ -->
 	<div class="tab-content">
-		<!-- セッションタブ -->
-		<div class="tab-pane active" id="pane-sessions">
+
+		<!-- ===== セッションタブ ===== -->
+		<div class="tab-pane active" id="pane-sessions" role="tabpanel">
 			<div class="action-bar">
 				<button class="btn primary" id="btn-new-session">＋ 新規セッション</button>
 			</div>
@@ -349,27 +909,108 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			</div>
 		</div>
 
-		<!-- エージェントタブ -->
-		<div class="tab-pane" id="pane-agents">
-			<div class="info-text">
-				エージェント一覧はサイドバーの「エージェント管理」をご利用ください。
+		<!-- ===== エージェントタブ (T2.12〜T2.15) ===== -->
+		<div class="tab-pane" id="pane-agents" role="tabpanel">
+			<!-- フィルタセクション (T2.14) -->
+			<div class="filter-section" id="agent-filter-section">
+				<div class="filter-label">モデル:</div>
+				<div class="filter-chips" id="filter-model-chips"></div>
+				<div class="filter-label" style="margin-top:4px;">スコープ:</div>
+				<div class="filter-chips" id="filter-scope-chips"></div>
+				<div style="margin-top:4px; display:flex; align-items:center; gap:4px;">
+					<span class="filter-label" style="margin:0;">親:</span>
+					<div class="filter-chips" id="filter-parent-chips" style="flex:1;"></div>
+					<button class="filter-clear" id="btn-clear-filters">✕ クリア</button>
+				</div>
 			</div>
-			<div class="placeholder">
-				<div class="icon">🤖</div>
-				<div>エージェントはサイドバーから<br>管理できます</div>
+
+			<!-- ブックマークセクション (T2.12) -->
+			<div class="section-header">★ ブックマーク</div>
+			<div id="agent-bookmarks-list">
+				<div class="placeholder" style="padding:12px 8px;">
+					<div>読み込み中...</div>
+				</div>
 			</div>
+
+			<!-- 最終使用日順 Top 5 (T2.13) -->
+			<div class="section-header" style="margin-top:4px;">最近使用 (Top5)</div>
+			<div id="agent-recent-list">
+				<div class="placeholder" style="padding:12px 8px;">
+					<div>読み込み中...</div>
+				</div>
+			</div>
+
+			<!-- 全エージェント (グローバル/プロジェクト分離 T2.15) -->
+			<div class="section-header" style="margin-top:4px;">🌐 グローバル</div>
+			<div id="agent-global-list"></div>
+
+			<div class="section-header" style="margin-top:4px;" id="agent-project-header">プロジェクト</div>
+			<div id="agent-project-list"></div>
 		</div>
 
-		<!-- プロジェクトタブ -->
-		<div class="tab-pane" id="pane-projects">
+		<!-- ===== プロジェクトタブ (T2.1〜T2.9) ===== -->
+		<div class="tab-pane" id="pane-projects" role="tabpanel">
 			<div class="action-bar">
 				<button class="btn primary" id="btn-add-project">＋ 追加</button>
-				<button class="btn" id="btn-refresh-projects">↻ 更新</button>
+				<button class="btn icon-btn" id="btn-refresh-projects" title="更新">↻</button>
 			</div>
+
+			<!-- プロジェクト一覧 (T2.1/T2.2) -->
 			<div id="project-list">
 				<div class="placeholder">
 					<div class="icon">📁</div>
 					<div>読み込み中...</div>
+				</div>
+			</div>
+
+			<!-- 詳細ペイン (T2.3〜T2.8) -->
+			<div id="project-detail-pane" style="display:none;" aria-label="プロジェクト詳細">
+				<div class="detail-pane">
+					<div class="detail-pane-header">
+						<span id="detail-project-name">プロジェクト詳細</span>
+						<button class="detail-pane-close" id="btn-close-detail" title="閉じる" aria-label="詳細を閉じる">✕</button>
+					</div>
+
+					<!-- T2.3: 概要 -->
+					<div class="detail-section">
+						<div class="detail-section-title">概要</div>
+						<div id="detail-meta"></div>
+					</div>
+
+					<!-- T2.8: クイックアクション -->
+					<div class="detail-section">
+						<div class="detail-section-title">クイックアクション</div>
+						<div style="display:flex; gap:4px; flex-wrap:wrap;">
+							<button class="project-card-btn" id="btn-detail-open-vscode">VS Codeで開く</button>
+							<button class="project-card-btn" id="btn-detail-open-terminal">ターミナル</button>
+						</div>
+					</div>
+
+					<!-- T2.4: 紐づけエージェント -->
+					<div class="detail-section">
+						<div class="detail-section-title">割当エージェント</div>
+						<div id="detail-assigned-agents"></div>
+						<div class="detail-section-title" style="margin-top:8px;">エージェントを追加</div>
+						<div id="detail-agent-candidates"></div>
+					</div>
+
+					<!-- T2.7: 進捗ダッシュボード -->
+					<div class="detail-section">
+						<div class="detail-section-title">進捗ダッシュボード</div>
+						<div id="detail-progress"></div>
+					</div>
+
+					<!-- T2.21: ミニ組織図 -->
+					<div class="detail-section">
+						<div class="detail-section-title">ミニ組織図</div>
+						<div id="detail-mini-org" style="overflow-x:auto;"></div>
+					</div>
+
+					<!-- T2.5: メモリ管理 -->
+					<div class="detail-section">
+						<div class="detail-section-title">メモリファイル</div>
+						<div id="detail-memory"></div>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -377,115 +1018,552 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 
 	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
+		const HOME = '${homeDir}';
 
-		// ---- タブ切り替え ----
+		// ----------------------------------------------------------------
+		// タブ切り替え
+		// ----------------------------------------------------------------
 		const tabBtns  = document.querySelectorAll('.tab-btn');
 		const tabPanes = document.querySelectorAll('.tab-pane');
 
 		tabBtns.forEach(btn => {
 			btn.addEventListener('click', () => {
 				const target = btn.dataset.tab;
-				tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === target));
+				tabBtns.forEach(b => {
+					b.classList.toggle('active', b.dataset.tab === target);
+					b.setAttribute('aria-selected', b.dataset.tab === target ? 'true' : 'false');
+				});
 				tabPanes.forEach(p => p.classList.toggle('active', p.id === 'pane-' + target));
 				vscode.postMessage({ type: 'tab-changed', payload: { tab: target } });
 			});
 		});
 
-		// ---- セッションタブ ----
+		// ----------------------------------------------------------------
+		// セッションタブ
+		// ----------------------------------------------------------------
 		document.getElementById('btn-new-session').addEventListener('click', () => {
 			vscode.postMessage({ type: 'new-session' });
 		});
 
-		// ---- プロジェクトタブ ----
+		// ================================================================
+		// プロジェクトタブ (T2.1〜T2.9)
+		// ================================================================
+
+		let selectedProjectId = null;
+
 		document.getElementById('btn-add-project').addEventListener('click', () => {
 			vscode.postMessage({ type: 'add-project' });
 		});
 		document.getElementById('btn-refresh-projects').addEventListener('click', () => {
 			vscode.postMessage({ type: 'refresh-projects' });
 		});
+		document.getElementById('btn-close-detail').addEventListener('click', () => {
+			closeDetail();
+		});
+		document.getElementById('btn-detail-open-vscode').addEventListener('click', () => {
+			if (selectedProjectId) {
+				vscode.postMessage({ type: 'open-project', payload: { path: getSelectedProjectPath() } });
+			}
+		});
+		document.getElementById('btn-detail-open-terminal').addEventListener('click', () => {
+			if (selectedProjectId) {
+				vscode.postMessage({ type: 'open-terminal', payload: { path: getSelectedProjectPath() } });
+			}
+		});
 
-		// ---- プロジェクト一覧レンダリング ----
+		let _projectsCache = [];
+
+		function getSelectedProjectPath() {
+			const p = _projectsCache.find(p => p.id === selectedProjectId);
+			return p ? p.path : '';
+		}
+
+		function closeDetail() {
+			document.getElementById('project-detail-pane').style.display = 'none';
+			document.querySelectorAll('.project-card').forEach(c => c.classList.remove('selected'));
+			selectedProjectId = null;
+		}
+
+		// ---- T2.1/T2.2: プロジェクト一覧レンダリング ----
 		function renderProjects(projects) {
+			_projectsCache = projects || [];
 			const list = document.getElementById('project-list');
 			if (!projects || projects.length === 0) {
-				list.innerHTML = '<div class="placeholder"><div class="icon">📁</div><div>プロジェクトがありません</div></div>';
+				list.innerHTML = '<div class="placeholder"><div class="icon">📁</div><div>プロジェクトがありません<br><small>＋ 追加でフォルダを登録できます</small></div></div>';
 				return;
 			}
-			list.innerHTML = '';
 
+			list.innerHTML = '';
 			const currentItems = projects.filter(p => p.isCurrent);
 			const otherItems   = projects.filter(p => !p.isCurrent);
 
-			if (currentItems.length > 0) {
+			function renderSection(items, label) {
+				if (items.length === 0) return;
 				const hdr = document.createElement('div');
 				hdr.className = 'section-header';
-				hdr.textContent = '現在のプロジェクト';
+				hdr.textContent = label;
 				list.appendChild(hdr);
-				currentItems.forEach(p => list.appendChild(makeProjectItem(p)));
+
+				const grid = document.createElement('div');
+				grid.className = 'project-grid';
+				items.forEach(p => grid.appendChild(makeProjectCard(p)));
+				list.appendChild(grid);
 			}
 
-			if (otherItems.length > 0) {
-				const hdr = document.createElement('div');
-				hdr.className = 'section-header';
-				hdr.style.marginTop = '8px';
-				hdr.textContent = 'その他のプロジェクト';
-				list.appendChild(hdr);
-				otherItems.forEach(p => list.appendChild(makeProjectItem(p)));
+			renderSection(currentItems, '現在のプロジェクト');
+			renderSection(otherItems, 'その他');
+		}
+
+		function makeProjectCard(p) {
+			const card = document.createElement('div');
+			card.className = 'project-card';
+			card.dataset.id = p.id;
+			card.setAttribute('role', 'button');
+			card.setAttribute('aria-label', p.name + 'プロジェクト');
+			card.title = p.path;
+
+			const currentBadge = p.isCurrent ? '<span class="badge badge-current">現在</span>' : '';
+			const sourceBadge  = p.source === 'manual' ? '<span class="badge badge-manual">手動</span>' : '';
+
+			card.innerHTML =
+				'<div class="project-card-header">' +
+					'<span style="font-size:14px;" aria-hidden="true">📁</span>' +
+					'<span class="project-card-name">' + escHtml(p.name) + '</span>' +
+					'<div class="project-card-badges">' + currentBadge + sourceBadge + '</div>' +
+				'</div>' +
+				'<div class="project-card-path">' + escHtml(shortenPath(p.path)) + '</div>' +
+				'<div class="project-card-actions">' +
+					'<button class="project-card-btn" data-action="select">詳細</button>' +
+					'<button class="project-card-btn" data-action="vscode">VS Code</button>' +
+					'<button class="project-card-btn" data-action="terminal">端末</button>' +
+					(p.source === 'manual' ? '<button class="project-card-btn danger" data-action="remove">削除</button>' : '') +
+				'</div>';
+
+			card.addEventListener('click', (e) => {
+				const action = e.target.dataset && e.target.dataset.action;
+				if (action === 'vscode') {
+					vscode.postMessage({ type: 'open-project', payload: { path: p.path } });
+					return;
+				}
+				if (action === 'terminal') {
+					vscode.postMessage({ type: 'open-terminal', payload: { path: p.path } });
+					return;
+				}
+				if (action === 'remove') {
+					vscode.postMessage({ type: 'remove-project', payload: { id: p.id } });
+					if (selectedProjectId === p.id) { closeDetail(); }
+					return;
+				}
+				// カード全体クリック or 詳細ボタン → 詳細ペイン
+				document.querySelectorAll('.project-card').forEach(c => c.classList.remove('selected'));
+				card.classList.add('selected');
+				selectedProjectId = p.id;
+				document.getElementById('project-detail-pane').style.display = 'block';
+				document.getElementById('detail-project-name').textContent = p.name;
+				// メタデータ描画 (T2.3)
+				renderDetailMeta(p);
+				// 詳細データ要求
+				vscode.postMessage({ type: 'select-project', payload: { id: p.id } });
+			});
+
+			return card;
+		}
+
+		// ---- T2.3: 詳細ペイン — 概要 ----
+		function renderDetailMeta(p) {
+			const el = document.getElementById('detail-meta');
+			const rows = [
+				['パス', p.path],
+				['ソース', p.source === 'workspace' ? 'ワークスペース' : p.source === 'manual' ? '手動登録' : 'Claudeプロジェクト'],
+				['登録日', p.addedAt ? new Date(p.addedAt).toLocaleDateString('ja-JP') : '-'],
+			];
+			el.innerHTML = rows.map(([label, value]) =>
+				'<div class="detail-meta-row">' +
+					'<span class="detail-meta-label">' + escHtml(label) + '</span>' +
+					'<span class="detail-meta-value">' + escHtml(String(value)) + '</span>' +
+				'</div>'
+			).join('');
+		}
+
+		// ---- T2.7: 進捗ダッシュボード ----
+		function renderDetailProgress(progress) {
+			const el = document.getElementById('detail-progress');
+			if (!progress) { el.innerHTML = '<div class="info-text">データなし</div>'; return; }
+
+			const totalPending = progress.todos.reduce((s, t) => s + t.pending, 0);
+			const totalDone    = progress.todos.reduce((s, t) => s + t.done, 0);
+			const totalAll     = totalPending + totalDone;
+			const pct = totalAll > 0 ? Math.round(totalDone / totalAll * 100) : 0;
+
+			let html = '<div class="progress-stat">' +
+				'<span class="progress-stat-item"><span class="stat-dot stat-dot-todo"></span>TODO残 ' + totalPending + '件</span>' +
+				'<span class="progress-stat-item"><span class="stat-dot stat-dot-done"></span>完了 ' + totalDone + '件</span>' +
+				'<span class="progress-stat-item"><span class="stat-dot stat-dot-pending"></span>確認待ち ' +
+					progress.pendingTasks.reduce((s, t) => s + t.count, 0) + '件</span>' +
+			'</div>';
+
+			if (totalAll > 0) {
+				html += '<div class="progress-bar-wrap" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100">' +
+					'<div class="progress-bar-fill" style="width:' + pct + '%;"></div>' +
+				'</div>' +
+				'<div style="font-size:10px; color:var(--vscode-descriptionForeground); text-align:right;">' + pct + '% 完了</div>';
+			}
+
+			if (progress.history && progress.history.length > 0) {
+				html += '<div style="margin-top:6px; font-size:10px; font-weight:600; color:var(--vscode-descriptionForeground);">直近履歴</div>';
+				html += progress.history.slice(0, 5).map(h =>
+					'<div class="history-item">' +
+						'<span class="history-agent">' + escHtml(h.agent) + '</span>' +
+						'<span class="history-text">' + escHtml(h.lastEntry) + '</span>' +
+					'</div>'
+				).join('');
+			}
+
+			el.innerHTML = html;
+		}
+
+		// ---- T2.4: 紐づけエージェント管理 ----
+		function renderDetailAgents(assignedNames, allAgents, projectId) {
+			const assignedEl   = document.getElementById('detail-assigned-agents');
+			const candidatesEl = document.getElementById('detail-agent-candidates');
+
+			// 割当済みチップ
+			if (assignedNames.length === 0) {
+				assignedEl.innerHTML = '<div class="info-text">割当なし</div>';
+			} else {
+				assignedEl.innerHTML = '';
+				const wrap = document.createElement('div');
+				wrap.className = 'agent-assign-list';
+				assignedNames.forEach(name => {
+					const chip = document.createElement('span');
+					chip.className = 'agent-chip';
+					chip.innerHTML = escHtml(name) + ' <span class="agent-chip-remove" aria-label="' + escHtml(name) + 'を解除">✕</span>';
+					chip.title = name + ' — クリックで解除';
+					chip.addEventListener('click', () => {
+						vscode.postMessage({ type: 'unassign-agent', payload: { projectId, agentName: name } });
+					});
+					wrap.appendChild(chip);
+				});
+				assignedEl.appendChild(wrap);
+			}
+
+			// 未割当候補
+			const unassigned = allAgents.filter(a => !assignedNames.includes(a.name));
+			if (unassigned.length === 0) {
+				candidatesEl.innerHTML = '<div class="info-text">すべてのエージェントが割当済みです</div>';
+			} else {
+				candidatesEl.innerHTML = '';
+				const wrap = document.createElement('div');
+				wrap.className = 'agent-assign-list';
+				unassigned.slice(0, 10).forEach(a => {
+					const btn = document.createElement('button');
+					btn.className = 'agent-assign-item';
+					btn.textContent = '＋ ' + (a.displayName || a.name);
+					btn.title = a.role || a.name;
+					btn.setAttribute('aria-label', (a.displayName || a.name) + 'を割当');
+					btn.addEventListener('click', () => {
+						vscode.postMessage({ type: 'assign-agent', payload: { projectId, agentName: a.name } });
+					});
+					wrap.appendChild(btn);
+				});
+				candidatesEl.appendChild(wrap);
 			}
 		}
 
-		function makeProjectItem(p) {
-			const item = document.createElement('div');
-			item.className = 'project-item';
-			item.title = p.path;
+		// ---- T2.5: メモリ管理 ----
+		function renderDetailMemory(memoryGroups, globalFiles) {
+			const el = document.getElementById('detail-memory');
+			let html = '';
 
-			const badge = p.isCurrent ? '<span class="project-badge">現在</span>' : '';
-			const canRemove = p.source === 'manual';
+			if (globalFiles && globalFiles.length > 0) {
+				html += '<div style="font-size:10px; font-weight:600; color:var(--vscode-descriptionForeground); margin-bottom:3px;">グローバル</div>';
+				html += globalFiles.map(f => renderMemoryItem(f)).join('');
+			}
 
-			item.innerHTML =
-				'<span class="project-icon">📁</span>' +
-				'<div class="project-info">' +
-					'<div class="project-name">' + escHtml(p.name) + '</div>' +
-					'<div class="project-path">' + escHtml(shortenPath(p.path)) + '</div>' +
-				'</div>' +
-				badge +
-				(canRemove ? '<button class="project-remove" title="削除">✕</button>' : '');
-
-			item.addEventListener('click', (e) => {
-				if (e.target.classList.contains('project-remove')) { return; }
-				vscode.postMessage({ type: 'open-project', payload: { path: p.path } });
-			});
-
-			const removeBtn = item.querySelector('.project-remove');
-			if (removeBtn) {
-				removeBtn.addEventListener('click', (e) => {
-					e.stopPropagation();
-					vscode.postMessage({ type: 'remove-project', payload: { id: p.id } });
+			if (memoryGroups && memoryGroups.length > 0) {
+				memoryGroups.forEach(g => {
+					if (g.files && g.files.length > 0) {
+						html += '<div style="font-size:10px; font-weight:600; color:var(--vscode-descriptionForeground); margin:5px 0 3px;">' + escHtml(g.project) + '</div>';
+						html += g.files.map(f => renderMemoryItem(f)).join('');
+					}
 				});
 			}
+
+			if (!html) { html = '<div class="info-text">メモリファイルなし</div>'; }
+			el.innerHTML = html;
+		}
+
+		function renderMemoryItem(f) {
+			const typeClass = 'memory-type-' + (f.type || 'project');
+			return '<div class="memory-item">' +
+				'<span class="memory-type-badge ' + typeClass + '">' + escHtml(f.type || 'project') + '</span>' +
+				'<span class="memory-name">' + escHtml(f.name) + '</span>' +
+				(f.description ? ' <span class="memory-desc">— ' + escHtml(f.description) + '</span>' : '') +
+			'</div>';
+		}
+
+		// ---- T2.21: ミニ組織図 ----
+		function renderDetailMiniOrg(nodes) {
+			const el = document.getElementById('detail-mini-org');
+			if (!nodes || nodes.length === 0) {
+				el.innerHTML = '<div class="info-text">割当エージェントなし</div>';
+				return;
+			}
+
+			// 簡易ツリー: parent=null → ルート、それ以外 → 子
+			const roots   = nodes.filter(n => !n.parent);
+			const children = nodes.filter(n => n.parent);
+
+			function modelClass(model) {
+				if (model === 'opus')  return 'model-opus';
+				if (model === 'haiku') return 'model-haiku';
+				return 'model-sonnet';
+			}
+
+			function nodeHtml(n, indent) {
+				const indentClass = indent === 1 ? 'indent-1' : indent === 2 ? 'indent-2' : '';
+				const prefix = indent > 0 ? '<span class="mini-org-indent">└─</span>' : '';
+				return '<div class="mini-org-node ' + indentClass + '">' +
+					prefix +
+					'<span class="mini-org-model model-badge ' + modelClass(n.model) + '">' + escHtml(n.model) + '</span>' +
+					'<span class="mini-org-name" title="' + escHtml(n.role || n.id) + '">' + escHtml(n.label || n.id) + '</span>' +
+				'</div>';
+			}
+
+			let html = '<div class="mini-org-tree">';
+			for (const root of roots) {
+				html += nodeHtml(root, 0);
+				const level1 = children.filter(c => c.parent === root.id);
+				for (const c1 of level1) {
+					html += nodeHtml(c1, 1);
+					const level2 = children.filter(c => c.parent === c1.id);
+					for (const c2 of level2) {
+						html += nodeHtml(c2, 2);
+					}
+				}
+			}
+			// 孤立ノード（parent指定あるが実際の親が一覧にない）
+			const rootIds = new Set(roots.map(r => r.id));
+			const orphans = children.filter(c => !rootIds.has(c.parent));
+			for (const o of orphans) {
+				html += nodeHtml(o, 0);
+			}
+			html += '</div>';
+			el.innerHTML = html;
+		}
+
+		// ================================================================
+		// エージェントタブ (T2.12〜T2.15)
+		// ================================================================
+
+		let _agentsCache = [];
+		let _activeFilters = { model: null, scope: null, parent: null };
+
+		// ---- T2.14: フィルタチップ初期化 ----
+		function initFilterChips(agents) {
+			const models  = [...new Set(agents.map(a => a.model))].sort();
+			const scopes  = [...new Set(agents.map(a => a.scope || 'global'))].sort();
+			const parents = [...new Set(agents.filter(a => a.parentAgent).map(a => a.parentAgent))].sort();
+
+			renderChips('filter-model-chips',  models,  'model');
+			renderChips('filter-scope-chips',  scopes,  'scope');
+			renderChips('filter-parent-chips', parents, 'parent');
+		}
+
+		function renderChips(containerId, values, filterKey) {
+			const container = document.getElementById(containerId);
+			container.innerHTML = '';
+			values.forEach(v => {
+				const chip = document.createElement('button');
+				chip.className = 'filter-chip';
+				chip.textContent = v;
+				chip.dataset.value = v;
+				chip.setAttribute('aria-pressed', 'false');
+				chip.addEventListener('click', () => {
+					const isActive = chip.classList.contains('active');
+					// 同グループの他をクリア
+					container.querySelectorAll('.filter-chip').forEach(c => {
+						c.classList.remove('active');
+						c.setAttribute('aria-pressed', 'false');
+					});
+					if (!isActive) {
+						chip.classList.add('active');
+						chip.setAttribute('aria-pressed', 'true');
+						_activeFilters[filterKey] = v;
+					} else {
+						_activeFilters[filterKey] = null;
+					}
+					renderAgentLists(_agentsCache);
+				});
+				container.appendChild(chip);
+			});
+		}
+
+		document.getElementById('btn-clear-filters').addEventListener('click', () => {
+			_activeFilters = { model: null, scope: null, parent: null };
+			document.querySelectorAll('.filter-chip').forEach(c => {
+				c.classList.remove('active');
+				c.setAttribute('aria-pressed', 'false');
+			});
+			renderAgentLists(_agentsCache);
+		});
+
+		function applyFilters(agents) {
+			return agents.filter(a => {
+				if (_activeFilters.model  && a.model !== _activeFilters.model)  return false;
+				if (_activeFilters.scope  && (a.scope || 'global') !== _activeFilters.scope) return false;
+				if (_activeFilters.parent && a.parentAgent !== _activeFilters.parent) return false;
+				return true;
+			});
+		}
+
+		// ---- T2.12〜T2.15: エージェント一覧レンダリング ----
+		function renderAgentData(data) {
+			_agentsCache = data.agents || [];
+			initFilterChips(_agentsCache);
+
+			// T2.12: ブックマーク
+			renderAgentSection('agent-bookmarks-list',
+				_agentsCache.filter(a => a.bookmarked),
+				'まだブックマークがありません'
+			);
+
+			// T2.13: 最終使用日 Top5
+			const recentNames = data.recentNames || [];
+			const recentAgents = recentNames
+				.map(n => _agentsCache.find(a => a.name === n))
+				.filter(Boolean);
+			renderAgentSection('agent-recent-list',
+				recentAgents,
+				'使用履歴がありません',
+				true
+			);
+
+			renderAgentLists(_agentsCache);
+		}
+
+		function renderAgentLists(agents) {
+			const filtered = applyFilters(agents);
+
+			// T2.15: グローバル/プロジェクト分離
+			const globalAgents  = filtered.filter(a => (a.scope || 'global') === 'global');
+			const projectAgents = filtered.filter(a => a.scope === 'project');
+
+			renderAgentSection('agent-global-list',  globalAgents,  'グローバルエージェントなし');
+			renderAgentSection('agent-project-list', projectAgents, 'プロジェクトエージェントなし');
+
+			// プロジェクトセクションヘッダーを出し入れ
+			const pHdr = document.getElementById('agent-project-header');
+			if (pHdr) pHdr.style.display = projectAgents.length > 0 ? 'block' : 'none';
+		}
+
+		function renderAgentSection(containerId, agents, emptyMsg, showLastUsed) {
+			const el = document.getElementById(containerId);
+			if (!agents || agents.length === 0) {
+				el.innerHTML = '<div style="font-size:10px; color:var(--vscode-descriptionForeground); padding:4px 6px;">' + escHtml(emptyMsg) + '</div>';
+				return;
+			}
+			el.innerHTML = '';
+			agents.forEach(a => el.appendChild(makeAgentItem(a, showLastUsed)));
+		}
+
+		function makeAgentItem(a, showLastUsed) {
+			const item = document.createElement('div');
+			item.className = 'agent-item';
+			item.setAttribute('role', 'listitem');
+
+			// T2.15: グローバルバッジ or プロジェクト名ラベル
+			const scopeHtml = a.scope === 'project'
+				? '<span class="scope-badge scope-project" title="プロジェクトスコープ">proj</span>'
+				: '<span class="scope-badge scope-global" title="グローバルスコープ">🌐</span>';
+
+			const modelClass = 'model-' + (a.model === 'sonnet-1m' ? 'sonnet' : (a.model || 'sonnet'));
+			const modelBadge = '<span class="model-badge ' + modelClass + '">' + escHtml(a.model || 'sonnet') + '</span>';
+
+			const lastUsedHtml = showLastUsed && a.lastUsed
+				? ' <span style="font-size:10px; color:var(--vscode-descriptionForeground);">(' + escHtml(a.lastUsedLabel) + ')</span>'
+				: '';
+
+			// T2.12: ブックマークボタン
+			const bookmarkBtn = document.createElement('button');
+			bookmarkBtn.className = 'bookmark-btn' + (a.bookmarked ? ' bookmarked' : '');
+			bookmarkBtn.textContent = a.bookmarked ? '★' : '☆';
+			bookmarkBtn.title = a.bookmarked ? 'ブックマーク解除' : 'ブックマーク追加';
+			bookmarkBtn.setAttribute('aria-label', (a.bookmarked ? 'ブックマーク解除: ' : 'ブックマーク追加: ') + a.name);
+			bookmarkBtn.addEventListener('click', (e) => {
+				e.stopPropagation();
+				vscode.postMessage({ type: 'toggle-bookmark-agent', payload: { agentName: a.name } });
+			});
+
+			item.innerHTML =
+				'<div class="agent-info">' +
+					'<div class="agent-name">' + escHtml(a.displayName || a.name) + lastUsedHtml + '</div>' +
+					'<div class="agent-meta">' + escHtml(a.displayRole || a.role || '') + '</div>' +
+				'</div>' +
+				'<div class="agent-badges">' + scopeHtml + modelBadge + '</div>';
+
+			item.appendChild(bookmarkBtn);
+
+			item.addEventListener('click', () => {
+				vscode.postMessage({ type: 'open-agent-session', payload: { agentName: a.name } });
+			});
 
 			return item;
 		}
 
-		function escHtml(str) {
-			return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-		}
-
-		function shortenPath(p) {
-			const home = '${os.homedir().replace(/\\/g, '/')}';
-			if (p.startsWith(home)) { return '~' + p.slice(home.length); }
-			return p;
-		}
-
-		// ---- メッセージ受信 ----
+		// ================================================================
+		// メッセージ受信
+		// ================================================================
 		window.addEventListener('message', event => {
 			const msg = event.data;
 			switch (msg.type) {
 				case 'projects-data':
 					renderProjects(msg.projects);
 					break;
+
+				case 'project-detail':
+					// T2.3: 概要（既にrenderDetailMetaが呼ばれているので更新のみ）
+					renderDetailMeta(msg.project);
+					// T2.7: 進捗
+					renderDetailProgress(msg.progress);
+					// T2.4: エージェント割当
+					renderDetailAgents(msg.assignedAgentNames, msg.allAgents, msg.project.id);
+					// T2.21: ミニ組織図
+					renderDetailMiniOrg(msg.miniOrgNodes || []);
+					// T2.5: メモリ
+					renderDetailMemory(msg.memoryGroups, msg.globalMemoryFiles);
+					break;
+
+				case 'agents-data':
+					renderAgentData(msg);
+					break;
+
+				case 'bookmark-updated':
+					// 即時UI反映（再レンダリングより軽量）
+					if (_agentsCache.length > 0) {
+						const agent = _agentsCache.find(a => a.name === msg.agentName);
+						if (agent) { agent.bookmarked = msg.bookmarked; }
+					}
+					break;
 			}
 		});
+
+		// ================================================================
+		// ユーティリティ
+		// ================================================================
+		function escHtml(str) {
+			if (!str) return '';
+			return String(str)
+				.replace(/&/g, '&amp;')
+				.replace(/</g, '&lt;')
+				.replace(/>/g, '&gt;')
+				.replace(/"/g, '&quot;');
+		}
+
+		function shortenPath(p) {
+			if (p.startsWith(HOME)) { return '~' + p.slice(HOME.length); }
+			return p;
+		}
 
 		// ---- 準備完了 ----
 		vscode.postMessage({ type: 'ready' });

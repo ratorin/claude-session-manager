@@ -1,30 +1,44 @@
+/**
+ * orgChartPanel.ts — v0.5.0 Sprint 2 T2.18〜T2.21
+ * エージェント組織図 — Cytoscape.js + ELK レイアウト刷新
+ *
+ * T2.18: Cytoscape描画基盤（ELK layeredデフォルト）
+ * T2.19: モード切替（ツリー/関係/グループ）
+ * T2.20: フィルタ + PNG/SVGエクスポート
+ * T2.21: プロジェクト詳細用ミニ組織図はsendMiniOrgChart()で外部公開
+ */
+
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { AgentInfo, getAgents, enrichAgentsWithSessions } from '../agents/agentManager';
 import { ParsedSession } from '../models/types';
 import { shouldShowInOrgChart } from '../utils/agentUtils';
 
-// パネルを使い回すための参照
+// -------------------------------------------------------------------
+// 状態管理
+// -------------------------------------------------------------------
+
 let orgPanel: vscode.WebviewPanel | undefined;
 
-// コールバック
 let onOpenSession: ((sessionId: string) => void) | undefined;
 let onOpenInClaude: ((sessionId: string) => void) | undefined;
 
-// 組織図パネルを開く
+// -------------------------------------------------------------------
+// パブリック API
+// -------------------------------------------------------------------
+
+/** フル組織図パネルを開く（T2.18〜T2.20） */
 export async function showOrgChart(
 	getSessions: () => ParsedSession[],
 	isLive: (id: string) => boolean,
 	openSession?: (sessionId: string) => void,
-	openInClaude?: (sessionId: string) => void
+	openInClaude?: (sessionId: string) => void,
+	extensionUri?: vscode.Uri
 ): Promise<void> {
 	onOpenSession = openSession;
 	onOpenInClaude = openInClaude;
 
-	// エージェント情報を読み込み
 	const agents = await getAgents();
-
-	// セッションタイトル対応表を作成
 	const sessions = getSessions();
 	const titleMap = new Map<string, string>();
 	for (const s of sessions) {
@@ -32,24 +46,17 @@ export async function showOrgChart(
 	}
 	const enriched = enrichAgentsWithSessions(agents, titleMap);
 
-	// ライブ状態はトップレベル＋取締役のみ確認（子エージェントは不要）
-	const topNames = new Set(
-		enriched
-			.filter((a) => !a.parentAgent || a.parentAgent === 'director')
-			.map((a) => a.name)
-	);
 	const liveIds = new Set<string>();
 	for (const a of enriched) {
-		if (a.sessionId && topNames.has(a.name) && isLive(a.sessionId)) {
+		if (a.sessionId && isLive(a.sessionId)) {
 			liveIds.add(a.sessionId);
 		}
 	}
 
-	const title = '🏢 エージェント組織図';
-	// H-5: nonce付きCSPヘッダーを追加
 	const nonce = crypto.randomBytes(16).toString('hex');
-	const html = getOrgChartHtml(enriched, liveIds, nonce);
+	const html = buildOrgChartHtml(enriched, liveIds, nonce, extensionUri);
 
+	const title = 'エージェント組織図';
 	if (orgPanel) {
 		orgPanel.webview.html = html;
 		orgPanel.reveal(vscode.ViewColumn.One);
@@ -58,25 +65,683 @@ export async function showOrgChart(
 			'claudeOrgChart',
 			title,
 			vscode.ViewColumn.One,
-			{ enableScripts: true }
+			{
+				enableScripts: true,
+				localResourceRoots: extensionUri ? [extensionUri] : [],
+			}
 		);
 		orgPanel.webview.html = html;
 		orgPanel.onDidDispose(() => { orgPanel = undefined; });
 
-		// イベント委譲で一括処理（querySelectorAll×3ループを排除）
 		orgPanel.webview.onDidReceiveMessage((message) => {
-			if (message.type === 'copyId') {
-				vscode.env.clipboard.writeText(message.id).then(() => {
-					vscode.window.showInformationMessage(`コピー: ${message.id}`);
-				});
-			} else if (message.type === 'openSession' && onOpenSession) {
-				onOpenSession(message.sessionId);
-			} else if (message.type === 'openInClaude' && onOpenInClaude) {
-				onOpenInClaude(message.sessionId);
-			}
+			handleOrgChartMessage(message);
 		});
 	}
 }
+
+/** ミニ組織図データを WebviewView へ送る（T2.21 用） */
+export async function buildMiniOrgChartData(
+	projectAgentNames: string[]
+): Promise<MiniOrgChartNode[]> {
+	const agents = await getAgents();
+	return agents
+		.filter(a => projectAgentNames.includes(a.name) && shouldShowInOrgChart(a))
+		.map(a => ({
+			id: a.name,
+			label: a.displayName || a.name,
+			parent: a.parentAgent || null,
+			model: a.model,
+			role: a.role,
+		}));
+}
+
+export interface MiniOrgChartNode {
+	id: string;
+	label: string;
+	parent: string | null;
+	model: string;
+	role: string;
+}
+
+// -------------------------------------------------------------------
+// メッセージハンドラ
+// -------------------------------------------------------------------
+
+function handleOrgChartMessage(message: Record<string, unknown>): void {
+	if (message.type === 'copyId') {
+		vscode.env.clipboard.writeText(String(message.id)).then(() => {
+			vscode.window.showInformationMessage(`コピー: ${message.id}`);
+		});
+	} else if (message.type === 'openSession' && onOpenSession) {
+		onOpenSession(String(message.sessionId));
+	} else if (message.type === 'openInClaude' && onOpenInClaude) {
+		onOpenInClaude(String(message.sessionId));
+	}
+}
+
+// -------------------------------------------------------------------
+// HTML生成 — Cytoscape.js + ELK
+// -------------------------------------------------------------------
+
+function buildOrgChartHtml(
+	agents: AgentInfo[],
+	liveIds: Set<string>,
+	nonce: string,
+	extensionUri?: vscode.Uri
+): string {
+	// エレメント JSON 生成
+	const elements = buildCytoscapeElements(agents, liveIds);
+	const elementsJson = JSON.stringify(elements);
+
+	// 利用可能なモデル/プロジェクト/役割リスト（T2.20 フィルタ用）
+	const models  = [...new Set(agents.map(a => a.model))].sort();
+	const parents = [...new Set(agents.filter(a => a.parentAgent).map(a => a.parentAgent || ''))].sort();
+
+	// Cytoscape スクリプトURI
+	let cytoscapeUri = '';
+	let elkBundledUri = '';
+	let cytoscapeElkUri = '';
+	let cspScript = `'nonce-${nonce}'`;
+
+	if (extensionUri && orgPanel) {
+		const webview = orgPanel.webview;
+		cytoscapeUri  = webview.asWebviewUri(
+			vscode.Uri.joinPath(extensionUri, 'resources', 'cytoscape.min.js')
+		).toString();
+		elkBundledUri = webview.asWebviewUri(
+			vscode.Uri.joinPath(extensionUri, 'resources', 'elk.bundled.js')
+		).toString();
+		cytoscapeElkUri = webview.asWebviewUri(
+			vscode.Uri.joinPath(extensionUri, 'resources', 'cytoscape-elk.js')
+		).toString();
+		cspScript = `'nonce-${nonce}'`;
+	}
+
+	return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy"
+	content="default-src 'none'; style-src 'nonce-${nonce}'; script-src ${cspScript}${cytoscapeUri ? ' ' + new URL(cytoscapeUri).origin : ''};">
+<style nonce="${nonce}">
+:root {
+	--bg: var(--vscode-editor-background);
+	--surface: var(--vscode-textBlockQuote-background);
+	--border: var(--vscode-panel-border);
+	--text: var(--vscode-foreground);
+	--text-dim: var(--vscode-descriptionForeground);
+	--accent: #e27e4a;
+	--live: #4ec94e;
+	--opus: #b388ff;
+	--sonnet: #64b5f6;
+	--haiku: #81c784;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; overflow:hidden; }
+body {
+	font-family: var(--vscode-font-family);
+	background: var(--bg);
+	color: var(--text);
+	display: flex;
+	flex-direction: column;
+}
+
+/* ---- ツールバー ---- */
+#toolbar {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	background: var(--vscode-sideBar-background);
+	border-bottom: 1px solid var(--border);
+	flex-shrink: 0;
+	flex-wrap: wrap;
+}
+#toolbar h1 {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--accent);
+	margin-right: 8px;
+}
+.toolbar-group {
+	display: flex;
+	gap: 4px;
+	align-items: center;
+}
+.toolbar-label {
+	font-size: 11px;
+	color: var(--text-dim);
+}
+.mode-btn {
+	padding: 3px 8px;
+	font-size: 11px;
+	background: transparent;
+	border: 1px solid var(--border);
+	border-radius: 3px;
+	color: var(--text);
+	cursor: pointer;
+	font-family: inherit;
+}
+.mode-btn:hover { background: var(--vscode-list-hoverBackground); }
+.mode-btn.active {
+	background: var(--accent);
+	color: #fff;
+	border-color: transparent;
+}
+.filter-select {
+	padding: 3px 6px;
+	font-size: 11px;
+	background: var(--vscode-dropdown-background, var(--surface));
+	border: 1px solid var(--border);
+	border-radius: 3px;
+	color: var(--text);
+	font-family: inherit;
+	max-width: 120px;
+}
+.export-btn {
+	padding: 3px 8px;
+	font-size: 11px;
+	background: var(--vscode-button-secondaryBackground, transparent);
+	border: 1px solid var(--border);
+	border-radius: 3px;
+	color: var(--vscode-button-secondaryForeground, var(--text));
+	cursor: pointer;
+	font-family: inherit;
+}
+.export-btn:hover { background: var(--vscode-list-hoverBackground); }
+
+/* ---- Cytoscape コンテナ ---- */
+#cy-container {
+	flex: 1;
+	position: relative;
+	overflow: hidden;
+}
+#cy {
+	width: 100%;
+	height: 100%;
+}
+
+/* ---- ローディング ---- */
+#loading {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	font-size: 13px;
+	color: var(--text-dim);
+	text-align: center;
+}
+
+/* ---- ツールチップ ---- */
+#tooltip {
+	position: absolute;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	padding: 6px 10px;
+	font-size: 11px;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 0.15s;
+	max-width: 220px;
+	z-index: 100;
+}
+#tooltip.visible { opacity: 1; }
+.tooltip-name { font-weight: 600; margin-bottom: 2px; }
+.tooltip-role { color: var(--text-dim); }
+.tooltip-session { font-size: 10px; color: var(--text-dim); margin-top: 4px; font-family: monospace; }
+
+/* ---- フォールバック（Cytoscapeロード失敗時） ---- */
+#fallback {
+	display: none;
+	padding: 16px;
+	overflow: auto;
+	flex: 1;
+}
+</style>
+</head>
+<body>
+
+<!-- ツールバー -->
+<div id="toolbar">
+	<h1>組織図</h1>
+
+	<!-- T2.19: モード切替 -->
+	<div class="toolbar-group">
+		<span class="toolbar-label">レイアウト:</span>
+		<button class="mode-btn active" data-mode="tree" title="ツリー (ELK layered)">ツリー</button>
+		<button class="mode-btn" data-mode="force" title="関係 (force-directed)">関係</button>
+		<button class="mode-btn" data-mode="group" title="グループ (ELK box)">グループ</button>
+	</div>
+
+	<!-- T2.20: フィルタ -->
+	<div class="toolbar-group">
+		<span class="toolbar-label">モデル:</span>
+		<select class="filter-select" id="filter-model" aria-label="モデルフィルタ">
+			<option value="">すべて</option>
+			${models.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')}
+		</select>
+	</div>
+	<div class="toolbar-group">
+		<span class="toolbar-label">親:</span>
+		<select class="filter-select" id="filter-parent" aria-label="親エージェントフィルタ">
+			<option value="">すべて</option>
+			${parents.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('')}
+		</select>
+	</div>
+
+	<!-- T2.20: エクスポート -->
+	<div class="toolbar-group" style="margin-left:auto;">
+		<button class="export-btn" id="btn-export-png" title="PNG として保存">PNG</button>
+		<button class="export-btn" id="btn-export-svg" title="SVG として保存">SVG</button>
+	</div>
+</div>
+
+<!-- Cytoscapeコンテナ -->
+<div id="cy-container">
+	<div id="cy" role="img" aria-label="エージェント組織図"></div>
+	<div id="loading">組織図を読み込み中...</div>
+	<div id="tooltip" role="tooltip"></div>
+</div>
+
+<!-- フォールバック（Cytoscapeロード失敗時用） -->
+<div id="fallback"></div>
+
+${cytoscapeUri
+	? `<script nonce="${nonce}" src="${cytoscapeUri}"></script>
+<script nonce="${nonce}" src="${elkBundledUri}"></script>
+<script nonce="${nonce}" src="${cytoscapeElkUri}"></script>`
+	: ''}
+
+<script nonce="${nonce}">
+// ================================================================
+// データ
+// ================================================================
+const vscode = acquireVsCodeApi();
+
+const ELEMENTS = ${elementsJson};
+
+const LAYOUT_CONFIGS = {
+	tree: {
+		name: 'elk',
+		elk: {
+			algorithm: 'layered',
+			'elk.direction': 'DOWN',
+			'elk.layered.spacing.nodeNodeBetweenLayers': 40,
+			'elk.spacing.nodeNode': 20,
+		},
+	},
+	force: {
+		name: 'cose',
+		animate: true,
+		animationDuration: 500,
+		idealEdgeLength: 120,
+		nodeOverlap: 20,
+		refresh: 20,
+		fit: true,
+		padding: 30,
+		randomize: false,
+		componentSpacing: 100,
+		nodeRepulsion: 400000,
+		edgeElasticity: 100,
+		nestingFactor: 5,
+		gravity: 80,
+		numIter: 1000,
+		coolingFactor: 0.99,
+		minTemp: 1.0,
+	},
+	group: {
+		name: 'elk',
+		elk: {
+			algorithm: 'box',
+			'elk.spacing.nodeNode': 15,
+		},
+	},
+};
+
+// ================================================================
+// Cytoscape 初期化
+// ================================================================
+let cy = null;
+let currentMode = 'tree';
+let activeFilters = { model: '', parent: '' };
+
+function modelColor(model) {
+	switch (model) {
+		case 'opus':  return '#b388ff';
+		case 'haiku': return '#81c784';
+		default:      return '#64b5f6';
+	}
+}
+
+function initCytoscape(elements) {
+	if (typeof cytoscape === 'undefined') {
+		showFallback(elements);
+		return;
+	}
+
+	document.getElementById('loading').style.display = 'block';
+
+	// ELK拡張を登録（利用可能な場合）
+	if (typeof cytoscapeElk !== 'undefined') {
+		cytoscape.use(cytoscapeElk);
+	}
+
+	cy = cytoscape({
+		container: document.getElementById('cy'),
+		elements,
+		style: buildStyle(),
+		minZoom: 0.1,
+		maxZoom: 3,
+		wheelSensitivity: 0.3,
+	});
+
+	applyLayout(currentMode, () => {
+		document.getElementById('loading').style.display = 'none';
+	});
+
+	// ツールチップ
+	const tooltip = document.getElementById('tooltip');
+	cy.on('mouseover', 'node', (evt) => {
+		const node = evt.target;
+		const data = node.data();
+		if (!data || data.isCompound) return;
+		const pos = evt.renderedPosition;
+		tooltip.innerHTML =
+			'<div class="tooltip-name">' + escHtml(data.label || data.id) + '</div>' +
+			(data.role ? '<div class="tooltip-role">' + escHtml(data.role) + '</div>' : '') +
+			(data.sessionId
+				? '<div class="tooltip-session">' + data.sessionId.substring(0, 20) + '...</div>'
+				: '');
+		tooltip.style.left = (pos.x + 12) + 'px';
+		tooltip.style.top  = (pos.y + 12) + 'px';
+		tooltip.classList.add('visible');
+	});
+	cy.on('mouseout', 'node', () => {
+		tooltip.classList.remove('visible');
+	});
+
+	// クリック — セッション操作
+	cy.on('tap', 'node', (evt) => {
+		const data = evt.target.data();
+		if (data && data.sessionId) {
+			vscode.postMessage({ type: 'openSession', sessionId: data.sessionId });
+		}
+	});
+}
+
+function buildStyle() {
+	return [
+		{
+			selector: 'node',
+			style: {
+				'background-color': (ele) => modelColor(ele.data('model')),
+				'background-opacity': 0.15,
+				'border-color': (ele) => modelColor(ele.data('model')),
+				'border-width': (ele) => ele.data('isLive') ? 2.5 : 1.5,
+				'border-style': (ele) => ele.data('isDirector') ? 'solid' : 'solid',
+				'border-opacity': 1,
+				'label': 'data(label)',
+				'text-valign': 'center',
+				'text-halign': 'center',
+				'color': 'var(--vscode-foreground, #cccccc)',
+				'font-family': 'var(--vscode-font-family, monospace)',
+				'font-size': '11px',
+				'text-wrap': 'wrap',
+				'text-max-width': '120px',
+				'width': 130,
+				'height': 36,
+				'shape': 'roundrectangle',
+				'padding': '6px',
+			},
+		},
+		{
+			selector: 'node[isDirector]',
+			style: {
+				'background-color': '#e27e4a',
+				'background-opacity': 0.2,
+				'border-color': '#e27e4a',
+				'border-width': 2.5,
+				'font-weight': 'bold',
+				'font-size': '13px',
+				'width': 160,
+				'height': 44,
+			},
+		},
+		{
+			selector: 'node[isLive]',
+			style: {
+				'border-width': 2.5,
+				'box-shadow': '0 0 6px 2px var(--live, #4ec94e)',
+			},
+		},
+		{
+			selector: 'edge',
+			style: {
+				'width': 1.5,
+				'line-color': 'var(--vscode-editorIndentGuide-background, #555)',
+				'target-arrow-color': 'var(--vscode-editorIndentGuide-background, #555)',
+				'target-arrow-shape': 'triangle',
+				'curve-style': 'bezier',
+				'arrow-scale': 0.8,
+			},
+		},
+		{
+			selector: '.faded',
+			style: {
+				'opacity': 0.25,
+			},
+		},
+	];
+}
+
+function applyLayout(mode, callback) {
+	if (!cy) return;
+	const config = LAYOUT_CONFIGS[mode] || LAYOUT_CONFIGS.tree;
+	const layout = cy.layout(config);
+	if (callback) {
+		layout.on('layoutstop', callback);
+	}
+	layout.run();
+}
+
+function applyFilters() {
+	if (!cy) return;
+	const { model: mf, parent: pf } = activeFilters;
+
+	cy.elements().removeClass('faded');
+
+	if (!mf && !pf) return;
+
+	cy.nodes().forEach(node => {
+		const data = node.data();
+		let keep = true;
+		if (mf && data.model !== mf) keep = false;
+		if (pf && data.parent !== pf && data.id !== pf) keep = false;
+		if (!keep) node.addClass('faded');
+	});
+
+	cy.edges().forEach(edge => {
+		const src = edge.source();
+		const tgt = edge.target();
+		if (src.hasClass('faded') || tgt.hasClass('faded')) {
+			edge.addClass('faded');
+		}
+	});
+}
+
+// ================================================================
+// フォールバック（Cytoscapeなし）
+// ================================================================
+function showFallback(elements) {
+	document.getElementById('cy-container').style.display = 'none';
+	const fb = document.getElementById('fallback');
+	fb.style.display = 'block';
+
+	const nodes = elements.filter(e => !e.data.source);
+	let html = '<h2 style="font-size:13px; margin-bottom:8px;">エージェント一覧（Cytoscapeロード失敗）</h2>';
+	html += nodes.map(n =>
+		'<div style="padding:4px 0; border-bottom:1px solid var(--border);">' +
+		'<strong>' + escHtml(n.data.label || n.data.id) + '</strong>' +
+		(n.data.role ? ' <span style="color:var(--text-dim); font-size:10px;">— ' + escHtml(n.data.role) + '</span>' : '') +
+		'</div>'
+	).join('');
+	fb.innerHTML = html;
+}
+
+// ================================================================
+// UI イベント
+// ================================================================
+
+// T2.19: モード切替
+document.querySelectorAll('.mode-btn').forEach(btn => {
+	btn.addEventListener('click', () => {
+		const mode = btn.dataset.mode;
+		currentMode = mode;
+		document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+		btn.classList.add('active');
+		document.getElementById('loading').style.display = 'block';
+		applyLayout(mode, () => {
+			document.getElementById('loading').style.display = 'none';
+		});
+	});
+});
+
+// T2.20: フィルタ
+document.getElementById('filter-model').addEventListener('change', (e) => {
+	activeFilters.model = e.target.value;
+	applyFilters();
+});
+document.getElementById('filter-parent').addEventListener('change', (e) => {
+	activeFilters.parent = e.target.value;
+	applyFilters();
+});
+
+// T2.20: PNG エクスポート
+document.getElementById('btn-export-png').addEventListener('click', () => {
+	if (!cy) return;
+	const png64 = cy.png({ scale: 2, full: true, bg: 'transparent' });
+	const link = document.createElement('a');
+	link.href = png64;
+	link.download = 'org-chart.png';
+	link.click();
+});
+
+// T2.20: SVG エクスポート（cytoscape-svg がなければ canvas→SVG変換）
+document.getElementById('btn-export-svg').addEventListener('click', () => {
+	if (!cy) return;
+	// Cytoscapeには cy.svg() が標準では無いため PNG を SVG foreignObject でラップ
+	const png64 = cy.png({ scale: 2, full: true, bg: 'transparent' });
+	const bbox = cy.elements().boundingBox();
+	const w = Math.ceil(bbox.w * 2) || 800;
+	const h = Math.ceil(bbox.h * 2) || 600;
+	const svgStr = [
+		'<?xml version="1.0" encoding="UTF-8"?>',
+		'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"',
+		'     width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">',
+		'  <image href="' + png64 + '" x="0" y="0" width="' + w + '" height="' + h + '"/>',
+		'</svg>',
+	].join('\\n');
+	const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+	const url = URL.createObjectURL(blob);
+	const link = document.createElement('a');
+	link.href = url;
+	link.download = 'org-chart.svg';
+	link.click();
+	URL.revokeObjectURL(url);
+});
+
+// ================================================================
+// ユーティリティ
+// ================================================================
+function escHtml(str) {
+	if (!str) return '';
+	return String(str)
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;');
+}
+
+// ================================================================
+// 初期化
+// ================================================================
+initCytoscape(ELEMENTS);
+
+</script>
+</body>
+</html>`;
+}
+
+// -------------------------------------------------------------------
+// Cytoscape エレメント生成
+// -------------------------------------------------------------------
+
+function buildCytoscapeElements(
+	agents: AgentInfo[],
+	liveIds: Set<string>
+): CytoscapeElement[] {
+	const elements: CytoscapeElement[] = [];
+	const validAgents = agents.filter(a => shouldShowInOrgChart(a));
+	const agentNames = new Set(validAgents.map(a => a.name));
+
+	for (const a of validAgents) {
+		const isLive = a.sessionId ? liveIds.has(a.sessionId) : false;
+		const isDirector = a.name === 'director';
+
+		elements.push({
+			data: {
+				id: a.name,
+				label: a.displayName || a.name,
+				model: a.model,
+				role: a.role || '',
+				sessionId: a.sessionId || '',
+				parent: (a.parentAgent && agentNames.has(a.parentAgent)) ? a.parentAgent : undefined,
+				isLive: isLive || undefined,
+				isDirector: isDirector || undefined,
+			},
+		});
+	}
+
+	// エッジ: parentAgent → 子
+	for (const a of validAgents) {
+		if (a.parentAgent && agentNames.has(a.parentAgent)) {
+			elements.push({
+				data: {
+					id: `${a.parentAgent}-->${a.name}`,
+					source: a.parentAgent,
+					target: a.name,
+				},
+			});
+		}
+	}
+
+	return elements;
+}
+
+// -------------------------------------------------------------------
+// 型
+// -------------------------------------------------------------------
+
+interface CytoscapeElement {
+	data: {
+		id: string;
+		label?: string;
+		model?: string;
+		role?: string;
+		sessionId?: string;
+		parent?: string;
+		isLive?: true;
+		isDirector?: true;
+		source?: string;
+		target?: string;
+	};
+}
+
+// -------------------------------------------------------------------
+// ユーティリティ
+// -------------------------------------------------------------------
 
 function escapeHtml(text: string): string {
 	return text
@@ -84,201 +749,4 @@ function escapeHtml(text: string): string {
 		.replace(/</g, '&lt;')
 		.replace(/>/g, '&gt;')
 		.replace(/"/g, '&quot;');
-}
-
-// インラインSVG定数（重複を排除）
-const SVG_HISTORY = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M13.5 8a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0zM8 3.5a.5.5 0 0 0-.5.5v4a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1H8.5V4a.5.5 0 0 0-.5-.5z"/></svg>`;
-const SVG_CLAUDE = `<svg width="12" height="12" viewBox="0 0 16 16"><rect width="16" height="16" rx="3.5" fill="#D97706"/><g fill="white"><circle cx="8" cy="8" r="1.5"/><polygon points="7.4,6.6 8,1.5 8.6,6.6"/><polygon points="9.3,7.1 13.5,3.5 9.9,8"/><polygon points="9.4,7.8 14.5,8 9.4,8.6"/><polygon points="9.1,9.2 12,13 8.4,9.7"/><polygon points="6.9,9.5 3.5,14.5 6.5,9"/><polygon points="6.6,8.5 1.5,7.5 6.6,7.2"/></g></svg>`;
-
-// セッション操作ボタンHTML（共通）
-function renderSessionActions(sessionId: string, sessionTitle: string | undefined, centered: boolean): string {
-	const shortId = sessionId.substring(0, 8) + '...' + sessionId.slice(-4);
-	const titleHtml = sessionTitle
-		? `<div class="session-title">${escapeHtml(sessionTitle)}</div>`
-		: '';
-	const actionsStyle = centered ? ' style="justify-content:center;"' : '';
-	return `${titleHtml}
-		<div class="session-actions"${actionsStyle}>
-			<span class="session-id" data-id="${escapeHtml(sessionId)}" title="セッションIDをコピー">📋 ${shortId}</span>
-			<span class="session-open" data-sid="${escapeHtml(sessionId)}" title="会話履歴を表示">${SVG_HISTORY}</span>
-			<span class="session-claude" data-sid="${escapeHtml(sessionId)}" title="Claude Codeで開く">${SVG_CLAUDE}</span>
-		</div>`;
-}
-
-// 取締役ノードのHTML生成（トップノード用）
-function renderDirectorNode(agent: AgentInfo, liveIds: Set<string>): string {
-	const isLive = agent.sessionId ? liveIds.has(agent.sessionId) : false;
-	const liveDot = isLive ? '<span class="live-dot" title="使用中"></span>' : '';
-	const sessionHtml = agent.sessionId
-		? renderSessionActions(agent.sessionId, agent.sessionTitle, true)
-		: '';
-
-	return `
-	<div class="node node-director">
-		<div class="node-header" style="justify-content:center;">
-			<span class="node-name">取締役</span>
-			${liveDot}
-		</div>
-		<div class="node-role">${escapeHtml(agent.role || '全体統括・指示出し・承認')}</div>
-		${sessionHtml}
-	</div>`;
-}
-
-// エージェントカードのHTML生成
-function renderAgentCard(agent: AgentInfo, liveIds: Set<string>, isSub: boolean = false): string {
-	const nodeClass = isSub ? 'node node-sub' : 'node';
-	// sonnet-1m は専用バッジで表示
-	const badgeClass = agent.model === 'opus' ? 'badge-opus'
-		: agent.model === 'haiku' ? 'badge-haiku'
-		: agent.model === 'sonnet-1m' ? 'badge-sonnet-1m'
-		: 'badge-sonnet';
-
-	// 子エージェントカードはライブ状態表示なし
-	const liveDot = (!isSub && agent.sessionId && liveIds.has(agent.sessionId))
-		? '<span class="live-dot" title="使用中"></span>'
-		: '';
-
-	const sessionHtml = agent.sessionId
-		? renderSessionActions(agent.sessionId, agent.sessionTitle, false)
-		: '<div class="session-unset">セッション未設定</div>';
-
-	const tools = agent.allowedTools || [];
-	const toolsHtml = tools.length > 0
-		? `<div class="tools">${tools.map((t: string) => `<span class="tool-tag">${escapeHtml(t)}</span>`).join('')}</div>`
-		: '';
-
-	return `
-		<div class="${nodeClass}">
-			<div class="node-header">
-				<span class="badge ${badgeClass}">${agent.model}</span>
-				<span class="node-name">${escapeHtml(agent.name)}</span>
-				${liveDot}
-			</div>
-			<div class="node-role">${escapeHtml(agent.role)}</div>
-			${toolsHtml}
-			${sessionHtml}
-		</div>`;
-}
-
-// 組織図全体のHTML
-function getOrgChartHtml(agents: AgentInfo[], liveIds: Set<string>, nonce: string): string {
-	const director = agents.find((a) => a.name === 'director');
-	const topLevel = agents.filter((a) => a.name !== 'director' && (!a.parentAgent || a.parentAgent === 'director') && shouldShowInOrgChart(a));
-	const children = agents.filter((a) => a.parentAgent && a.parentAgent !== 'director' && shouldShowInOrgChart(a));
-
-	const deptCards = topLevel.map((agent) => {
-		const subAgents = children.filter((c) => c.parentAgent === agent.name);
-		const subHtml = subAgents.map((sub) => `
-			<div class="sub-dept">
-				<div class="connector-v"></div>
-				${renderAgentCard(sub, liveIds, true)}
-			</div>`).join('');
-
-		const expandHtml = agent.name === 'ALOrderForge開発部'
-			? `<div class="sub-dept">
-				<div class="connector-v" style="height:8px;"></div>
-				<div class="expandable">＋ 班長が必要に応じて<br>AL●●班を増設</div>
-			</div>`
-			: '';
-
-		return `
-			<div class="dept-col">
-				${renderAgentCard(agent, liveIds)}
-				${subHtml}
-				${expandHtml}
-			</div>`;
-	}).join('');
-
-	return `<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
-<style nonce="${nonce}">
-:root{--bg:var(--vscode-editor-background);--surface:var(--vscode-textBlockQuote-background);--border:var(--vscode-panel-border);--text:var(--vscode-foreground);--text-dim:var(--vscode-descriptionForeground);--accent:#e27e4a;--opus:#b388ff;--sonnet:#64b5f6;--haiku:#81c784;--line:var(--vscode-editorIndentGuide-background);--live:#4ec94e}
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:var(--vscode-font-family);background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
-h1{text-align:center;font-size:18px;color:var(--accent);margin-bottom:6px;font-weight:500}
-.subtitle{text-align:center;font-size:11px;color:var(--text-dim);margin-bottom:28px}
-.org-chart{display:flex;flex-direction:column;align-items:center}
-.node{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;min-width:200px;max-width:240px}
-.node:hover{border-color:var(--accent)}
-.node-header{display:flex;align-items:center;gap:6px;margin-bottom:3px}
-.node-name{font-size:13px;font-weight:600}
-.node-role{font-size:11px;color:var(--text-dim);line-height:1.3}
-.session-title{font-size:10px;color:var(--text-dim);margin-top:6px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.session-id{font-size:10px;color:var(--text-dim);font-family:'Cascadia Code','Consolas',monospace;opacity:.7;cursor:pointer;display:flex;align-items:center;gap:3px}
-.session-id:hover{opacity:1;color:var(--accent)}
-.session-actions{display:flex;align-items:center;gap:6px;margin-top:2px}
-.session-open,.session-claude{font-size:10px;cursor:pointer;opacity:.5;padding:1px 4px;border-radius:3px}
-.session-open:hover{opacity:1;background:var(--accent);color:#fff}
-.session-claude:hover{opacity:1;background:var(--live);color:#fff}
-.session-unset{font-size:10px;color:var(--text-dim);margin-top:6px;opacity:.5;font-style:italic}
-.badge{font-size:9px;padding:1px 5px;border-radius:3px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
-.badge-opus{background:rgba(179,136,255,.15);color:var(--opus);border:1px solid rgba(179,136,255,.3)}
-.badge-sonnet{background:rgba(100,181,246,.15);color:var(--sonnet);border:1px solid rgba(100,181,246,.3)}
-.badge-haiku{background:rgba(129,199,132,.15);color:var(--haiku);border:1px solid rgba(129,199,132,.3)}
-.badge-sonnet-1m{background:rgba(66,165,245,.18);color:#42a5f5;border:1px solid rgba(66,165,245,.35)}
-.live-dot{width:7px;height:7px;background:var(--live);border-radius:50%;display:inline-block}
-.node-director{border-color:var(--accent);border-width:2px;min-width:260px;max-width:300px;text-align:center}
-.node-director .node-name{color:var(--accent);font-size:15px}
-.connector-v{width:2px;height:20px;background:var(--line);margin:0 auto}
-.h-line{height:2px;background:var(--line);width:100%;max-width:1100px}
-.dept-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;max-width:1100px;width:100%}
-.dept-col{display:flex;flex-direction:column;align-items:center}
-.dept-col::before{content:'';display:block;width:2px;height:14px;background:var(--line)}
-.sub-dept{display:flex;flex-direction:column;align-items:center}
-.sub-dept .connector-v{height:14px}
-.node-sub{min-width:180px;border-style:dashed}
-.node-sub .node-name{font-size:12px}
-.tools{display:flex;flex-wrap:wrap;gap:3px;margin-top:5px}
-.tool-tag{font-size:9px;padding:1px 4px;border-radius:2px;background:rgba(255,255,255,.06);color:var(--text-dim);border:1px solid rgba(255,255,255,.08)}
-.expandable{font-size:10px;color:var(--text-dim);text-align:center;padding:6px;border:1px dashed var(--border);border-radius:6px;min-width:180px}
-.legend{display:flex;gap:20px;justify-content:center;margin-top:28px;font-size:11px;color:var(--text-dim)}
-.legend-item{display:flex;align-items:center;gap:5px}
-</style>
-</head>
-<body>
-<h1>エージェント組織図</h1>
-<p class="subtitle">Claude Code マルチエージェント運用体制</p>
-<div class="org-chart">
-	${director ? renderDirectorNode(director, liveIds) : `
-	<div class="node node-director">
-		<div class="node-header" style="justify-content:center;">
-			<span class="node-name">取締役（未登録）</span>
-		</div>
-		<div class="node-role">エージェント「取締役」を登録すると表示されます</div>
-	</div>`}
-	<div class="connector-v"></div>
-	<div class="h-line"></div>
-	<div class="dept-grid">${deptCards}</div>
-</div>
-<div class="legend">
-	<div class="legend-item"><span class="badge badge-opus">opus</span> 高度な判断・開発</div>
-	<div class="legend-item"><span class="badge badge-sonnet">sonnet</span> 定型作業・補助</div>
-	<div class="legend-item"><span class="badge badge-sonnet-1m">sonnet-1m</span> 長文コンテキスト</div>
-	<div class="legend-item"><span class="live-dot"></span> 使用中（トップレベルのみ）</div>
-	<div class="legend-item">📋 IDコピー</div>
-	<div class="legend-item">${SVG_HISTORY} 履歴表示</div>
-	<div class="legend-item">${SVG_CLAUDE} Claude Codeで開く</div>
-</div>
-<script nonce="${nonce}">
-const vscode=acquireVsCodeApi();
-// イベント委譲で一括処理
-document.body.addEventListener('click',e=>{
-	const t=e.target.closest('[data-id],[data-sid]');
-	if(!t)return;
-	e.stopPropagation();
-	if(t.classList.contains('session-id')){
-		vscode.postMessage({type:'copyId',id:t.getAttribute('data-id')});
-	}else if(t.classList.contains('session-open')){
-		vscode.postMessage({type:'openSession',sessionId:t.getAttribute('data-sid')});
-	}else if(t.classList.contains('session-claude')){
-		vscode.postMessage({type:'openInClaude',sessionId:t.getAttribute('data-sid')});
-	}
-});
-</script>
-</body>
-</html>`;
 }
