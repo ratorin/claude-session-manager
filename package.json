@@ -483,7 +483,7 @@
 					"when": "view == claudeAgents",
 					"group": "navigation"
 				},
-					{
+				{
 					"command": "claudeManager.showPendingTasks",
 					"when": "view == claudeAgents",
 					"group": "navigation"
@@ -657,7 +657,7 @@
 				"title": "エージェント監視",
 				"order": 1,
 				"properties": {
-"claudeManager.enableAgentMonitor": {
+					"claudeManager.enableAgentMonitor": {
 						"type": "boolean",
 						"default": false,
 						"order": 2,
@@ -730,62 +730,80 @@
 				"order": 2,
 				"properties": {
 					"claudeManager.defaultSortMode": {
-					"type": "string",
-					"default": "updated-desc",
-					"enum": ["updated-desc", "updated-asc", "created-desc", "created-asc", "name", "count", "model"],
-					"enumDescriptions": [
-						"更新日（新しい順）",
-						"更新日（古い順）",
-						"作成日（新しい順）",
-						"作成日（古い順）",
-						"名前順",
-						"会話件数順",
-						"モデル順"
-					],
-					"description": "セッション一覧のデフォルトのソート順"
-				},
-				"claudeManager.defaultGroupMode": {
-					"type": "string",
-					"default": "date",
-					"enum": ["date", "tag", "agent", "flat"],
-					"enumDescriptions": [
-						"日付別",
-						"タグ別",
-						"エージェント別",
-						"グループなし"
-					],
-					"description": "セッション一覧のデフォルトのグループ化"
-				},
-				"claudeManager.maxSessionsShown": {
-					"type": "number",
-					"default": 500,
-					"minimum": 10,
-					"maximum": 5000,
-					"description": "セッション一覧に表示する最大件数。多すぎると動作が重くなる場合があります"
-				},
-				"claudeManager.additionalAgentDirs": {
-					"type": "array",
-					"default": [],
-					"items": { "type": "string" },
-					"markdownDescription": "追加でスキャンするプロジェクトフォルダのリスト。各フォルダの `.claude/agents/` 内のエージェント定義を読み込みます。\n\n例: `[\"c:\\\\workspace\\\\CMS\", \"c:\\\\GDrive\"]`"
-				},
-				"claudeManager.sessionFilterMode": {
-					"type": "string",
-					"default": "all",
-					"enum": ["project", "all"],
-					"enumDescriptions": [
-						"現在のプロジェクトのセッションのみ表示",
-						"すべてのセッションを表示"
-					],
-					"description": "会話一覧のフィルターモード"
-				}
+						"type": "string",
+						"default": "updated-desc",
+						"enum": [
+							"updated-desc",
+							"updated-asc",
+							"created-desc",
+							"created-asc",
+							"name",
+							"count",
+							"model"
+						],
+						"enumDescriptions": [
+							"更新日（新しい順）",
+							"更新日（古い順）",
+							"作成日（新しい順）",
+							"作成日（古い順）",
+							"名前順",
+							"会話件数順",
+							"モデル順"
+						],
+						"description": "セッション一覧のデフォルトのソート順"
+					},
+					"claudeManager.defaultGroupMode": {
+						"type": "string",
+						"default": "date",
+						"enum": [
+							"date",
+							"tag",
+							"agent",
+							"flat"
+						],
+						"enumDescriptions": [
+							"日付別",
+							"タグ別",
+							"エージェント別",
+							"グループなし"
+						],
+						"description": "セッション一覧のデフォルトのグループ化"
+					},
+					"claudeManager.maxSessionsShown": {
+						"type": "number",
+						"default": 500,
+						"minimum": 10,
+						"maximum": 5000,
+						"description": "セッション一覧に表示する最大件数。多すぎると動作が重くなる場合があります"
+					},
+					"claudeManager.additionalAgentDirs": {
+						"type": "array",
+						"default": [],
+						"items": {
+							"type": "string"
+						},
+						"markdownDescription": "追加でスキャンするプロジェクトフォルダのリスト。各フォルダの `.claude/agents/` 内のエージェント定義を読み込みます。\n\n例: `[\"c:\\\\workspace\\\\CMS\", \"c:\\\\GDrive\"]`"
+					},
+					"claudeManager.sessionFilterMode": {
+						"type": "string",
+						"default": "all",
+						"enum": [
+							"project",
+							"all"
+						],
+						"enumDescriptions": [
+							"現在のプロジェクトのセッションのみ表示",
+							"すべてのセッションを表示"
+						],
+						"description": "会話一覧のフィルターモード"
+					}
 				}
 			},
 			{
 				"title": "その他",
 				"order": 3,
 				"properties": {
-"claudeManager.preview.showThinkingBlocks": {
+					"claudeManager.preview.showThinkingBlocks": {
 						"type": "boolean",
 						"default": false,
 						"description": "Claudeが回答前に内部で考えた思考プロセスをセッションプレビューに表示します"
@@ -812,14 +830,22 @@
 					},
 					"claudeManager.agents.defaultExpand": {
 						"type": "array",
-						"items": { "type": "string" },
-						"default": ["bookmarks", "recent"],
+						"items": {
+							"type": "string"
+						},
+						"default": [
+							"bookmarks",
+							"recent"
+						],
 						"description": "エージェントタブで起動時に展開するセクション（bookmarks / recent / global / project）"
 					},
 					"claudeManager.locale": {
 						"type": "string",
 						"default": "ja",
-						"enum": ["ja", "en"],
+						"enum": [
+							"ja",
+							"en"
+						],
 						"enumDescriptions": [
 							"日本語",
 							"English"
@@ -829,7 +855,11 @@
 					"claudeManager.ui.defaultTab": {
 						"type": "string",
 						"default": "sessions",
-						"enum": ["sessions", "agents", "projects"],
+						"enum": [
+							"sessions",
+							"agents",
+							"projects"
+						],
 						"enumDescriptions": [
 							"セッションタブを起動時に表示",
 							"エージェントタブを起動時に表示",
@@ -853,6 +883,8 @@
 	"devDependencies": {
 		"@types/node": "^20.0.0",
 		"@types/vscode": "^1.85.0",
+		"cytoscape": "^3.33.2",
+		"cytoscape-elk": "^2.3.0",
 		"typescript": "^5.3.0"
 	}
 }
