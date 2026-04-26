@@ -36,40 +36,46 @@
 			"claude-manager": [
 				{
 					"type": "webview",
+					"id": "claudeTabBar",
+					"name": "",
+					"when": "config.claudeManager.useNewMainPanel != false"
+				},
+				{
+					"type": "webview",
 					"id": "claudeMain",
 					"name": "Claude Session Manager",
 					"icon": "$(comment-discussion)",
-					"when": "config.claudeManager.useNewMainPanel != false"
+					"when": "config.claudeManager.useNewMainPanel != false && claudeManager.activeTab == 'projects'"
 				},
 				{
 					"id": "claudeSessions",
 					"name": "会話一覧（セッション）",
 					"icon": "$(comment-discussion)",
-					"when": "config.claudeManager.useNewMainPanel == false"
+					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'sessions'"
 				},
 				{
 					"id": "claudeBookmarks",
 					"name": "会話ブックマーク",
 					"icon": "$(star-full)",
-					"when": "config.claudeManager.useNewMainPanel == false"
+					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'sessions'"
 				},
 				{
 					"id": "claudeTags",
 					"name": "会話タグ",
 					"icon": "$(tag)",
-					"when": "config.claudeManager.useNewMainPanel == false"
+					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'sessions'"
 				},
 				{
 					"id": "claudeAgents",
 					"name": "エージェント管理",
 					"icon": "$(person)",
-					"when": "config.claudeManager.useNewMainPanel == false"
+					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'agents'"
 				},
 				{
 					"id": "claudeMemory",
 					"name": "メモリ管理",
 					"icon": "$(database)",
-					"when": "config.claudeManager.useNewMainPanel == false"
+					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'memory'"
 				}
 			],
 			"claude-help": [
@@ -892,11 +898,13 @@
 						"enum": [
 							"sessions",
 							"agents",
+							"memory",
 							"projects"
 						],
 						"enumDescriptions": [
 							"セッションタブを起動時に表示",
 							"エージェントタブを起動時に表示",
+							"メモリタブを起動時に表示",
 							"プロジェクトタブを起動時に表示"
 						],
 						"description": "メインビューを開いた際のデフォルトタブ"
