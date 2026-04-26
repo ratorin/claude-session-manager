@@ -1,5 +1,73 @@
 # 更新履歴
 
+## v0.5.0 (2026-04-26)
+
+### v0.5.0 Sprint 1 — 基盤 + 3タブ骨格
+
+#### T1.1: pathUtils.ts — クロスプラットフォームパスユーティリティ
+
+- `expand()`: `~`, `${HOME}`, `${PROJECT_DIR}` プレースホルダー展開
+- `contract()`: 絶対パス → `~/...` 短縮
+- `normalize()`: スラッシュ統一・末尾スラッシュ除去・Windows大文字統一
+- `isContainedIn()`: セパレータ考慮の親子パス判定
+
+#### T1.2: data/i18n/ja/agents.json — エージェント辞書移行
+
+- `data/global-agents-i18n.json` → `data/i18n/ja/agents.json` に移行
+- `agentFileManager.ts`: 新パス優先ロード・旧パスフォールバック（後方互換）
+
+#### T1.3–T1.5: data/i18n/ja/{skills,tools,ui}.json — 日本語辞書
+
+- スキル30件・ツール20件・UIテキスト辞書を新設
+
+#### T1.6: i18nService.ts — 辞書ロード + キャッシュ + 翻訳APIスタブ
+
+- `getI18n()`: 辞書キャッシュ付き一括ロード
+- `t(key)`: ドット区切りキーでUIテキスト取得
+- `agentDisplayName()` / `skillDisplayName()` / `toolDisplayName()` ヘルパー
+- `setLocale()` / `translateText()` 拡張スタブ
+
+#### T1.7+T1.8: projectService.ts — プロジェクト検出・登録
+
+- 3ソース検出: workspaceFolders / `~/.claude/projects/` 逆変換 / csm-projects.json
+- `registerProject()` / `removeProject()` / `discoverProjects()` API
+- `~/.claude/csm-projects.json` スキーマ定義
+
+#### T1.9: mainTabPanel.ts — 3タブ WebviewView 骨格
+
+- `claudeMain` WebviewViewProvider 実装
+- セッション / エージェント / プロジェクト タブ切り替え
+- プロジェクトタブ: 一覧表示・追加・削除・open
+
+#### T1.10: extension.ts — claudeMain 登録
+
+- `vscode.window.registerWebviewViewProvider('claudeMain', ...)` を追加
+- `retainContextWhenHidden: true` でタブ切り替え時の状態維持
+
+#### T1.11+T1.12: セッション/エージェントタブ移行（ポインタ実装）
+
+- 既存 TreeView を維持しつつ、mainTabPanel から各ビューへの導線を設置
+
+#### T1.13: helpFeedbackProvider.ts — Help & Feedback ビュー
+
+- `claudeHelp` TreeView: ドキュメント・問題報告・変更履歴・バージョン情報
+
+#### T1.14: migrationService — v0.5.0 マイグレーション
+
+- `runV05Migration()`: csm-projects.json 初期化 + i18nパス確認
+
+#### T1.15: package.json — viewsContainers/views 更新
+
+- `claudeMain` (webview type) + `claudeHelp` (panel) を追加
+- 既存 TreeView は後方互換で継続
+
+#### T1.16: 設定キー追加
+
+- `claudeManager.locale`: UI表示言語（ja / en）
+- `claudeManager.ui.defaultTab`: 起動時デフォルトタブ（sessions / agents / projects）
+
+---
+
 ## v0.4.7 (2026-04-25)
 
 ### CSM × Claude Code 統合強化（Phase 1 + Phase 2）
