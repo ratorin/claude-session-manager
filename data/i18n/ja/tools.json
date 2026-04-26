@@ -1,0 +1,82 @@
+{
+	"Read": {
+		"displayName": "ファイル読み込み",
+		"displayDescription": "ファイルの内容を読み取る"
+	},
+	"Write": {
+		"displayName": "ファイル書き込み",
+		"displayDescription": "新規ファイルを作成または完全上書きする"
+	},
+	"Edit": {
+		"displayName": "ファイル編集",
+		"displayDescription": "既存ファイルの一部を差分で編集する"
+	},
+	"Bash": {
+		"displayName": "シェル実行",
+		"displayDescription": "Bashコマンドを実行する"
+	},
+	"Grep": {
+		"displayName": "テキスト検索",
+		"displayDescription": "ファイル内のパターンを検索する"
+	},
+	"Glob": {
+		"displayName": "ファイル検索",
+		"displayDescription": "パターンに一致するファイル一覧を取得する"
+	},
+	"Agent": {
+		"displayName": "サブエージェント",
+		"displayDescription": "サブエージェントを起動してタスクを委任する"
+	},
+	"WebFetch": {
+		"displayName": "Webフェッチ",
+		"displayDescription": "URLからWebページの内容を取得する"
+	},
+	"WebSearch": {
+		"displayName": "Web検索",
+		"displayDescription": "インターネットで情報を検索する"
+	},
+	"TodoWrite": {
+		"displayName": "TODOリスト",
+		"displayDescription": "タスクリストを作成・管理する"
+	},
+	"NotebookEdit": {
+		"displayName": "ノートブック編集",
+		"displayDescription": "Jupyter Notebookのセルを編集する"
+	},
+	"AskUserQuestion": {
+		"displayName": "ユーザーへの質問",
+		"displayDescription": "ユーザーに質問して回答を待つ"
+	},
+	"ExitPlanMode": {
+		"displayName": "計画モード終了",
+		"displayDescription": "計画モードを終了して実行モードへ移行する"
+	},
+	"EnterPlanMode": {
+		"displayName": "計画モード開始",
+		"displayDescription": "計画モードに入り実行を保留する"
+	},
+	"Monitor": {
+		"displayName": "プロセス監視",
+		"displayDescription": "バックグラウンドプロセスの出力を監視する"
+	},
+	"CronCreate": {
+		"displayName": "スケジュール作成",
+		"displayDescription": "定期実行スケジュールを登録する"
+	},
+	"CronDelete": {
+		"displayName": "スケジュール削除",
+		"displayDescription": "登録済みスケジュールを削除する"
+	},
+	"CronList": {
+		"displayName": "スケジュール一覧",
+		"displayDescription": "登録済みスケジュール一覧を表示する"
+	},
+	"RemoteTrigger": {
+		"displayName": "リモートトリガー",
+		"displayDescription": "外部からエージェントをトリガーする"
+	},
+	"PushNotification": {
+		"displayName": "プッシュ通知",
+		"displayDescription": "ユーザーへプッシュ通知を送信する"
+	}
+}
