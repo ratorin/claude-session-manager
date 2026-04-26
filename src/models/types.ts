@@ -103,6 +103,9 @@ export interface AgentConfig {
 	// Phase 2-1: 名前ベース resume（Claude Code v2.1.101+）
 	// sessionId が空の場合に --resume <name> を使用するフラグ（CSM が sessionId を管理できない場合のフォールバック）
 	useNameResume?: boolean;
+	// v0.5.0 Sprint 3 T3.11〜T3.15: 組織構築サービス拡張
+	guarded?: boolean;           // システムエージェント保護フラグ（削除不可）
+	projectIds?: string[];       // 所属プロジェクトID一覧（project スコープ時）
 }
 
 // agentWatcher のイベントデータ

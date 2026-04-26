@@ -420,6 +420,18 @@
 				"title": "配下エージェント情報を一括再生成",
 				"icon": "$(sync)",
 				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.relocateProject",
+				"title": "プロジェクトを移動...",
+				"icon": "$(move)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.runOrgBuilder",
+				"title": "組織診断を実行",
+				"icon": "$(organization)",
+				"category": "Claude Session Manager"
 			}
 		],
 		"menus": {

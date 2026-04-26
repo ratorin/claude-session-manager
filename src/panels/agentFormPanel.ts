@@ -4,18 +4,23 @@ import { AgentConfig } from '../models/types';
 import * as dataStore from '../models/dataStore';
 import { getDescendants } from '../agents/parentChildSync';
 import { shouldShowInOrgChart } from '../utils/agentUtils';
+import { showSnippetPicker } from './snippetPickerPanel';
 
 // フォームパネルの参照
 let formPanel: vscode.WebviewPanel | undefined;
 // 最新のコールバックを保持（パネル再利用時に古いコールバックが残るバグ対策）
 let currentOnSave: ((config: AgentConfig) => void | Promise<void>) | undefined;
+// ExtensionContext 参照（スニペットピッカー起動に必要）
+let _extensionContext: vscode.ExtensionContext | undefined;
 
 // エージェント設定フォームをWebviewで表示
 export function showAgentFormPanel(
 	existing: AgentConfig | undefined,
 	sessionId: string,
-	onSave: (config: AgentConfig) => void | Promise<void>
+	onSave: (config: AgentConfig) => void | Promise<void>,
+	context?: vscode.ExtensionContext
 ): void {
+	if (context) { _extensionContext = context; }
 	const title = existing ? `🤖 ${existing.name} の設定` : '🤖 エージェント登録';
 	currentOnSave = onSave;
 
@@ -103,6 +108,34 @@ export function showAgentFormPanel(
 				message.description || ''
 			);
 			formPanel?.webview.postMessage({ type: 'translateResult', ...results });
+		} else if (message.type === 'openSnippetPicker') {
+			// T3.4: スニペットピッカーを開いてbodyテキストを取得
+			if (!_extensionContext) {
+				vscode.window.showErrorMessage('スニペットピッカーを開けませんでした（コンテキスト未設定）');
+				return;
+			}
+			try {
+				const snippetText = await showSnippetPicker(_extensionContext);
+				if (snippetText !== undefined) {
+					// T3.7: 差分プレビュー → modal で確認
+					const answer = await vscode.window.showInformationMessage(
+						'次のテキストを役割本文に挿入しますか？',
+						{ modal: true, detail: snippetText.length > 300 ? snippetText.slice(0, 300) + '...' : snippetText },
+						'挿入する',
+						'キャンセル'
+					);
+					if (answer === '挿入する') {
+						formPanel?.webview.postMessage({ type: 'snippetInsert', text: snippetText });
+					}
+				}
+			} catch (err) {
+				vscode.window.showErrorMessage(
+					`スニペット挿入エラー: ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+		} else if (message.type === 'offerDisplayName') {
+			// T3.9: displayName が空の場合、日本語名自動生成をオファー
+			await offerGenerateDisplayName(message.name || '', message.role || '');
 		}
 	});
 }
@@ -134,6 +167,31 @@ async function translateFieldsToJapanese(
 		translateText(description),
 	]);
 	return { displayName, displayRole, displayDescription };
+}
+
+/**
+ * T3.9: displayName が空の場合、日本語名の自動生成をオファーする。
+ * Yes → translateText で displayName を生成してフォームに設定。
+ * No  → そのまま保存を続行。
+ */
+async function offerGenerateDisplayName(name: string, role: string): Promise<void> {
+	if (!name) { return; }
+	const answer = await vscode.window.showInformationMessage(
+		`「${name}」の日本語名を自動生成しますか？`,
+		{ modal: true, detail: '表示名（displayName）が未入力です。役割の説明をもとに自動生成します。' },
+		'はい',
+		'いいえ（そのまま保存）'
+	);
+	if (answer === 'はい') {
+		// 翻訳を試みる（name + role を素材に）
+		const source = role ? `${name} — ${role}` : name;
+		const translated = await translateText(source);
+		const displayName = translated || name;
+		formPanel?.webview.postMessage({ type: 'setDisplayName', displayName });
+	} else if (answer === 'いいえ（そのまま保存）') {
+		// そのまま保存を進める
+		formPanel?.webview.postMessage({ type: 'proceedSave' });
+	}
 }
 
 function escapeHtml(text: string): string {
@@ -509,7 +567,12 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 <div class="form-group">
 	<label class="form-label">役割の説明</label>
 	<div class="form-desc">このエージェントが担当する業務内容</div>
-	<textarea id="role" rows="2" placeholder="日本語でもOK（例: コードレビュー・品質管理）">${escapeHtml(v.role || '')}</textarea>
+	<div style="position:relative;">
+		<textarea id="role" rows="2" placeholder="日本語でもOK（例: コードレビュー・品質管理）">${escapeHtml(v.role || '')}</textarea>
+	</div>
+	<button class="btn-browse" id="btnAddSnippet" style="margin-top:6px;display:inline-flex;align-items:center;gap:4px;" aria-label="スニペットを追加">
+		+ 機能追加
+	</button>
 </div>
 
 <div class="form-group">
@@ -594,6 +657,16 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 		<option value="plan" ${(v as any).permissionMode === 'plan' ? 'selected' : ''}>plan（計画のみ・対話用）</option>
 		<option value="default" ${(v as any).permissionMode === 'default' ? 'selected' : ''}>default（毎回確認・対話用）</option>
 		<option value="bypassPermissions" ${(v as any).permissionMode === 'bypassPermissions' ? 'selected' : ''}>bypassPermissions（全自動・危険）</option>
+	</select>
+</div>
+
+<div class="form-group">
+	<label class="form-label">HISTORY.md 保存先</label>
+	<div class="form-desc">historyEnabled がONのときに記録する場所。デフォルトは定義ファイル（.md）と同じスコープ。</div>
+	<select id="historyScope">
+		<option value="" ${!v.historyScope ? 'selected' : ''}>自動（.mdと同じスコープ）</option>
+		<option value="global" ${v.historyScope === 'global' ? 'selected' : ''}>グローバル（~/.claude/agents/&lt;name&gt;/HISTORY.md に集約）</option>
+		<option value="project" ${v.historyScope === 'project' ? 'selected' : ''}>プロジェクト（&lt;workspace&gt;/.claude/agents/&lt;name&gt;/HISTORY.md）</option>
 	</select>
 </div>
 
@@ -684,6 +757,10 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 			model: document.querySelector('input[name="model"]:checked')?.value || 'opus',
 			effort: document.querySelector('input[name="effort"]:checked')?.value || 'high',
 			permissionMode: document.getElementById('permissionMode').value || 'acceptEdits',
+			historyScope: (() => {
+				const val = document.getElementById('historyScope').value;
+				return (val === 'global' || val === 'project') ? val : undefined;
+			})(),
 			sessionMode: document.querySelector('input[name="sessionMode"]:checked')?.value || 'fixed',
 			scope: document.querySelector('input[name="scope"]:checked')?.value || 'project',
 			parentAgent: (() => {
@@ -730,6 +807,17 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 			validateName();
 			return;
 		}
+		// T3.9: displayName が空の場合、日本語名生成オファーを拡張機能側に委譲
+		const displayName = document.getElementById('displayName').value.trim();
+		if (!displayName) {
+			vscode.postMessage({ type: 'offerDisplayName', name: data.name, role: data.role });
+			return; // 保存はオファー後に proceedSave メッセージで再開
+		}
+		vscode.postMessage({ type: 'save', config: data });
+	}
+
+	function saveDirectly() {
+		const data = getFormData();
 		vscode.postMessage({ type: 'save', config: data });
 	}
 
@@ -791,6 +879,26 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 				document.getElementById('loadSessionText').textContent =
 					'読み込み完了' + (msg.rawModel ? '（' + msg.rawModel + '）' : '');
 			}
+		} else if (msg.type === 'snippetInsert') {
+			// T3.4: スニペットテキストをロールテキストエリアに挿入
+			const roleArea = document.getElementById('role');
+			if (roleArea) {
+				const current = roleArea.value;
+				const sep = current.trimEnd().length > 0 ? '\\n\\n' : '';
+				roleArea.value = current.trimEnd() + sep + msg.text;
+				roleArea.focus();
+				// テキストエリアを末尾にスクロール
+				roleArea.scrollTop = roleArea.scrollHeight;
+			}
+		} else if (msg.type === 'setDisplayName') {
+			// T3.9: 日本語名自動生成結果を displayName フィールドに設定
+			const dnInput = document.getElementById('displayName');
+			if (dnInput) { dnInput.value = msg.displayName || ''; }
+			// displayName が埋まったので保存を再実行
+			saveDirectly();
+		} else if (msg.type === 'proceedSave') {
+			// T3.9: "いいえ" 選択時 → displayName なしでそのまま保存
+			saveDirectly();
 		}
 	});
 
@@ -843,6 +951,9 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	}
 	document.getElementById('btnSave').addEventListener('click', save);
 	document.getElementById('btnCancel').addEventListener('click', cancel);
+	document.getElementById('btnAddSnippet').addEventListener('click', () => {
+		vscode.postMessage({ type: 'openSnippetPicker' });
+	});
 </script>
 </body>
 </html>`;

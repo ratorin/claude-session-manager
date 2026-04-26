@@ -204,6 +204,11 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				await this._sendAgentsData();
 				break;
 
+			case 'run-org-builder':
+				// T3.13: エージェントタブの組織診断ボタン → orgBuilderService 呼び出し
+				await vscode.commands.executeCommand('claudeManager.runOrgBuilder');
+				break;
+
 			// ---------- セッションタブ (TF1〜TF3) ----------
 
 			case 'refresh-sessions':
@@ -1311,6 +1316,14 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 
 		<!-- ===== エージェントタブ (T2.12〜T2.15) ===== -->
 		<div class="tab-pane" id="pane-agents" role="tabpanel">
+			<!-- T3.13: 組織診断ボタン -->
+			<div class="action-bar" style="padding:6px 8px;">
+				<button class="btn primary" id="btn-run-org-builder"
+					title="組織構成を診断して改善提案を表示"
+					aria-label="組織診断を実行">
+					組織診断
+				</button>
+			</div>
 			<!-- フィルタセクション (T2.14) -->
 			<div class="filter-section" id="agent-filter-section">
 				<div class="filter-label">モデル:</div>
@@ -2185,6 +2198,11 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				c.setAttribute('aria-pressed', 'false');
 			});
 			renderAgentLists(_agentsCache);
+		});
+
+		// T3.13: 組織診断ボタン
+		document.getElementById('btn-run-org-builder').addEventListener('click', () => {
+			vscode.postMessage({ type: 'run-org-builder' });
 		});
 
 		function applyFilters(agents) {

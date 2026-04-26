@@ -13,6 +13,7 @@ import { showAgentFormPanel } from '../panels/agentFormPanel';
 import { showAgentPreview } from '../panels/agentPreviewPanel';
 import { resolveRuleFilePath } from '../agents/agentManager';
 import { normalizeModel, translateWorkDirPath } from '../utils/agentUtils';
+import { isWorkDirCompatible } from '../utils/cliBuilder';
 import { syncParentRuleFile } from '../agents/parentChildSync';
 import { AgentWatcher } from '../watchers/agentWatcher';
 import {
@@ -129,7 +130,7 @@ context.subscriptions.push(
 				showAgentFormPanel(a, a.sessionId, async (config) => {
 					await saveAgentWithRule(config, oldName, oldParent, false, oldScope);
 					vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
-				});
+				}, context);
 			},
 			onEditRuleFile: async (a) => {
 				if (!a.ruleFile) { return; }
@@ -212,7 +213,7 @@ context.subscriptions.push(
 			await saveAgentWithRule(config, undefined, undefined, true);
 			vscode.window.showInformationMessage(`「${config.name}」をエージェントとして登録しました`);
 			await promptSessionInjectIfFirstTime(context);
-		});
+		}, context);
 	})
 );
 
@@ -240,7 +241,7 @@ context.subscriptions.push(
 			);
 			// AgentItem相当のダミーを作って linkSession を呼ぶ
 			await vscode.commands.executeCommand('claudeManager.linkSession', { agent: ruleConfig });
-		});
+		}, context);
 	})
 );
 
@@ -267,7 +268,7 @@ context.subscriptions.push(
 		showAgentFormPanel(existing, sessionId, async (config) => {
 			await saveAgentWithRule(config, oldName, oldParent, false, oldScope);
 			vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
-		});
+		}, context);
 	})
 );
 
@@ -283,7 +284,7 @@ context.subscriptions.push(
 			await saveAgentWithRule(config, oldName, oldParent, false, oldScope);
 			refreshAll();
 			vscode.window.showInformationMessage(`「${config.name}」の設定を更新しました`);
-		});
+		}, context);
 	})
 );
 
@@ -532,14 +533,10 @@ context.subscriptions.push(
 
 		// workDirがVS Codeワークスペース外ならIDEパネルと連携しないため警告
 		// Windows→Linux HGFSパス変換を適用してから比較・使用する
+		// T3.20: isWorkDirCompatible() で isContainedIn ベースの双方向チェックに変更
 		if (item.agent.workDir) {
 			const resolvedWorkDir = translateWorkDirPath(item.agent.workDir);
-			const normalizedWorkDir = resolvedWorkDir.toLowerCase().replace(/\\/g, '/');
-			const folders = vscode.workspace.workspaceFolders || [];
-			const insideWorkspace = folders.some(f => {
-				const folderPath = f.uri.fsPath.toLowerCase().replace(/\\/g, '/');
-				return normalizedWorkDir.startsWith(folderPath) || folderPath.startsWith(normalizedWorkDir);
-			});
+			const { allowed: insideWorkspace } = isWorkDirCompatible(resolvedWorkDir);
 			if (!insideWorkspace) {
 				const choice = await vscode.window.showWarningMessage(
 					`「${item.agent.displayName || item.agent.name}」の作業ディレクトリ（${resolvedWorkDir}）は現在のワークスペース外です。IDEパネルでは開けません（ターミナルTUIのみ）。\nどうしますか？`,

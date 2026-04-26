@@ -11,6 +11,9 @@ import { MemoryTreeProvider, MemoryFileItem, MemoryGroupItem } from '../provider
 import * as dataStore from '../models/dataStore';
 import { moveToTrash } from '../utils/agentUtils';
 import { getConfig } from '../utils/config';
+import { reportIssue, getLogFilePath } from '../utils/errorReporter';
+import { runRelocateWizard } from '../services/pathRelocator';
+import { runOrgBuilder } from '../services/orgBuilderService';
 
 export interface UtilityCommandsDeps {
 	sessionProvider: SessionTreeProvider;
@@ -219,5 +222,52 @@ context.subscriptions.push(
 );
 
 // 検知方式比較ビュー: Phase 4 で削除済み（fswatch固定）
+
+// --- 不具合報告: エラーログ付きでGitHub Issue作成URLを開く ---
+context.subscriptions.push(
+	vscode.commands.registerCommand('claudeManager.reportIssue', async () => {
+		await reportIssue();
+	})
+);
+
+// --- エラーログファイルを開く ---
+context.subscriptions.push(
+	vscode.commands.registerCommand('claudeManager.openErrorLog', async () => {
+		const logPath = getLogFilePath();
+		try {
+			await fs.promises.access(logPath);
+			const doc = await vscode.workspace.openTextDocument(logPath);
+			await vscode.window.showTextDocument(doc);
+		} catch {
+			vscode.window.showInformationMessage('エラーログはまだ作成されていません（まだエラーが発生していません）');
+		}
+	})
+);
+
+// --- T3.18: プロジェクト引っ越しウィザード ---
+context.subscriptions.push(
+	vscode.commands.registerCommand('claudeManager.relocateProject', async () => {
+		try {
+			await runRelocateWizard();
+		} catch (err) {
+			vscode.window.showErrorMessage(
+				`引っ越しウィザードエラー: ${err instanceof Error ? err.message : String(err)}`
+			);
+		}
+	})
+);
+
+// --- T3.13: 自律組織構築コマンド ---
+context.subscriptions.push(
+	vscode.commands.registerCommand('claudeManager.runOrgBuilder', async () => {
+		try {
+			await runOrgBuilder();
+		} catch (err) {
+			vscode.window.showErrorMessage(
+				`組織診断エラー: ${err instanceof Error ? err.message : String(err)}`
+			);
+		}
+	})
+);
 
 }
