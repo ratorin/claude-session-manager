@@ -804,6 +804,27 @@
 						"type": "boolean",
 						"default": false,
 						"description": "新規エージェント作成時にTODO.md（タスク管理）を自動生成する"
+					},
+					"claudeManager.locale": {
+						"type": "string",
+						"default": "ja",
+						"enum": ["ja", "en"],
+						"enumDescriptions": [
+							"日本語",
+							"English"
+						],
+						"description": "UIの表示言語。変更後はVS Codeを再起動してください"
+					},
+					"claudeManager.ui.defaultTab": {
+						"type": "string",
+						"default": "sessions",
+						"enum": ["sessions", "agents", "projects"],
+						"enumDescriptions": [
+							"セッションタブを起動時に表示",
+							"エージェントタブを起動時に表示",
+							"プロジェクトタブを起動時に表示"
+						],
+						"description": "メインビューを開いた際のデフォルトタブ"
 					}
 				}
 			}
