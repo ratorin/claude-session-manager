@@ -1,0 +1,122 @@
+{
+	"agent-harness-construction": {
+		"displayName": "エージェントハーネス構築",
+		"displayDescription": "マルチエージェントハーネスの設計・構築スキル"
+	},
+	"agentic-engineering": {
+		"displayName": "エージェント工学",
+		"displayDescription": "自律型AIエージェントシステムの設計・実装"
+	},
+	"ai-first-engineering": {
+		"displayName": "AI優先エンジニアリング",
+		"displayDescription": "AI駆動の開発ワークフローとツール活用"
+	},
+	"api-design": {
+		"displayName": "API設計",
+		"displayDescription": "RESTful / GraphQL APIの設計・ベストプラクティス"
+	},
+	"autonomous-loops": {
+		"displayName": "自律ループ",
+		"displayDescription": "エージェント自律実行ループの設計・制御"
+	},
+	"backend-patterns": {
+		"displayName": "バックエンドパターン",
+		"displayDescription": "サーバーサイド設計パターンとアーキテクチャ"
+	},
+	"blueprint": {
+		"displayName": "ブループリント",
+		"displayDescription": "システム設計・仕様書作成のテンプレート"
+	},
+	"claude-api": {
+		"displayName": "Claude API",
+		"displayDescription": "Anthropic Claude APIの利用方法とベストプラクティス"
+	},
+	"coding-standards": {
+		"displayName": "コーディング規約",
+		"displayDescription": "コーディングスタイル・品質基準の定義と適用"
+	},
+	"continuous-agent-loop": {
+		"displayName": "継続的エージェントループ",
+		"displayDescription": "エージェントの継続実行・ループ管理"
+	},
+	"continuous-learning": {
+		"displayName": "継続的学習",
+		"displayDescription": "フィードバックを活用した継続的改善プロセス"
+	},
+	"database-migrations": {
+		"displayName": "DBマイグレーション",
+		"displayDescription": "データベーススキーマ変更・マイグレーション管理"
+	},
+	"deep-research": {
+		"displayName": "ディープリサーチ",
+		"displayDescription": "多段階Web調査・情報収集と分析"
+	},
+	"deployment-patterns": {
+		"displayName": "デプロイパターン",
+		"displayDescription": "CI/CD・クラウドデプロイのパターンとベストプラクティス"
+	},
+	"docker-patterns": {
+		"displayName": "Dockerパターン",
+		"displayDescription": "コンテナ化・Docker Compose・マルチステージビルド"
+	},
+	"eval-harness": {
+		"displayName": "評価ハーネス",
+		"displayDescription": "AIモデル評価フレームワークの構築"
+	},
+	"exa-search": {
+		"displayName": "Exa検索",
+		"displayDescription": "Exa MCPを活用したWeb検索・リサーチ"
+	},
+	"frontend-patterns": {
+		"displayName": "フロントエンドパターン",
+		"displayDescription": "UIコンポーネント・状態管理・フロントエンド設計"
+	},
+	"mcp-server-patterns": {
+		"displayName": "MCPサーバーパターン",
+		"displayDescription": "Model Context Protocolサーバーの設計・実装"
+	},
+	"postgres-patterns": {
+		"displayName": "PostgreSQLパターン",
+		"displayDescription": "PostgreSQL最適化・クエリチューニング・設計"
+	},
+	"project-flow-ops": {
+		"displayName": "プロジェクト運用",
+		"displayDescription": "プロジェクト進行・タスク管理・チーム調整"
+	},
+	"python-patterns": {
+		"displayName": "Pythonパターン",
+		"displayDescription": "Pythonの設計パターン・ベストプラクティス"
+	},
+	"python-testing": {
+		"displayName": "Pythonテスト",
+		"displayDescription": "pytest・カバレッジ・モック・TDDのPython実践"
+	},
+	"search-first": {
+		"displayName": "検索優先",
+		"displayDescription": "実装前にコード検索・ライブラリ調査を優先するアプローチ"
+	},
+	"security-review": {
+		"displayName": "セキュリティレビュー",
+		"displayDescription": "脆弱性診断・OWASP・セキュアコードレビュー"
+	},
+	"security-scan": {
+		"displayName": "セキュリティスキャン",
+		"displayDescription": "自動セキュリティスキャン・シークレット検出"
+	},
+	"session-leader": {
+		"displayName": "セッションリーダー",
+		"displayDescription": "マルチエージェントセッションのオーケストレーション"
+	},
+	"tdd-workflow": {
+		"displayName": "TDDワークフロー",
+		"displayDescription": "テスト駆動開発（Red-Green-Refactor）の実践"
+	},
+	"team-builder": {
+		"displayName": "チームビルダー",
+		"displayDescription": "エージェントチームの編成・役割分担・協調"
+	},
+	"verification-loop": {
+		"displayName": "検証ループ",
+		"displayDescription": "実行結果の自動検証・再試行ループ"
+	}
+}
