@@ -2,6 +2,24 @@
 
 ## v0.5.0 (2026-04-27)
 
+### プロジェクトタブで タブバー統合 (試行)
+
+`claudeMain` (WebView) にタブバー + アクション行を内包し、プロジェクトタブ時は
+`claudeTabBar` を非表示にすることで、タブボタン → プロジェクト内容 を1枚の連続 WebView として表示。
+
+#### 変更内容
+- `mainTabPanel.ts`: タブバー CSS を `tabBarPanel.ts` と統一（高さ 36px、flexbox 整列、アイコン付き）
+- `mainTabPanel.ts`: タブ切り替え時に `setContext('claudeManager.activeTab', tab)` を呼ぶ
+- `mainTabPanel.ts`: `onDidChangeVisibility` でプロジェクトタブ再表示時に projects ペインにリセット
+- `mainTabPanel.ts`: 各タブ別アクション行を追加（`tabBarPanel.ts` と同一ロジック・スタイル）
+- `package.json`: `claudeTabBar` の `when` 句に `&& claudeManager.activeTab != 'projects'` を追加
+
+#### 動作フロー
+1. ユーザーが `claudeTabBar` でプロジェクトタブをクリック → `activeTab = 'projects'`
+2. `claudeTabBar` が非表示、`claudeMain` が表示（タブバー + アクション行 + プロジェクト内容が1枚で見える）
+3. `claudeMain` 内の別タブ（セッション等）をクリック → `setContext` で `activeTab` 更新
+4. `claudeMain` が非表示、`claudeTabBar` が再表示
+
 ### プロジェクト情報パネル削除（ユーザー意図と相違のため revert）
 
 commit ccbedcf で追加した `claudeProjectInfo` WebView パネルをリバート。

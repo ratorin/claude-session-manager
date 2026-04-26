@@ -41,6 +41,8 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 
 	private _view?: vscode.WebviewView;
 	private readonly _extensionUri: vscode.Uri;
+	/** 現在 claudeMain 内でアクティブなタブ (claudeMain は projects 時のみ表示) */
+	private _activeTab = 'projects';
 
 	constructor(extensionUri: vscode.Uri) {
 		this._extensionUri = extensionUri;
@@ -68,6 +70,15 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		webviewView.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
 			await this._handleMessage(message);
 		});
+
+		// プロジェクトタブが再度表示されたとき projects タブをリセット
+		// (claudeMain は activeTab == 'projects' のときのみ表示される)
+		webviewView.onDidChangeVisibility(() => {
+			if (webviewView.visible) {
+				this._activeTab = 'projects';
+				webviewView.webview.html = this._getHtml(webviewView.webview);
+			}
+		});
 	}
 
 	// ----------------------------------------------------------------
@@ -88,13 +99,19 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				await this._sendInitialData();
 				break;
 
-			case 'tab-changed':
-				if (message.payload?.tab === 'agents') {
+			case 'tab-changed': {
+				const newTab = String(message.payload?.tab ?? 'projects');
+				this._activeTab = newTab;
+				// claudeManager.activeTab コンテキストを更新
+				// → claudeTabBar の when 句 (activeTab != 'projects') に反映される
+				void vscode.commands.executeCommand('setContext', 'claudeManager.activeTab', newTab);
+				if (newTab === 'agents') {
 					await this._sendAgentsData();
-				} else if (message.payload?.tab === 'memory') {
+				} else if (newTab === 'memory') {
 					await this._sendMemoriesData();
 				}
 				break;
+			}
 
 			// ---------- プロジェクトタブ (T2.1〜T2.9) ----------
 
@@ -265,6 +282,25 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			case 'refresh-memory':
 				await this._sendMemoriesData();
 				break;
+
+			// ---------- アクション行 (tabBarPanel.ts と同一コマンド) ----------
+
+			case 'action-clicked': {
+				const actionCmdMap: Record<string, string> = {
+					'search-sessions': 'claudeManager.searchSessions',
+					'settings':        'claudeManager.openSettings',
+					'new-agent':       'claudeManager.addAgent',
+					'org-chart':       'claudeManager.openOrgChart',
+					'pending-tasks':   'claudeManager.showPendingTasks',
+					'merge-memories':  'claudeManager.mergeMemories',
+				};
+				const act = String(message.payload?.action ?? '');
+				const cmd = actionCmdMap[act];
+				if (cmd) {
+					void vscode.commands.executeCommand(cmd);
+				}
+				break;
+			}
 		}
 	}
 
@@ -568,31 +604,81 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			overflow: hidden;
 		}
 
-		/* ---- タブバー ---- */
+		/* ---- タブバー (tabBarPanel.ts と統一: 36px 高さ) ---- */
 		.tab-bar {
 			display: flex;
-			border-bottom: 1px solid var(--vscode-panel-border);
+			height: 36px;
 			flex-shrink: 0;
+			border-bottom: 1px solid var(--vscode-panel-border, #2d2d2d);
+			user-select: none;
 		}
 		.tab-btn {
 			flex: 1;
-			padding: 6px 4px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			gap: 3px;
 			background: transparent;
 			border: none;
 			border-bottom: 2px solid transparent;
-			color: var(--vscode-tab-inactiveForeground, var(--vscode-foreground));
+			color: var(--vscode-tab-inactiveForeground, #969696);
 			cursor: pointer;
+			padding: 0 4px;
 			font-size: 11px;
 			font-family: inherit;
-			transition: color 0.1s;
+			transition: color 0.1s, border-color 0.1s;
 			white-space: nowrap;
+			outline: none;
+			min-width: 0;
 			overflow: hidden;
 			text-overflow: ellipsis;
 		}
-		.tab-btn:hover { color: var(--vscode-foreground); }
+		.tab-btn:hover {
+			color: var(--vscode-tab-activeForeground, #fff);
+			background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.07));
+		}
 		.tab-btn.active {
-			color: var(--vscode-tab-activeForeground, var(--vscode-foreground));
-			border-bottom-color: var(--vscode-focusBorder, #007acc);
+			color: var(--vscode-tab-activeForeground, #fff);
+			border-bottom-color: var(--vscode-focusBorder, #007fd4);
+		}
+
+		/* ---- タブアクション行 (tabBarPanel.ts と統一: 32px 高さ) ---- */
+		.tab-action-bar {
+			display: flex;
+			height: 32px;
+			flex-shrink: 0;
+			border-bottom: 1px solid var(--vscode-panel-border, #2d2d2d);
+			background: var(--vscode-sideBarSectionHeader-background, rgba(0,0,0,0.1));
+		}
+		.action-btn-tab {
+			flex: 1;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			gap: 3px;
+			background: transparent;
+			border: none;
+			border-right: 1px solid var(--vscode-panel-border, #2d2d2d);
+			color: var(--vscode-descriptionForeground, #858585);
+			cursor: pointer;
+			padding: 0 4px;
+			font-size: 10px;
+			font-family: inherit;
+			white-space: nowrap;
+			transition: color 0.1s, background 0.1s;
+			outline: none;
+			min-width: 0;
+		}
+		.action-btn-tab:last-child { border-right: none; }
+		.action-btn-tab:hover {
+			color: var(--vscode-foreground, #ccc);
+			background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.07));
+		}
+		.action-btn-tab:active {
+			background: var(--vscode-toolbar-activeBackground, rgba(255,255,255,0.12));
+		}
+		@media (max-width: 200px) {
+			.tab-btn .tab-icon { display: none; }
 		}
 
 		/* ---- タブコンテンツ ---- */
@@ -1476,19 +1562,22 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 	</style>
 </head>
 <body>
-	<!-- タブバー -->
-	<div class="tab-bar" role="tablist">
-		<button class="tab-btn active" data-tab="sessions" role="tab" aria-selected="true">${tabSessions}</button>
-		<button class="tab-btn" data-tab="agents" role="tab" aria-selected="false">${tabAgents}</button>
-		<button class="tab-btn" data-tab="projects" role="tab" aria-selected="false">${tabProjects}</button>
-		<button class="tab-btn" data-tab="memory" role="tab" aria-selected="false">${tabMemory}</button>
-	</div>
+	<!-- タブバー (tabBarPanel.ts と同一スタイル) -->
+	<nav class="tab-bar" role="tablist" aria-label="CSM タブ">
+		<button class="tab-btn${this._activeTab === 'sessions'  ? ' active' : ''}" data-tab="sessions"  role="tab" aria-selected="${this._activeTab === 'sessions'}"><span class="tab-icon">💬</span> ${tabSessions}</button>
+		<button class="tab-btn${this._activeTab === 'agents'    ? ' active' : ''}" data-tab="agents"    role="tab" aria-selected="${this._activeTab === 'agents'}"><span class="tab-icon">👤</span> ${tabAgents}</button>
+		<button class="tab-btn${this._activeTab === 'projects'  ? ' active' : ''}" data-tab="projects"  role="tab" aria-selected="${this._activeTab === 'projects'}"><span class="tab-icon">📁</span> ${tabProjects}</button>
+		<button class="tab-btn${this._activeTab === 'memory'    ? ' active' : ''}" data-tab="memory"    role="tab" aria-selected="${this._activeTab === 'memory'}"><span class="tab-icon">🧠</span> ${tabMemory}</button>
+	</nav>
+
+	<!-- アクション行 (tabBarPanel.ts と同一スタイル) -->
+	<div class="tab-action-bar" id="tab-action-bar" role="toolbar" aria-label="クイックアクション"></div>
 
 	<!-- タブコンテンツ -->
 	<div class="tab-content">
 
 		<!-- ===== セッションタブ (TF1〜TF3) ===== -->
-		<div class="tab-pane active" id="pane-sessions" role="tabpanel">
+		<div class="tab-pane${this._activeTab === 'sessions'  ? ' active' : ''}" id="pane-sessions" role="tabpanel">
 
 			<!-- アクションバー -->
 			<div class="action-bar">
@@ -1547,7 +1636,7 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		</div>
 
 		<!-- ===== エージェントタブ (T2.12〜T2.15) ===== -->
-		<div class="tab-pane" id="pane-agents" role="tabpanel">
+		<div class="tab-pane${this._activeTab === 'agents' ? ' active' : ''}" id="pane-agents" role="tabpanel">
 			<!-- T3.13: 組織診断ボタン -->
 			<div class="action-bar" style="padding:6px 8px;">
 				<button class="btn primary" id="btn-run-org-builder"
@@ -1594,7 +1683,7 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		</div>
 
 		<!-- ===== プロジェクトタブ (T2.1〜T2.9 / TT1〜TT4) ===== -->
-		<div class="tab-pane" id="pane-projects" role="tabpanel">
+		<div class="tab-pane${this._activeTab === 'projects' ? ' active' : ''}" id="pane-projects" role="tabpanel">
 			<div class="action-bar">
 				<button class="btn primary" id="btn-add-project">＋ 追加</button>
 				<button class="btn icon-btn" id="btn-refresh-projects" title="更新">↻</button>
@@ -1673,7 +1762,7 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		</div>
 
 		<!-- ===== メモリタブ (TF5) ===== -->
-		<div class="tab-pane" id="pane-memory" role="tabpanel">
+		<div class="tab-pane${this._activeTab === 'memory' ? ' active' : ''}" id="pane-memory" role="tabpanel">
 
 			<div class="action-bar">
 				<button class="btn icon-btn" id="btn-refresh-memory" title="更新" aria-label="メモリを更新">↻</button>
@@ -1697,9 +1786,62 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		const vscode = acquireVsCodeApi();
 		const HOME = '${homeDir}';
 
-		// ----------------------------------------------------------------
-		// タブ切り替え
-		// ----------------------------------------------------------------
+		// ================================================================
+		// タブ切り替え + アクション行 (tabBarPanel.ts と同一ロジック)
+		// ================================================================
+
+		// タブ別アクション定義
+		const TAB_ACTIONS_MAIN = {
+			sessions: [
+				{ action: 'new-session',     icon: '＋', label: '新規'   },
+				{ action: 'refresh-sessions',icon: '🔄', label: '更新'   },
+				{ action: 'search-sessions', icon: '🔍', label: '検索'   },
+				{ action: 'settings',        icon: '⚙️', label: '設定'  },
+			],
+			agents: [
+				{ action: 'refresh-agents',  icon: '🔄', label: '更新'   },
+				{ action: 'new-agent',       icon: '➕', label: '新規'   },
+				{ action: 'org-chart',       icon: '🌐', label: '組織図' },
+				{ action: 'pending-tasks',   icon: '✅', label: '確認待' },
+			],
+			projects: [
+				{ action: 'add-project',     icon: '➕', label: '追加'   },
+				{ action: 'refresh-projects',icon: '🔄', label: '更新'   },
+				{ action: 'settings',        icon: '⚙️', label: '設定'  },
+			],
+			memory: [
+				{ action: 'refresh-memory',  icon: '🔄', label: '更新'   },
+				{ action: 'merge-memories',  icon: '🧬', label: '統合'   },
+			],
+		};
+
+		function renderTabActionBar(tab) {
+			const actions = TAB_ACTIONS_MAIN[tab] || TAB_ACTIONS_MAIN.projects;
+			const bar = document.getElementById('tab-action-bar');
+			if (!bar) return;
+			bar.innerHTML = actions.map(a =>
+				'<button class="action-btn-tab" data-action="' + a.action + '" title="' + a.label + '">' +
+				a.icon + ' ' + a.label + '</button>'
+			).join('');
+			bar.querySelectorAll('.action-btn-tab').forEach(btn => {
+				btn.addEventListener('click', () => {
+					const act = btn.dataset.action;
+					// ローカルアクション（Webview 内で処理できるもの）
+					if (act === 'new-session')      { vscode.postMessage({ type: 'new-session' }); return; }
+					if (act === 'refresh-sessions') { vscode.postMessage({ type: 'refresh-sessions' }); return; }
+					if (act === 'refresh-agents')   { vscode.postMessage({ type: 'refresh-agents' }); return; }
+					if (act === 'add-project')      { vscode.postMessage({ type: 'add-project' }); return; }
+					if (act === 'refresh-projects') { vscode.postMessage({ type: 'refresh-projects' }); return; }
+					if (act === 'refresh-memory')   { vscode.postMessage({ type: 'refresh-memory' }); return; }
+					// Extension コマンド経由
+					vscode.postMessage({ type: 'action-clicked', payload: { action: act } });
+				});
+			});
+		}
+
+		// 初期アクション行レンダリング
+		renderTabActionBar('${this._activeTab}');
+
 		const tabBtns  = document.querySelectorAll('.tab-btn');
 		const tabPanes = document.querySelectorAll('.tab-pane');
 
@@ -1711,6 +1853,7 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 					b.setAttribute('aria-selected', b.dataset.tab === target ? 'true' : 'false');
 				});
 				tabPanes.forEach(p => p.classList.toggle('active', p.id === 'pane-' + target));
+				renderTabActionBar(target);
 				vscode.postMessage({ type: 'tab-changed', payload: { tab: target } });
 			});
 		});
