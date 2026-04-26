@@ -38,32 +38,38 @@
 					"type": "webview",
 					"id": "claudeMain",
 					"name": "Claude Session Manager",
-					"icon": "$(comment-discussion)"
+					"icon": "$(comment-discussion)",
+					"when": "config.claudeManager.useNewMainPanel != false"
 				},
 				{
 					"id": "claudeSessions",
 					"name": "会話一覧（セッション）",
-					"icon": "$(comment-discussion)"
+					"icon": "$(comment-discussion)",
+					"when": "config.claudeManager.useNewMainPanel == false"
 				},
 				{
 					"id": "claudeBookmarks",
 					"name": "会話ブックマーク",
-					"icon": "$(star-full)"
+					"icon": "$(star-full)",
+					"when": "config.claudeManager.useNewMainPanel == false"
 				},
 				{
 					"id": "claudeTags",
 					"name": "会話タグ",
-					"icon": "$(tag)"
+					"icon": "$(tag)",
+					"when": "config.claudeManager.useNewMainPanel == false"
 				},
 				{
 					"id": "claudeAgents",
 					"name": "エージェント管理",
-					"icon": "$(person)"
+					"icon": "$(person)",
+					"when": "config.claudeManager.useNewMainPanel == false"
 				},
 				{
 					"id": "claudeMemory",
 					"name": "メモリ管理",
-					"icon": "$(database)"
+					"icon": "$(database)",
+					"when": "config.claudeManager.useNewMainPanel == false"
 				}
 			],
 			"claude-help": [
@@ -845,6 +851,11 @@
 						],
 						"description": "エージェントタブで起動時に展開するセクション（bookmarks / recent / global / project）"
 					},
+					"claudeManager.useNewMainPanel": {
+						"type": "boolean",
+						"default": true,
+						"description": "v0.5.0 の新しい3タブUI (claudeMain) を使う。false にすると旧 5 TreeView (会話一覧/ブックマーク/タグ/エージェント管理/メモリ管理) に戻る。変更後は VS Code を再起動してください"
+					},
 					"claudeManager.locale": {
 						"type": "string",
 						"default": "ja",
@@ -857,6 +868,11 @@
 							"English"
 						],
 						"description": "UIの表示言語。変更後はVS Codeを再起動してください"
+					},
+					"claudeManager.locale.autoTranslate": {
+						"type": "boolean",
+						"default": false,
+						"description": "エージェント定義の未翻訳テキストを Anthropic API で自動翻訳します（API キーが必要）"
 					},
 					"claudeManager.ui.defaultTab": {
 						"type": "string",

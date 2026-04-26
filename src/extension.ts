@@ -15,12 +15,13 @@ import { registerAgentCommands } from './commands/agentCommands';
 import { registerMigrationCommands } from './commands/migrationCommands';
 import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
-import { getConfig } from './utils/config';
+import { getConfig, getLocaleConfig, getAutoTranslateConfig } from './utils/config';
 import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook, ensureRecapCaptureHook } from './services/hookService';
 import { runV04Migration, runV05Migration } from './services/migrationService';
 import { initErrorReporter, logError } from './utils/errorReporter';
 import { MainTabPanel } from './panels/mainTabPanel';
 import { HelpFeedbackProvider } from './providers/helpFeedbackProvider';
+import { setLocale, setAutoTranslate } from './services/i18nService';
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -29,6 +30,10 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// エラーレポータ初期化（ローカルログ蓄積）
 	initErrorReporter(currentVersion);
+
+	// i18n: ロケールと自動翻訳フラグを設定値から初期化
+	setLocale(getLocaleConfig());
+	setAutoTranslate(getAutoTranslateConfig());
 
 	// プロセス全体の未捕捉エラーを拾う
 	process.on('unhandledRejection', (reason) => {
@@ -249,6 +254,12 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 		if (e.affectsConfiguration('claudeManager.enableUsageMonitor') || e.affectsConfiguration('claudeManager.usageMonitorInterval')) {
 			startUsageMonitorIfEnabled();
+		}
+		if (e.affectsConfiguration('claudeManager.locale')) {
+			setLocale(getLocaleConfig());
+		}
+		if (e.affectsConfiguration('claudeManager.locale.autoTranslate')) {
+			setAutoTranslate(getAutoTranslateConfig());
 		}
 	}));
 
