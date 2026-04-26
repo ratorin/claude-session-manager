@@ -1,0 +1,83 @@
+{
+	"tabs": {
+		"sessions": "セッション",
+		"agents": "エージェント",
+		"projects": "プロジェクト"
+	},
+	"sessions": {
+		"title": "セッション",
+		"noSessions": "セッションがありません",
+		"newSession": "新規セッション",
+		"resumeSession": "セッションを再開",
+		"stopSession": "セッションを停止",
+		"stopAllSessions": "全セッションを停止",
+		"refreshSessions": "更新",
+		"sessionStatus": {
+			"running": "実行中",
+			"stopped": "停止",
+			"unknown": "不明"
+		},
+		"confirmStop": "このセッションを停止しますか？",
+		"confirmStopAll": "すべてのセッションを停止しますか？"
+	},
+	"agents": {
+		"title": "エージェント",
+		"noAgents": "エージェントがありません",
+		"openSession": "セッションを開く",
+		"editConfig": "設定を編集",
+		"refreshAgents": "更新",
+		"searchAgents": "エージェントを検索...",
+		"globalAgents": "グローバルエージェント",
+		"projectAgents": "プロジェクトエージェント"
+	},
+	"projects": {
+		"title": "プロジェクト",
+		"noProjects": "プロジェクトがありません",
+		"addProject": "プロジェクトを追加",
+		"removeProject": "プロジェクトを削除",
+		"refreshProjects": "更新",
+		"openProject": "プロジェクトを開く",
+		"currentProject": "現在のプロジェクト",
+		"recentProjects": "最近のプロジェクト"
+	},
+	"common": {
+		"ok": "OK",
+		"cancel": "キャンセル",
+		"yes": "はい",
+		"no": "いいえ",
+		"close": "閉じる",
+		"save": "保存",
+		"delete": "削除",
+		"edit": "編集",
+		"refresh": "更新",
+		"loading": "読み込み中...",
+		"error": "エラー",
+		"success": "成功",
+		"warning": "警告",
+		"info": "情報",
+		"copy": "コピー",
+		"copied": "コピーしました",
+		"search": "検索",
+		"filter": "フィルター",
+		"clear": "クリア",
+		"open": "開く",
+		"add": "追加",
+		"remove": "削除",
+		"settings": "設定"
+	},
+	"errors": {
+		"sessionStartFailed": "セッションの開始に失敗しました",
+		"sessionStopFailed": "セッションの停止に失敗しました",
+		"agentLoadFailed": "エージェント情報の読み込みに失敗しました",
+		"projectLoadFailed": "プロジェクト情報の読み込みに失敗しました",
+		"configSaveFailed": "設定の保存に失敗しました",
+		"unknownError": "不明なエラーが発生しました"
+	},
+	"helpFeedback": {
+		"title": "ヘルプ & フィードバック",
+		"documentation": "ドキュメント",
+		"reportIssue": "問題を報告",
+		"changelog": "変更履歴",
+		"version": "バージョン"
+	}
+}
