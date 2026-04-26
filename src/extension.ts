@@ -21,7 +21,6 @@ import { runV04Migration, runV05Migration } from './services/migrationService';
 import { initErrorReporter, logError } from './utils/errorReporter';
 import { MainTabPanel } from './panels/mainTabPanel';
 import { TabBarPanel, StatusInfo } from './panels/tabBarPanel';
-import { ProjectInfoPanel } from './panels/projectInfoPanel';
 import { HelpFeedbackProvider } from './providers/helpFeedbackProvider';
 import { setLocale, setAutoTranslate } from './services/i18nService';
 
@@ -415,19 +414,6 @@ export function activate(context: vscode.ExtensionContext) {
 			webviewOptions: { retainContextWhenHidden: true },
 		})
 	);
-
-	// PIP1: claudeProjectInfo — プロジェクト情報パネル登録
-	const projectInfoPanel = new ProjectInfoPanel(() => agentWatcher.getLiveSessionIds());
-	context.subscriptions.push(projectInfoPanel);
-	context.subscriptions.push(
-		vscode.window.registerWebviewViewProvider(ProjectInfoPanel.viewType, projectInfoPanel, {
-			webviewOptions: { retainContextWhenHidden: true },
-		})
-	);
-	// PIP2: エージェント状態変化時にプロジェクト情報パネルも更新
-	agentWatcher.onDidChange(() => {
-		projectInfoPanel.refresh();
-	});
 
 	// T1.13: claudeHelp — Help & Feedback ビュー登録
 	const extensionVersion = context.extension.packageJSON.version as string ?? '0.0.0';
