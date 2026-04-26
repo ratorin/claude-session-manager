@@ -19,6 +19,7 @@ import { getConfig } from './utils/config';
 import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook, ensureRecapCaptureHook } from './services/hookService';
 import { runV04Migration } from './services/migrationService';
 import { initErrorReporter, logError } from './utils/errorReporter';
+import { MainTabPanel } from './panels/mainTabPanel';
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -290,6 +291,14 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.createTreeView('claudeTags', { treeDataProvider: tagProvider }),
 		vscode.window.createTreeView('claudeMemory', { treeDataProvider: memoryProvider }),
 		vscode.window.createTreeView('claudeAgents', { treeDataProvider: agentProvider, dragAndDropController: agentProvider, canSelectMany: false }),
+	);
+
+	// T1.10: claudeMain WebviewView Container（3タブ骨格）を登録
+	const mainTabPanel = new MainTabPanel(context.extensionUri);
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider(MainTabPanel.viewType, mainTabPanel, {
+			webviewOptions: { retainContextWhenHidden: true },
+		})
 	);
 
 	// セッション・メモリ関連コマンド登録
