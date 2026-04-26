@@ -25,8 +25,17 @@ export function buildCommand(config: AgentConfig): CliCommand {
 	parts.push('--agent', config.name);
 
 	// セッションID（fixed モードのみ）
-	if (config.sessionId && config.sessionMode !== 'disposable') {
-		parts.push('--resume', config.sessionId);
+	// v2.1.101+: sessionId がない場合は --resume <name> によるエージェント名でのセッション再開を試みる
+	// Claude Code がエージェント名に対応するセッションを検索する
+	if (config.sessionMode !== 'disposable') {
+		if (config.sessionId) {
+			// sessionId が既知の場合: 正確なセッションを指定（推奨）
+			parts.push('--resume', config.sessionId);
+		} else if (config.useNameResume && config.name) {
+			// sessionId 未設定で useNameResume フラグがある場合: 名前ベース再開（Claude Code v2.1.101+）
+			// CSM の sessionId 管理と独立したフォールバック
+			parts.push('--resume', config.name);
+		}
 	}
 
 	// allowedTools → スペース区切りで複数引数

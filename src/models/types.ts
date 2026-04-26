@@ -96,9 +96,13 @@ export interface AgentConfig {
 	permissionMode?: string;     // 権限モード（acceptEdits, auto, plan, default, bypassPermissions）
 	// 記録機能
 	historyEnabled?: boolean;    // HISTORY自動追記（デフォルト: false）
+	historyScope?: 'global' | 'project';  // HISTORY保存先スコープ上書き（未指定=.md実在スコープ）
 	todoEnabled?: boolean;       // TODO管理（デフォルト: false）
 	// 表示制御
 	showInOrgChart?: boolean;    // 組織図に表示するか（デフォルト: false → グローバル）
+	// Phase 2-1: 名前ベース resume（Claude Code v2.1.101+）
+	// sessionId が空の場合に --resume <name> を使用するフラグ（CSM が sessionId を管理できない場合のフォールバック）
+	useNameResume?: boolean;
 }
 
 // agentWatcher のイベントデータ

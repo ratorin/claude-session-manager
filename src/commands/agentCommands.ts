@@ -12,7 +12,7 @@ import * as dataStore from '../models/dataStore';
 import { showAgentFormPanel } from '../panels/agentFormPanel';
 import { showAgentPreview } from '../panels/agentPreviewPanel';
 import { resolveRuleFilePath } from '../agents/agentManager';
-import { normalizeModel } from '../utils/agentUtils';
+import { normalizeModel, translateWorkDirPath } from '../utils/agentUtils';
 import { syncParentRuleFile } from '../agents/parentChildSync';
 import { AgentWatcher } from '../watchers/agentWatcher';
 import {
@@ -32,6 +32,26 @@ export interface AgentCommandsDeps {
 	getExtensionOutputChannel: () => vscode.OutputChannel;
 	updateStatusBar: () => void;
 	extensionOutputChannel: vscode.OutputChannel;
+}
+
+// --resume コマンド引数を組み立てるヘルパー
+// Phase 2-1: Claude Code v2.1.101+ の名前ベース resume を活用
+// sessionId が既知なら sessionId を優先（信頼性が高い）
+// sessionId がない場合は --resume <agentName> でフォールバック（v2.1.101+）
+function buildResumeArgs(agent: AgentConfig): string[] | null {
+	const args = ['claude', '--agent', agent.name];
+	if (agent.sessionId) {
+		// sessionId 既知: 正確なセッションを指定（推奨）
+		args.push('--resume', agent.sessionId);
+	} else if (agent.sessionMode !== 'disposable') {
+		// sessionId 未設定: 名前ベース resume を試みる（Claude Code v2.1.101+）
+		// CSM がセッションを追跡していない場合のフォールバック
+		args.push('--resume', agent.name);
+	} else {
+		// disposable モードで sessionId なし: 開けない
+		return null;
+	}
+	return args;
 }
 
 export function registerAgentCommands(
@@ -122,10 +142,10 @@ context.subscriptions.push(
 				vscode.env.openExternal(uri);
 			},
 			onOpenInTerminal: (a) => {
-				if (!a.sessionId) { return; }
-				const args = ['claude', '--agent', a.name, '--resume', a.sessionId];
+				const args = buildResumeArgs(a);
+				if (!args) { return; }
 				if (a.permissionMode) { args.push('--permission-mode', a.permissionMode); }
-				const terminal = vscode.window.createTerminal({ name: `🤖 ${a.displayName || a.name}`, cwd: a.workDir || undefined });
+				const terminal = vscode.window.createTerminal({ name: `🤖 ${a.displayName || a.name}`, cwd: a.workDir ? translateWorkDirPath(a.workDir) : undefined });
 				terminal.show();
 				terminal.sendText(args.join(' '));
 			},
@@ -136,6 +156,52 @@ context.subscriptions.push(
 				vscode.commands.executeCommand('claudeManager.linkSession', { agent: a });
 			},
 		});
+	})
+);
+
+// エージェントに紐づいたセッションIDをクリップボードにコピー
+context.subscriptions.push(
+	vscode.commands.registerCommand('claudeManager.copyAgentSessionId', async (item: AgentItem) => {
+		const sid = item.agent.sessionId;
+		if (!sid) {
+			vscode.window.showWarningMessage('セッションが紐づけされていません');
+			return;
+		}
+		await vscode.env.clipboard.writeText(sid);
+		vscode.window.showInformationMessage(`セッションID をコピーしました: ${sid.substring(0, 8)}...`);
+	})
+);
+
+// エージェントに紐づいたセッションの .jsonl ファイルパスをクリップボードにコピー
+context.subscriptions.push(
+	vscode.commands.registerCommand('claudeManager.copyAgentSessionPath', async (item: AgentItem) => {
+		const sid = item.agent.sessionId;
+		if (!sid) {
+			vscode.window.showWarningMessage('セッションが紐づけされていません');
+			return;
+		}
+		// 全プロジェクト横断で実ファイルを検索
+		const projectsDir = path.join(os.homedir(), '.claude', 'projects');
+		let found: string | undefined;
+		try {
+			const entries = await fs.promises.readdir(projectsDir, { withFileTypes: true });
+			for (const e of entries) {
+				if (!e.isDirectory()) { continue; }
+				const candidate = path.join(projectsDir, e.name, `${sid}.jsonl`);
+				try {
+					await fs.promises.access(candidate);
+					found = candidate;
+					break;
+				} catch { /* next */ }
+			}
+		} catch { /* noop */ }
+
+		if (!found) {
+			vscode.window.showWarningMessage(`セッションファイルが見つかりません: ${sid.substring(0, 8)}...`);
+			return;
+		}
+		await vscode.env.clipboard.writeText(found);
+		vscode.window.showInformationMessage(`セッションパス をコピーしました: ${path.basename(found)}`);
 	})
 );
 
@@ -150,22 +216,30 @@ context.subscriptions.push(
 	})
 );
 
-// エージェント追加（＋ボタン: セッション未紐づけで新規作成）
+// エージェント追加（＋ボタン: 登録後は紐づけ画面へ誘導）
 context.subscriptions.push(
 	vscode.commands.registerCommand('claudeManager.addAgent', () => {
 		showAgentFormPanel(undefined, '', async (config) => {
 			if (!config.sessionId) { config.sessionId = ''; }
-			// ルール生成 → ファイル書き込み → セッション自動作成 → 紐づけ保存
+			// ルール生成 → ファイル書き込み（この時点ではセッション未紐づけ）
 			const [ruleConfig, ruleBody] = await prepareAgentRule(config, true);
-			await dataStore.addAgent(ruleConfig, ruleBody); // 先にファイルを作成（CLIが読めるように）
-			const finalConfig = await autoCreateSessionIfNeeded(ruleConfig, sessionServiceDeps);
-			if (finalConfig.sessionId !== ruleConfig.sessionId) {
-				await dataStore.addAgent(finalConfig); // セッションID紐づけを更新
-			}
-			await syncParentRuleFile(finalConfig.parentAgent, getExtensionOutputChannel());
+			await dataStore.addAgent(ruleConfig, ruleBody);
+			await syncParentRuleFile(ruleConfig.parentAgent, getExtensionOutputChannel());
 			refreshAll();
-			vscode.window.showInformationMessage(`「${finalConfig.name}」をエージェントとして登録しました`);
 			await promptSessionInjectIfFirstTime(context);
+
+			// 使い捨て or 既にsessionIdが指定済みなら紐づけ誘導はスキップ
+			if (ruleConfig.sessionMode === 'disposable' || ruleConfig.sessionId) {
+				vscode.window.showInformationMessage(`「${ruleConfig.name}」をエージェントとして登録しました`);
+				return;
+			}
+
+			// 既存セッション紐づけ画面を開く（末尾に「新規作成」オプションあり）
+			vscode.window.showInformationMessage(
+				`「${ruleConfig.name}」を登録しました。既存セッションを紐づけるか、新規セッションを作成してください。`
+			);
+			// AgentItem相当のダミーを作って linkSession を呼ぶ
+			await vscode.commands.executeCommand('claudeManager.linkSession', { agent: ruleConfig });
 		});
 	})
 );
@@ -358,6 +432,77 @@ context.subscriptions.push(
 			vscode.window.showWarningMessage('セッションが紐づけされていません');
 			return;
 		}
+
+		// セッションファイルが格納されているプロジェクトキー（cwd由来）を特定
+		const sid = item.agent.sessionId;
+		const projectsDir = path.join(os.homedir(), '.claude', 'projects');
+		let sessionProjectDir: string | undefined;
+		try {
+			const entries = await fs.promises.readdir(projectsDir, { withFileTypes: true });
+			for (const e of entries) {
+				if (!e.isDirectory()) { continue; }
+				try {
+					await fs.promises.access(path.join(projectsDir, e.name, `${sid}.jsonl`));
+					sessionProjectDir = e.name;
+					break;
+				} catch { /* next */ }
+			}
+		} catch { /* projects dir なし */ }
+
+		// セッションの cwd を JSONL 先頭から取得（Claude CLI が実際に使うプロジェクトキーの源）
+		let sessionCwd: string | undefined;
+		if (sessionProjectDir) {
+			try {
+				const jsonlPath = path.join(projectsDir, sessionProjectDir, `${sid}.jsonl`);
+				const handle = await fs.promises.open(jsonlPath, 'r');
+				try {
+					const buf = Buffer.alloc(16 * 1024);
+					await handle.read(buf, 0, 16 * 1024, 0);
+					const lines = buf.toString('utf-8').split('\n');
+					for (const line of lines) {
+						if (!line.trim()) { continue; }
+						try {
+							const entry = JSON.parse(line);
+							if (entry.cwd) { sessionCwd = entry.cwd; break; }
+						} catch { /* skip */ }
+					}
+				} finally { await handle.close(); }
+			} catch { /* noop */ }
+		}
+
+		// 現在のワークスペースとセッションの cwd を正規化比較
+		// Windowsは大文字小文字を無視、セパレータを統一
+		const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+		const normalize = (p: string): string => p.toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '');
+		const pathsMatch = sessionCwd && wsFolder
+			? normalize(sessionCwd) === normalize(wsFolder)
+			: false;
+
+		// 不一致ならIDEパネル連携しない可能性が高いので提案
+		if (sessionCwd && wsFolder && !pathsMatch) {
+			const currentWs = wsFolder;
+			const sessionLabel = sessionCwd;
+			const choice = await vscode.window.showWarningMessage(
+				`このセッションは別のプロジェクトで作成されました。\n\n現在のワークスペース: ${currentWs}\nセッションのプロジェクト: ${sessionLabel}\n\nこのままではIDEパネルに表示されない可能性があります。`,
+				{ modal: true },
+				'そのフォルダを開く',
+				'ワークスペースに追加',
+				'このまま開く',
+			);
+			if (choice === 'そのフォルダを開く' && sessionCwd) {
+				await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(sessionCwd), { forceNewWindow: false });
+				return;
+			}
+			if (choice === 'ワークスペースに追加' && sessionCwd) {
+				const current = vscode.workspace.workspaceFolders || [];
+				vscode.workspace.updateWorkspaceFolders(current.length, 0, { uri: vscode.Uri.file(sessionCwd) });
+				vscode.window.showInformationMessage('ワークスペースに追加しました。もう一度「Claudeで開く（IDE）」を実行してください。');
+				return;
+			}
+			if (!choice) { return; } // キャンセル
+			// 'このまま開く' は通常フローに進む
+		}
+
 		const scheme = vscode.env.uriScheme;
 		const uri = vscode.Uri.parse(
 			`${scheme}://anthropic.claude-code/open?session=` +
@@ -385,15 +530,53 @@ context.subscriptions.push(
 			}
 		}
 
+		// workDirがVS Codeワークスペース外ならIDEパネルと連携しないため警告
+		// Windows→Linux HGFSパス変換を適用してから比較・使用する
+		if (item.agent.workDir) {
+			const resolvedWorkDir = translateWorkDirPath(item.agent.workDir);
+			const normalizedWorkDir = resolvedWorkDir.toLowerCase().replace(/\\/g, '/');
+			const folders = vscode.workspace.workspaceFolders || [];
+			const insideWorkspace = folders.some(f => {
+				const folderPath = f.uri.fsPath.toLowerCase().replace(/\\/g, '/');
+				return normalizedWorkDir.startsWith(folderPath) || folderPath.startsWith(normalizedWorkDir);
+			});
+			if (!insideWorkspace) {
+				const choice = await vscode.window.showWarningMessage(
+					`「${item.agent.displayName || item.agent.name}」の作業ディレクトリ（${resolvedWorkDir}）は現在のワークスペース外です。IDEパネルでは開けません（ターミナルTUIのみ）。\nどうしますか？`,
+					{ modal: true },
+					'そのフォルダを開く',
+					'ワークスペースに追加',
+					'このままターミナルで開く'
+				);
+				if (choice === 'そのフォルダを開く') {
+					await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(resolvedWorkDir), { forceNewWindow: false });
+					return;
+				}
+				if (choice === 'ワークスペースに追加') {
+					const current = vscode.workspace.workspaceFolders || [];
+					vscode.workspace.updateWorkspaceFolders(current.length, 0, { uri: vscode.Uri.file(resolvedWorkDir) });
+					vscode.window.showInformationMessage('ワークスペースに追加しました。もう一度「開く」を実行してください。');
+					return;
+				}
+				if (!choice) { return; } // キャンセル
+				// 'このままターミナルで開く' は通常フローに進む
+			}
+		}
+
 		// ターミナルで --agent + --resume で起動（フロントマターからmodel/effort自動適用）
-		const args = ['claude', '--agent', item.agent.name, '--resume', item.agent.sessionId];
+		// Phase 2-1: sessionId がない場合は --resume <agentName> による名前ベース再開（v2.1.101+）
+		const args = buildResumeArgs(item.agent);
+		if (!args) {
+			vscode.window.showWarningMessage('セッションが紐づけられていません。エージェントを選択してセッションを紐づけてください。');
+			return;
+		}
 		if (item.agent.permissionMode) {
 			args.push('--permission-mode', item.agent.permissionMode);
 		}
 
 		const terminal = vscode.window.createTerminal({
 			name: `🤖 ${item.agent.name}`,
-			cwd: item.agent.workDir || undefined,
+			cwd: item.agent.workDir ? translateWorkDirPath(item.agent.workDir) : undefined,
 		});
 		terminal.show();
 		terminal.sendText(args.join(' '));

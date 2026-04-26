@@ -1,5 +1,109 @@
 # 更新履歴
 
+## v0.4.7 (2026-04-25)
+
+### CSM × Claude Code 統合強化（Phase 1 + Phase 2）
+
+#### Phase 1-1: PreCompact Summary hook — コンパクション前文脈保持
+
+- **新規テンプレート** `csm-precompact-summary.js` をデプロイし、PreCompact hook として全セッションに登録
+- コンパクション直前に JSONL トランスクリプト末尾を走査し、CSM_SUMMARY マーカー付きサマリーを生成
+- 保存先: `~/.claude/projects/<encoded_cwd>/csm-compact-summary.md`（SessionStart 時に文脈として読み込み可能）
+- bash/python 不要の Node.js 実装（Windows 素環境対応）
+
+#### Phase 1-2: csm-check-ask-agent.js — bash+python → Node.js 移行
+
+- **旧** `check-csm-ask-agent.sh`（bash + python3 依存）を廃止
+- **新** `csm-check-ask-agent.js`（Node.js）を自動デプロイ
+- `registerCsmAskAgentHook`: 旧 bash エントリを自動検出して node エントリに差し替え
+- `installCsmAskAgent` コマンド: `.sh` を `.trash/` に退避してから `.js` をデプロイ
+
+#### Phase 2-1: 名前ベース `--resume <name>` サポート（Claude Code v2.1.101+）
+
+- `AgentConfig` に `useNameResume?: boolean` フィールドを追加
+- `cliBuilder.buildCommand`: `sessionId` 未設定かつ `useNameResume: true` の場合に `--resume <name>` を付与
+- `agentCommands.openAgentSession`: `buildResumeArgs()` ヘルパーを導入。sessionId → 名前ベース → 新規の優先順でフォールバック
+- `csm-ask-agent.command.md` Step 3 を3ケース方式（sessionId指定 / 名前ベース / 新規確認）に更新
+
+#### Phase 2-2: `/recap` 結果自動キャプチャ → HISTORY.md 追記
+
+- **新規テンプレート** `csm-recap-capture.js` をデプロイし、Stop hook として登録
+- セッション終了時に JSONL を走査し `/recap` 呼び出しと直後のアシスタント応答を検出
+- `historyEnabled: true` かつ HISTORY.md が存在するエージェントセッションのみ追記
+- 重複追記防止: コンテンツ先頭50文字でフィンガープリントチェック
+- `/recap <引数>` の引数があればサブタイトルとして付記
+- 出力先は `csm-session-stop.js` と同じ HISTORY.md（書き込み条件・スコープ解決も同一ロジック）
+- `csm-compact-summary.md` とは対象が異なる（重複なし）
+
+---
+
+## v0.4.6 (2026-04-25)
+
+### 緊急パッチ（C-1 〜 C-4 + H-1, H-4）
+
+QAレビューで指摘された Critical / High 計6件を修正。
+
+- **C-1 修正** — `writeOrgInfoToMemory` に cwd 照合を追加。`encodeCwdToProjectDir()` で現在の workspace cwd をエンコードし、`projectsDir` 内のフォルダと照合してから書き込む。**別プロジェクトの MEMORY.md 汚染を防止**
+- **C-2 修正** — `csm-precompact.sh` → `csm-precompact.js` に移行。bash / python 不要の Node.js 実装を新規作成。`ensurePreCompactHook` が旧 `.sh` を `.trash/` に退避し `.js` をデプロイ。既存の bash コマンドエントリを node コマンドに自動アップグレード。**Windows 素環境での silent fail を解消**
+- **C-3 修正** — `dataStore` の並行書き込み排他を追加。モジュールレベルの writeQueue（Promise チェーン）で `saveData` / `saveLocalData` を全て直列化。**load→mutate→save 間の競合によるデータ消失を防止**
+- **C-4 修正** — `getJsonlPath` のエンコードを Claude Code 実装と対称化。`toLowerCase()` でドライブレター小文字化、`/[\s/]/g` で空白も `-` に変換（例: `C:\My Project` → `c--my-project`）。**大文字小文字混在パス・スペース含むパスでのセッション解決失敗を修正**
+- **H-1 修正** — dead menu エントリ削除。`package.json` から `editRuleFile/WithRule` の menu 定義を削除（`agentItem` に `WithRule` suffix を付ける実装は存在しないため永久に非表示だった）
+- **H-4 修正** — `extensionOutputChannelEarly` のリーク修正。`extension.ts` で `createOutputChannel` 直後に `context.subscriptions.push`。**Extension Host 共有プロセスで拡張無効化後もチャンネルが残るリークを解消**
+
+---
+
+## v0.4.5 (2026-04-20)
+
+### `/csm-ask-agent` スキル指示の刷新（HIGH バグ修正）
+
+- **意図しない新規セッション作成の防止** — 旧指示は「出力が空なら `--resume` を外して再試行」という無条件フォールバックを持っており、workDir のcd抜けによる `No conversation found` エラーで**毎回新規セッションが作られる**問題があった
+- **エラーパターンで分岐** — `No conversation found` / 0バイト空出力 / 正常出力 を判定し、workDir 再cd でリトライ。それでも失敗ならユーザーに承認確認
+- **`--resume` を勝手に外す運用を明確禁止** — CSMの紐づけと実セッションが分離する原因のため
+- 同期先: `~/.claude/commands/` / `<workspace>/.claude/commands/` / `templates/csm-ask-agent.command.md`
+
+詳細: `docs/feedback/2026-04-20-csm-ask-agent-skill-outdated.md`
+
+---
+
+## v0.4.4 (2026-04-18)
+
+### Claude Code v2.1.113 対応
+
+- **ネイティブバイナリ対応** — `cli.js` から `claude.exe` への変更に追従。`resolveClaudeExec` が `bin/claude.exe` / `claude.exe` / `cmdDir/claude.exe` の3候補を順に探索（npm/yarn/pnpm レイアウトに対応、cli.jsフォールバック維持）
+- **サブエージェント10分タイムアウト反映** — `taskErrorThreshold` 設定追加。stalled のまま既定30分経過で `error` 扱いに昇格（対話セッションの誤検知回避のため既定値は30分）
+
+### UX改善
+
+- **「Claudeで開く（IDE）」の整合性チェック** — セッション作成時の cwd と現在のVS Codeワークスペースを正規化比較（大文字小文字・区切り文字を吸収）。不一致なら「そのフォルダを開く / ワークスペースに追加 / このまま開く」を提案
+- **新規エージェント登録後に紐づけ画面へ誘導** — 自動セッション作成を廃止し、既存セッション紐づけ or 新規作成を選べるピッカーを開く
+- **TODO/HISTORY ON時の空メッセージ修正** — トグルONかつファイル未生成時に「OFFの状態です」と誤表示していたのを「ON状態です。まだ空です」に修正
+
+### Stop hook 追加
+
+- **セッション終了時のHISTORY.md追記** — PreCompactに加えてStop hookでも自動記録。テンプレート `csm-session-stop.js` を拡張起動時に自動デプロイ、settings.jsonに登録
+- **動作条件**: エージェントの `historyEnabled: true` かつ HISTORY.md 存在時のみ（無関係セッションには無害）
+
+### エラー自動収集（A案）
+
+- **ローカルログ蓄積** — `~/.claude/csm-errors.log`（512KBローテート）に `unhandledRejection` / `uncaughtException` を自動記録
+- **コマンド追加**
+  - `Claude Session Manager: 不具合を報告（GitHub Issue作成）` — ログ埋め込み済みのIssue URLをブラウザで開く
+  - `Claude Session Manager: エラーログを開く`
+- 自動送信なし。ユーザーがIssue内容を確認してから送信
+
+---
+
+## v0.4.3 (2026-04-18)
+
+### v0.4.2 レビュー指摘修正（hotfix）
+
+- **H-1 修正** — `csm-ask-agent.py` の `workDir` 逆引きロジックを置換。プロジェクトディレクトリ名のデコード（`-`→`/`）は仕様変更に壊れやすいため、セッションJSONL先頭の `cwd` フィールドを読み取る方式に変更（スペース含むパスも正しく復元）
+- **H-2 修正** — `createRenewSession` に `resolved` ガードを追加。タイムアウト後のプロセス正常終了による二重resolveレースを解消（`createSessionForAgent` と同じパターン）
+- **CRITICAL 修正** — 空 sessionId または実ファイルが存在しない sessionId を起動時に自動クリーンアップするマイグレーションを追加。タイムアウトバグで保存された壊れた紐づけを v0.4.3 初回起動時に修復
+- **UX改善: 新規エージェント登録後に紐づけ画面へ誘導** — 自動セッション作成をやめ、既存セッション紐づけ or 新規作成を選べるピッカーを開く
+
+---
+
 ## v0.4.2 (2026-04-17)
 
 ### エージェント管理の全面刷新
@@ -36,6 +140,16 @@
 - **v0.3.x → v0.4.x 自動マイグレーション** — 初回起動時にバックスラッシュ増殖バグを自動修正。バージョン追跡で重複実行を防止
 - **Opus 4.7 / xhigh effort 対応** — モデル不一致検知をバージョン番号非依存に改善。`xhigh` effort レベルを追加
 - **PreCompact hook** — コンパクション前にセッション要約を HISTORY.md に自動記録
+
+### セッション作成・紐づけ修正
+
+- **Windows `.cmd` EINVAL エラー回避** — Node.js CVE-2024-27980 対応。`claude.cmd` ラッパーを経由せず `cli.js` を `node` で直接起動（`createSessionForAgent` / `createRenewSession` / 要約生成の3箇所）
+- **セッション作成の早期 resolve** — `session_id` 取得時点で即完了扱い。プロセス完了待ちのタイムアウト（60秒）で空 sessionId が保存される問題を解消
+- **他プロジェクトのセッションタイトル解決** — 他ワークスペースに紐づいたグローバルエージェントで sessionId 断片ではなくタイトルが表示されるよう、`~/.claude/projects/*/` を横断検索（軽量版、60秒キャッシュ）
+
+### `/csm-ask-agent` cwd 対応
+
+- **エージェントの `workDir` で cwd を切り替え** — `claude --resume` は作成時と同じ cwd が必要なため、`cd {workDir}` を必須化。`csm-ask-agent.py` の出力形式を `{sid}|{perm}|{workDir}` に拡張し、`workDir` 未設定時は `~/.claude/projects/` から逆引き
 
 ---
 

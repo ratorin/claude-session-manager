@@ -16,7 +16,7 @@ import { registerMigrationCommands } from './commands/migrationCommands';
 import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
 import { getConfig } from './utils/config';
-import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook } from './services/hookService';
+import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook, ensureRecapCaptureHook } from './services/hookService';
 import { runV04Migration } from './services/migrationService';
 import { initErrorReporter, logError } from './utils/errorReporter';
 
@@ -61,6 +61,10 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 	// Stop hook の自動デプロイ（セッション終了時のHISTORY.md追記）
 	ensureSessionStopHook(context.extensionPath, extensionOutputChannelEarly).catch(() => {
+		// hook登録失敗は致命的ではない
+	});
+	// Recap Capture hook の自動デプロイ（/recap 結果を HISTORY.md へ自動追記）
+	ensureRecapCaptureHook(context.extensionPath, extensionOutputChannelEarly).catch(() => {
 		// hook登録失敗は致命的ではない
 	});
 	// Governance Capture hookの自動デプロイ（JSONL記録）
