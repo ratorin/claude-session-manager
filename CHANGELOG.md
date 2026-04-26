@@ -2,6 +2,35 @@
 
 ## v0.5.0 (2026-04-27)
 
+### v0.5.0 自動紐づけ修正 — claude --agent 起動時の sessionId 自動リンク
+
+`claude --agent <name> -p` で子エージェントを起動した際、新規 sessionId が作成されるにもかかわらず  
+`session-manager.json` の `agentSessions[<name>].sessionId` が空のままになるバグを修正。
+
+#### TA1+TA2: dataStore.ts — `setAgentSession` 追加
+
+- `setAgentSession(name, sessionId, mode?)` を新規 export
+  - `agentSessions[name].sessionId` が空または `"unlinked"` の場合のみ更新（ユーザー操作を尊重）
+  - writeQueue で直列化して並列書き込み競合を回避
+
+#### TA2: agentWatcher.ts — リアルタイム自動紐づけ
+
+- `processedAutoLinkSids: Set<string>` フィールドを追加（二重処理防止）
+- `readFirstLine(filePath)`: JSONL 先頭 1 KB のみ読み取るユーティリティ
+- `tryAutoLinkSession(sessionId, cwd)`: 新規ライブセッション検知時に JSONL 先頭行を解析し、  
+  `agent-setting` エントリかつ agents/*.md が存在する場合のみ自動紐づけ
+- `update()` 内: `newSessionCwdMap` 確定後に未処理セッションへ `tryAutoLinkSession` を並列実行
+
+#### TA3: agentWatcher.ts + extension.ts — 起動時一括スキャン
+
+- `scanProjectsForAutoLink()`: `~/.claude/projects/**/*.jsonl` を全走査
+  - 未紐づけエージェントのみ対象（高速化）
+  - 各エージェントの最新 JSONL（mtime 降順）を採用
+  - agents/*.md 存在確認 → `setAgentSession` 呼び出し
+- `extension.ts`: `agentWatcher.start()` 直後に `scanProjectsForAutoLink()` を非同期呼び出し
+
+---
+
 ### v0.5.0 ハイブリッドタブパッチ — タブバー WebView + ネイティブ TreeView
 
 タブバー (小さな WebView 40px) と OS ネイティブ TreeView を組み合わせたハイブリッド構成に変更。

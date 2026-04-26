@@ -8,6 +8,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { AgentWatcherState } from '../models/types';
 import * as dataStore from '../models/dataStore';
+import * as agentFileManager from '../agents/agentFileManager';
 import { detectSubagents } from '../utils/subagentDetector';
 
 // 検知モードの型定義（Phase 4: fswatch のみ残す）
@@ -48,6 +49,9 @@ export class AgentWatcher implements vscode.Disposable {
 
 	// 検知モード
 	private detectionMode: DetectionMode = 'fswatch';
+
+	// 自動紐づけ済みセッションID（二重処理防止）
+	private processedAutoLinkSids = new Set<string>();
 
 	// レイテンシ計測（直近5回の計測値をリングバッファで保持）
 	private latencyBuffer: number[] = [];
@@ -308,6 +312,21 @@ export class AgentWatcher implements vscode.Disposable {
 		this.liveSessionIds = newLiveSessionIds;
 		this.sessionMtimes = newSessionMtimes;
 		this.sessionCwdMap = newSessionCwdMap;
+
+		// 新規ライブセッションの agent-setting 自動紐づけ（未処理分のみ）
+		{
+			const autoLinkTargets: { sid: string; cwd: string }[] = [];
+			for (const [sid, cwd] of newSessionCwdMap) {
+				if (!this.processedAutoLinkSids.has(sid)) {
+					autoLinkTargets.push({ sid, cwd });
+				}
+			}
+			if (autoLinkTargets.length > 0) {
+				await Promise.allSettled(
+					autoLinkTargets.map(({ sid, cwd }) => this.tryAutoLinkSession(sid, cwd))
+				);
+			}
+		}
 
 		// シグナルベースの状態を反映（start シグナルがあればライブに追加）
 		this.applySignalState();
@@ -572,6 +591,145 @@ export class AgentWatcher implements vscode.Disposable {
 			}
 		}
 		return map;
+	}
+
+	// --- 自動紐づけ (agent-setting JSONL 先頭行解析) ---
+
+	/** JSONL ファイルの先頭行を効率よく読み取る（最大 1 KB） */
+	private async readFirstLine(filePath: string): Promise<string | undefined> {
+		try {
+			const handle = await fs.promises.open(filePath, 'r');
+			try {
+				const buf = Buffer.alloc(1024);
+				const { bytesRead } = await handle.read(buf, 0, 1024, 0);
+				const text = buf.slice(0, bytesRead).toString('utf-8');
+				const newlineIdx = text.indexOf('\n');
+				return newlineIdx >= 0 ? text.slice(0, newlineIdx).trim() : text.trim();
+			} finally {
+				await handle.close();
+			}
+		} catch { return undefined; }
+	}
+
+	/**
+	 * 単一セッションの JSONL を確認して agent-setting があれば自動紐づけを試みる。
+	 * processedAutoLinkSids に追加して二重処理を防ぐ。
+	 */
+	private async tryAutoLinkSession(sessionId: string, cwd: string): Promise<void> {
+		// 先に処理済みとしてマーク（並列呼び出し時の二重処理を防ぐ）
+		this.processedAutoLinkSids.add(sessionId);
+
+		const jsonlPath = this.getJsonlPath(sessionId, cwd);
+		if (!jsonlPath) { return; }
+
+		try {
+			const firstLine = await this.readFirstLine(jsonlPath);
+			if (!firstLine) { return; }
+
+			let parsed: Record<string, unknown>;
+			try { parsed = JSON.parse(firstLine); } catch { return; }
+
+			if (parsed['type'] !== 'agent-setting') { return; }
+
+			const agentName = typeof parsed['agentSetting'] === 'string' ? parsed['agentSetting'] : undefined;
+			const sid = typeof parsed['sessionId'] === 'string' ? parsed['sessionId'] : undefined;
+			if (!agentName || !sid) { return; }
+
+			// agents/*.md ファイルの存在を確認（定義のないエージェントへの誤紐づけを防ぐ）
+			const agentDef = await agentFileManager.getAgentByName(agentName);
+			if (!agentDef) { return; } // .md なし → スキップ
+
+			// 自動紐づけ実行（既にリンク済みなら内部でスキップ）
+			const linked = await dataStore.setAgentSession(agentName, sid);
+			if (linked) {
+				this._onDidChange.fire();
+			}
+		} catch { /* ファイル読み取り失敗はサイレントに無視 */ }
+	}
+
+	/**
+	 * 起動時スキャン: ~/.claude/projects/ 配下の全 JSONL を走査し、
+	 * sessionId が未設定のエージェントを一括自動紐づけする。
+	 * 最新の JSONL（mtime 降順）を優先して採用する。
+	 */
+	public async scanProjectsForAutoLink(): Promise<void> {
+		const projectsDir = path.join(os.homedir(), '.claude', 'projects');
+
+		// 未紐づけエージェントのみ対象（高速化）
+		const agents = await dataStore.getAgents();
+		const unlinkedNames = new Set(
+			agents
+				.filter(a => !a.sessionId || a.sessionId === '' || a.sessionId === 'unlinked')
+				.map(a => a.name)
+		);
+		if (unlinkedNames.size === 0) { return; }
+
+		// agentName → [{sessionId, mtime}] の候補マップ
+		const candidates = new Map<string, { sessionId: string; mtime: number }[]>();
+
+		try {
+			const projectDirs = await fs.promises.readdir(projectsDir);
+			await Promise.allSettled(projectDirs.map(async (dir) => {
+				const dirPath = path.join(projectsDir, dir);
+				try {
+					const files = await fs.promises.readdir(dirPath);
+					await Promise.allSettled(
+						files
+							.filter(f => f.endsWith('.jsonl'))
+							.map(async (file) => {
+								const sid = file.slice(0, -6); // ".jsonl" を除去
+								if (this.processedAutoLinkSids.has(sid)) { return; }
+
+								const filePath = path.join(dirPath, file);
+								try {
+									const [firstLine, stat] = await Promise.all([
+										this.readFirstLine(filePath),
+										fs.promises.stat(filePath),
+									]);
+									if (!firstLine) { return; }
+
+									let parsed: Record<string, unknown>;
+									try { parsed = JSON.parse(firstLine); } catch { return; }
+
+									if (parsed['type'] !== 'agent-setting') { return; }
+
+									const agentName = typeof parsed['agentSetting'] === 'string' ? parsed['agentSetting'] : undefined;
+									if (!agentName || !unlinkedNames.has(agentName)) { return; }
+
+									if (!candidates.has(agentName)) { candidates.set(agentName, []); }
+									candidates.get(agentName)!.push({ sessionId: sid, mtime: stat.mtimeMs });
+								} catch { /* skip */ }
+							})
+					);
+				} catch { /* プロジェクトディレクトリ読み取り失敗は無視 */ }
+			}));
+		} catch { return; /* projects ディレクトリが存在しない等 */ }
+
+		if (candidates.size === 0) { return; }
+
+		// 各エージェントについて最新セッション（mtime 降順）を採用して紐づけ
+		let anyLinked = false;
+		await Promise.allSettled(
+			[...candidates.entries()].map(async ([agentName, entries]) => {
+				// mtime 降順でソート → 最新を採用
+				entries.sort((a, b) => b.mtime - a.mtime);
+				const best = entries[0];
+
+				// agents/*.md 存在確認
+				const agentDef = await agentFileManager.getAgentByName(agentName);
+				if (!agentDef) { return; }
+
+				const linked = await dataStore.setAgentSession(agentName, best.sessionId);
+				if (linked) {
+					this.processedAutoLinkSids.add(best.sessionId);
+					anyLinked = true;
+				}
+			})
+		);
+
+		if (anyLinked) {
+			this._onDidChange.fire();
+		}
 	}
 
 	// リソース解放

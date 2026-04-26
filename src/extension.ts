@@ -207,6 +207,11 @@ export function activate(context: vscode.ExtensionContext) {
 	// AgentWatcher を起動
 	agentWatcher.start();
 
+	// 起動時スキャン: 過去の JSONL から未紐づけエージェントを一括自動紐づけ
+	agentWatcher.scanProjectsForAutoLink().catch(() => {
+		// スキャン失敗は致命的ではない
+	});
+
 	// --- 利用率モニター ---
 	const usageMonitor = new UsageMonitor();
 	context.subscriptions.push(usageMonitor);

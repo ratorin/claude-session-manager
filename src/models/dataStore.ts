@@ -532,3 +532,30 @@ export async function migrateAgentsToAgentSessions(): Promise<boolean> {
 	await saveData(data);
 	return migrated > 0;
 }
+
+/**
+ * エージェントのセッションIDを自動紐づけ（未紐づけの場合のみ）
+ * 既に sessionId が設定されている場合は何もしない（ユーザー操作を尊重）
+ *
+ * @returns true = 紐づけ成功、false = スキップ（既にリンク済み or バインディング新規作成不要）
+ */
+export async function setAgentSession(
+	name: string,
+	sessionId: string,
+	mode?: 'fixed' | 'disposable'
+): Promise<boolean> {
+	const bindings = await getAgentSessionBindings();
+	const existing = bindings[name];
+
+	// ガード: sessionId が既に設定されている場合はスキップ（ユーザー操作を尊重）
+	if (existing && existing.sessionId && existing.sessionId !== '' && existing.sessionId !== 'unlinked') {
+		return false;
+	}
+
+	await saveAgentSessionBinding(name, {
+		sessionId,
+		previousSessionIds: existing?.previousSessionIds,
+		sessionMode: mode ?? existing?.sessionMode,
+	});
+	return true;
+}
