@@ -2,6 +2,62 @@
 
 ## v0.5.0 (2026-04-26)
 
+### v0.5.0 Sprint 2 — プロジェクトタブ + エージェント強化 + 組織図
+
+#### T2.1〜T2.9: プロジェクトタブ完全実装
+
+- **T2.1/T2.2**: プロジェクトカードグリッド（name / パス短縮 / ソース / isCurrent バッジ）、クリックで詳細ペイン展開
+- **T2.3**: 詳細ペイン概要セクション（パス / ソース / 登録日）
+- **T2.4**: エージェント割当/解除 UI — `~/.claude/csm-project-agents.json` に永続化
+- **T2.5**: メモリ管理統合 — タイプ別バッジ付き一覧（project / user / feedback / reference）
+- **T2.6**: `progressCalculator.ts` — TODO/HISTORY/確認待ちをエージェントディレクトリから横断スキャン（5秒TTLキャッシュ）
+- **T2.7**: 進捗ダッシュボード — TODO残/完了プログレスバー + 直近HISTORY 5件
+- **T2.8**: クイックアクション — "VS Codeで開く" / "ターミナルで開く"
+- **T2.9**: + 新規プロジェクト追加（フォルダ選択ダイアログ → `registerProject()`）
+
+#### T2.10+T2.11: bookmarkService.ts — エージェントブックマーク + 最終使用日
+
+- `addBookmark()` / `removeBookmark()` / `toggleBookmark()` / `getBookmarks()`
+- `recordLastUsed()` / `getLastUsed()` / `getRecentlyUsed(n)` / `relativeTime(ms)`
+- 永続化先: `~/.claude/csm-agent-meta.json`
+
+#### T2.12〜T2.15: エージェントタブ強化
+
+- **T2.12**: ★ ブックマークセクション — 行ごとの ★ ボタンでトグル
+- **T2.13**: 最終使用日順 Top 5 — `relativeTime()` で相対表記
+- **T2.14**: 詳細フィルタ — モデル / スコープ / 親エージェント チップ式AND条件
+- **T2.15**: グローバル / プロジェクト分離 — 🌐バッジ / proj バッジ
+
+#### T2.16: showOtherProjects 設定 + 永続化
+
+- `claudeManager.agents.showOtherProjects` (default: true) 設定キー追加
+- トグルコマンドが設定を `ConfigurationTarget.Global` に永続保存
+- `claudeManager.agents.defaultExpand` 設定キー追加（bookmarks / recent / global / project）
+
+#### T2.17: Cytoscape.js + ELK 導入
+
+- `cytoscape.min.js`, `cytoscape-elk.js`, `elk.bundled.js` を `resources/` に配置
+- webview CSP 準拠で `webview.asWebviewUri` 経由で提供
+
+#### T2.18〜T2.20: 組織図 Cytoscape 化
+
+- **T2.18**: `orgChartPanel.ts` を Mermaid から Cytoscape.js + ELK へ全面刷新
+- **T2.19**: モード切替 — ツリー (ELK layered) / 関係 (cose force-directed) / グループ (ELK box)
+- **T2.20**: フィルタ (モデル/親) + PNG/SVG エクスポート
+
+#### T2.21: プロジェクト詳細にミニ組織図埋め込み
+
+- `buildMiniOrgChartData()` で割当エージェントのみ抽出
+- 詳細ペインにコンパクトな Cytoscape ミニ組織図を表示
+
+#### T2.22〜T2.24: 使用率バー Sonnet/Opus 5d 列追加
+
+- **T2.22**: `usageMonitor.ts` — 複数候補ヘッダから Sonnet/Opus 5d 使用率を解析
+- **T2.23**: StatusBar 新フォーマット: `5% 4.5h / S 3% 5d20h / O 20% 5d10h`
+- **T2.24**: `claudeManager.usage.show5dColumns` 設定追加 (default: true)
+
+---
+
 ### v0.5.0 Sprint 1 — 基盤 + 3タブ骨格
 
 #### T1.1: pathUtils.ts — クロスプラットフォームパスユーティリティ
