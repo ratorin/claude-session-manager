@@ -16,10 +16,11 @@ import * as vscode from 'vscode';
 
 type TabId = 'sessions' | 'agents' | 'memory' | 'projects';
 
-interface TabBarMessage {
-	type: 'tabChanged';
-	tab: TabId;
-}
+type ActionId = 'refresh' | 'new-agent' | 'org-chart' | 'settings';
+
+type TabBarMessage =
+	| { type: 'tabChanged'; tab: TabId }
+	| { type: 'actionClicked'; action: ActionId };
 
 // -------------------------------------------------------------------
 // TabBarPanel — WebviewViewProvider 実装
@@ -52,7 +53,7 @@ export class TabBarPanel implements vscode.WebviewViewProvider {
 
 		webviewView.webview.html = this._getHtml(this._activeTab);
 
-		// タブ切り替えメッセージ受信
+		// タブ切り替え・アクションメッセージ受信
 		webviewView.webview.onDidReceiveMessage((message: TabBarMessage) => {
 			if (message.type === 'tabChanged') {
 				const tab = message.tab;
@@ -65,6 +66,8 @@ export class TabBarPanel implements vscode.WebviewViewProvider {
 						.update('ui.lastActiveTab', tab, vscode.ConfigurationTarget.Global)
 						.then(undefined, () => {/* ignore */});
 				}
+			} else if (message.type === 'actionClicked') {
+				this._handleAction(message.action);
 			}
 		});
 
@@ -98,6 +101,27 @@ export class TabBarPanel implements vscode.WebviewViewProvider {
 	}
 
 	// ----------------------------------------------------------------
+	// クイックアクション処理
+	// ----------------------------------------------------------------
+
+	private _handleAction(action: ActionId): void {
+		switch (action) {
+			case 'refresh':
+				void vscode.commands.executeCommand('claudeManager.refreshSessions');
+				break;
+			case 'new-agent':
+				void vscode.commands.executeCommand('claudeManager.addAgent');
+				break;
+			case 'org-chart':
+				void vscode.commands.executeCommand('claudeManager.openOrgChart');
+				break;
+			case 'settings':
+				void vscode.commands.executeCommand('claudeManager.openSettings');
+				break;
+		}
+	}
+
+	// ----------------------------------------------------------------
 	// HTML 生成 — VS Code テーマカラー連動
 	// ----------------------------------------------------------------
 
@@ -119,6 +143,17 @@ export class TabBarPanel implements vscode.WebviewViewProvider {
 			>${icon} <span class="tab-label">${label}</span></button>`;
 		}).join('');
 
+		const actions: { id: ActionId; icon: string; label: string }[] = [
+			{ id: 'refresh',   icon: '🔄', label: '更新'         },
+			{ id: 'new-agent', icon: '➕', label: '新規エージェント' },
+			{ id: 'org-chart', icon: '🌐', label: '組織図'        },
+			{ id: 'settings',  icon: '⚙️', label: '設定'         },
+		];
+
+		const actionButtons = actions.map(({ id, icon, label }) =>
+			`<button class="action-btn" data-action="${id}" title="${label}">${icon} <span class="action-label">${label}</span></button>`
+		).join('');
+
 		return /* html */`<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -132,15 +167,17 @@ export class TabBarPanel implements vscode.WebviewViewProvider {
     color: var(--vscode-foreground, #cccccc);
     font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
     font-size: var(--vscode-font-size, 12px);
-    height: 36px;
+    height: 72px;
     display: flex;
-    align-items: stretch;
+    flex-direction: column;
     overflow: hidden;
     user-select: none;
   }
+  /* ---- タブバー ---- */
   .tab-bar {
     display: flex;
-    width: 100%;
+    height: 36px;
+    flex-shrink: 0;
     border-bottom: 1px solid var(--vscode-panel-border, #2d2d2d);
   }
   .tab-btn {
@@ -175,9 +212,49 @@ export class TabBarPanel implements vscode.WebviewViewProvider {
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* ---- クイックアクション行 ---- */
+  .action-bar {
+    display: flex;
+    height: 36px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--vscode-panel-border, #2d2d2d);
+    background: var(--vscode-sideBarSectionHeader-background, rgba(0,0,0,0.1));
+  }
+  .action-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--vscode-panel-border, #2d2d2d);
+    color: var(--vscode-descriptionForeground, #858585);
+    cursor: pointer;
+    padding: 0 4px;
+    font-size: 10px;
+    font-family: inherit;
+    white-space: nowrap;
+    transition: color 0.1s, background 0.1s;
+    outline: none;
+    min-width: 0;
+  }
+  .action-btn:last-child { border-right: none; }
+  .action-btn:hover {
+    color: var(--vscode-foreground, #cccccc);
+    background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.07));
+  }
+  .action-btn:active {
+    background: var(--vscode-toolbar-activeBackground, rgba(255,255,255,0.12));
+  }
+  .action-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   /* 幅が狭い場合はラベルを非表示 */
   @media (max-width: 200px) {
     .tab-label { display: none; }
+    .action-label { display: none; }
   }
 </style>
 </head>
@@ -185,18 +262,28 @@ export class TabBarPanel implements vscode.WebviewViewProvider {
 <nav class="tab-bar" role="tablist" aria-label="CSM タブ">
 ${tabButtons}
 </nav>
+<div class="action-bar" role="toolbar" aria-label="クイックアクション">
+${actionButtons}
+</div>
 <script>
   const vscode = acquireVsCodeApi();
+
+  // タブ切り替え
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const tab = btn.dataset.tab;
-      // UI 更新
       document.querySelectorAll('.tab-btn').forEach(b => {
         b.classList.toggle('active', b.dataset.tab === tab);
         b.setAttribute('aria-pressed', String(b.dataset.tab === tab));
       });
-      // VS Code 側に通知
       vscode.postMessage({ type: 'tabChanged', tab });
+    });
+  });
+
+  // クイックアクション
+  document.querySelectorAll('.action-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      vscode.postMessage({ type: 'actionClicked', action: btn.dataset.action });
     });
   });
 </script>

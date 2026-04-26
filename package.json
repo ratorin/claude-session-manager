@@ -38,7 +38,7 @@
 					"type": "webview",
 					"id": "claudeTabBar",
 					"name": "",
-					"initialSize": 1,
+					"initialSize": 2,
 					"when": "config.claudeManager.useNewMainPanel != false"
 				},
 				{

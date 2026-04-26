@@ -2,6 +2,23 @@
 
 ## v0.5.0 (2026-04-27)
 
+### タブバー下クイックアクション行 + プロジェクトツリーをデフォルト化
+
+#### タブバー下空白をクイックアクション行で活用
+- タブバー (`claudeTabBar`) の下に 4 つのクイックアクションボタンを追加
+  - 🔄 **更新** — セッション一覧を即時更新 (`claudeManager.refreshSessions`)
+  - ➕ **新規エージェント** — エージェント作成ダイアログを開く (`claudeManager.addAgent`)
+  - 🌐 **組織図** — 組織図パネルを表示 (`claudeManager.openOrgChart`)
+  - ⚙️ **設定** — 拡張設定を開く (`claudeManager.openSettings`)
+- タブバー Webview の高さを 36px → 72px に拡張（タブ行 + アクション行）
+- `package.json` の `initialSize` を 1 → 2 に更新
+
+#### プロジェクトタブのデフォルト表示をツリーに変更
+- 初回起動時 (`localStorage` 未設定) のデフォルトモードを `'card'` → `'tree'` に変更
+- カードモードはトグルボタンで引き続き利用可能
+
+---
+
 ### 利用率 StatusBar — クリックで QuickPick メニュー表示
 
 StatusBar の利用率表示をクリックしたとき、再取得のみ行っていた動作を改善。

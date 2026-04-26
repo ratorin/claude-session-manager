@@ -2089,7 +2089,7 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 
 		// ---- TT1: モード切替 ----
 		const PROJECT_MODE_KEY = 'csm.projectTab.mode';
-		let _projectMode = localStorage.getItem(PROJECT_MODE_KEY) || 'card';
+		let _projectMode = localStorage.getItem(PROJECT_MODE_KEY) || 'tree';
 		let _projectTreeCache = null;
 
 		function applyProjectMode(mode) {
