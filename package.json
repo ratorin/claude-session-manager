@@ -805,6 +805,17 @@
 						"default": false,
 						"description": "新規エージェント作成時にTODO.md（タスク管理）を自動生成する"
 					},
+					"claudeManager.agents.showOtherProjects": {
+						"type": "boolean",
+						"default": true,
+						"description": "他プロジェクトのエージェントをエージェント一覧に表示する（灰色で表示）。OFFにすると現在のワークスペースのエージェントのみ表示"
+					},
+					"claudeManager.agents.defaultExpand": {
+						"type": "array",
+						"items": { "type": "string" },
+						"default": ["bookmarks", "recent"],
+						"description": "エージェントタブで起動時に展開するセクション（bookmarks / recent / global / project）"
+					},
 					"claudeManager.locale": {
 						"type": "string",
 						"default": "ja",

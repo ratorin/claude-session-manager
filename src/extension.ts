@@ -87,11 +87,14 @@ export function activate(context: vscode.ExtensionContext) {
 	const agentWatcher = new AgentWatcher();
 	context.subscriptions.push(agentWatcher);
 
+	// T2.16: claudeManager.agents.showOtherProjects 設定から初期状態を読み込む
+	const showOtherProjectsInit = vscode.workspace.getConfiguration('claudeManager').get<boolean>('agents.showOtherProjects', true);
 	const agentProvider = new AgentTreeProvider(
 		() => sessionProvider.getSessions(),
 		(id) => agentWatcher.isLive(id),
 		() => agentWatcher.getActiveAgentNames()
 	);
+	agentProvider.setHideOtherProjects(!showOtherProjectsInit);
 
 	// TreeDataProviderのEventEmitter解放を追跡
 	context.subscriptions.push(sessionProvider, bookmarkProvider, tagProvider, memoryProvider, agentProvider);
@@ -339,12 +342,15 @@ export function activate(context: vscode.ExtensionContext) {
 		sessionProvider, bookmarkProvider, memoryProvider, refreshAll,
 	});
 
-	// エージェントフィルター: 他プロジェクトのエージェントを非表示/表示切り替え
+	// エージェントフィルター: 他プロジェクトのエージェントを非表示/表示切り替え (T2.16: 設定に永続化)
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.toggleAgentFilter', () => {
-			const current = agentProvider.getHideOtherProjects();
-			agentProvider.setHideOtherProjects(!current);
-			vscode.window.showInformationMessage(`他プロジェクトのエージェント: ${!current ? '非表示' : '表示（灰色）'}`);
+			const currentHide = agentProvider.getHideOtherProjects();
+			const newHide = !currentHide;
+			agentProvider.setHideOtherProjects(newHide);
+			// 設定に永続化（グローバル）
+			vscode.workspace.getConfiguration('claudeManager').update('agents.showOtherProjects', !newHide, vscode.ConfigurationTarget.Global).then(undefined, () => { /* 無視 */ });
+			vscode.window.showInformationMessage(`他プロジェクトのエージェント: ${newHide ? '非表示' : '表示（灰色）'}`);
 		})
 	);
 
