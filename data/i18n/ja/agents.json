@@ -1,0 +1,142 @@
+{
+  "architect": {
+    "displayName": "アーキテクト",
+    "displayDescription": "システム設計、スケーラビリティ、技術的意思決定の専門家",
+    "displayRole": "複雑な建築的決定を行う"
+  },
+  "build-error-resolver": {
+    "displayName": "ビルドエラー解決官",
+    "displayDescription": "ビルドエラーとTypeScriptコンパイルエラーの解決専門家",
+    "displayRole": "ビルドエラーを修正する"
+  },
+  "chief-of-staff": {
+    "displayName": "スタッフチーフ",
+    "displayDescription": "メール、Slack、LINE、Messengerのコミュニケーション管理",
+    "displayRole": "マルチチャネル通信を三層に分類して管理する"
+  },
+  "code-reviewer": {
+    "displayName": "コード審査官",
+    "displayDescription": "コード品質、セキュリティ、保守性の専門家レビュー",
+    "displayRole": "コード品質を向上させる"
+  },
+  "database-reviewer": {
+    "displayName": "データベース審査官",
+    "displayDescription": "PostgreSQL クエリ最適化、スキーマ設計、セキュリティ、パフォーマンス専門家",
+    "displayRole": "データベースパフォーマンスを向上させる"
+  },
+  "doc-updater": {
+    "displayName": "ドキュメント更新官",
+    "displayDescription": "ドキュメント、コードマップの更新専門家",
+    "displayRole": "ドキュメントを最新に保つ"
+  },
+  "doc-writer": {
+    "displayName": "ドキュメント執筆官",
+    "displayDescription": "手順書、報告書、計画書などのドキュメント作成",
+    "displayRole": "包括的なドキュメントを作成する"
+  },
+  "e2e-runner": {
+    "displayName": "E2Eテスト実行官",
+    "displayDescription": "Playwright を使用したエンドツーエンドテスティング専門家",
+    "displayRole": "重要なユーザーフローをテストする"
+  },
+  "flutter-reviewer": {
+    "displayName": "Flutter審査官",
+    "displayDescription": "Flutter・Dartコード、ウィジェットベストプラクティス、パフォーマンス専門家",
+    "displayRole": "Flutterコード品質を向上させる"
+  },
+  "go-build-resolver": {
+    "displayName": "Go ビルド解決官",
+    "displayDescription": "Go ビルド、vet、コンパイルエラー解決専門家",
+    "displayRole": "Go ビルドエラーを修正する"
+  },
+  "go-reviewer": {
+    "displayName": "Go 審査官",
+    "displayDescription": "Go言語のイディオム、並行処理、エラーハンドリング、パフォーマンス専門家",
+    "displayRole": "Go コード品質を向上させる"
+  },
+  "healthcare-reviewer": {
+    "displayName": "医療コード審査官",
+    "displayDescription": "ヘルスケアアプリケーションの臨床安全性、CDSS精度、PHI準拠",
+    "displayRole": "医療データ整合性を保証する"
+  },
+  "java-build-resolver": {
+    "displayName": "Java ビルド解決官",
+    "displayDescription": "Java・Maven・Gradle ビルド、依存性エラー解決専門家",
+    "displayRole": "Java ビルドエラーを修正する"
+  },
+  "java-reviewer": {
+    "displayName": "Java 審査官",
+    "displayDescription": "Java・Spring Boot の レイヤード設計、JPA、セキュリティ、並行処理専門家",
+    "displayRole": "Java コード品質を向上させる"
+  },
+  "kotlin-build-resolver": {
+    "displayName": "Kotlin ビルド解決官",
+    "displayDescription": "Kotlin・Gradle ビルド、コンパイル、依存性エラー解決専門家",
+    "displayRole": "Kotlin ビルドエラーを修正する"
+  },
+  "kotlin-reviewer": {
+    "displayName": "Kotlin 審査官",
+    "displayDescription": "Kotlin・Android・KMP コード、イディオム、Compose、クリーンアーキテクチャ専門家",
+    "displayRole": "Kotlin コード品質を向上させる"
+  },
+  "loop-operator": {
+    "displayName": "ループ操作官",
+    "displayDescription": "自律エージェントループの監視と安全な介入",
+    "displayRole": "エージェントループを監視・管理する"
+  },
+  "performance-optimizer": {
+    "displayName": "パフォーマンス最適化官",
+    "displayDescription": "ボトルネック特定、コード最適化、バンドルサイズ削減、実行時パフォーマンス向上",
+    "displayRole": "パフォーマンスを向上させる"
+  },
+  "planner": {
+    "displayName": "プランナー",
+    "displayDescription": "複雑な機能・リファクタリングの実装計画専門家",
+    "displayRole": "実装計画を立案する"
+  },
+  "python-reviewer": {
+    "displayName": "Python 審査官",
+    "displayDescription": "PEP 8、Pythonic イディオム、型ヒント、セキュリティ、パフォーマンス専門家",
+    "displayRole": "Python コード品質を向上させる"
+  },
+  "pytorch-build-resolver": {
+    "displayName": "PyTorch ビルド解決官",
+    "displayDescription": "PyTorch ランタイム、CUDA、勾配、DataLoader エラー解決専門家",
+    "displayRole": "PyTorch エラーを修正する"
+  },
+  "refactor-cleaner": {
+    "displayName": "リファクタリング整理官",
+    "displayDescription": "デッドコード削除、重複排除、コード整理専門家",
+    "displayRole": "不要なコードを整理する"
+  },
+  "researcher": {
+    "displayName": "研究官",
+    "displayDescription": "Web 調査、情報収集、ドキュメント検索専門家",
+    "displayRole": "外部情報を調査・収集する"
+  },
+  "rust-build-resolver": {
+    "displayName": "Rust ビルド解決官",
+    "displayDescription": "Rust ビルド、cargo、コンパイルエラー解決専門家",
+    "displayRole": "Rust ビルドエラーを修正する"
+  },
+  "rust-reviewer": {
+    "displayName": "Rust 審査官",
+    "displayDescription": "Rust 所有権、ライフタイム、エラーハンドリング、アンセーフコード、イディオム専門家",
+    "displayRole": "Rust コード品質を向上させる"
+  },
+  "security-reviewer": {
+    "displayName": "セキュリティ審査官",
+    "displayDescription": "セキュリティ脆弱性検出、OWASP Top 10、修復専門家",
+    "displayRole": "セキュリティ脆弱性を検出・修復する"
+  },
+  "tdd-guide": {
+    "displayName": "TDD ガイド",
+    "displayDescription": "テスト駆動開発、80%+ テストカバレッジ達成専門家",
+    "displayRole": "テスト優先で実装を進める"
+  },
+  "typescript-reviewer": {
+    "displayName": "TypeScript 審査官",
+    "displayDescription": "TypeScript・JavaScript の型安全性、非同期正確性、セキュリティ専門家",
+    "displayRole": "TypeScript コード品質を向上させる"
+  }
+}

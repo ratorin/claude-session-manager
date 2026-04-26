@@ -33,6 +33,8 @@ export interface AgentDefinition {
 	isolation?: string;
 	/** CSM独自: HISTORY自動追記 */
 	historyEnabled?: boolean;
+	/** CSM独自: HISTORY.md 保存先スコープ上書き（未指定=.md実在スコープ） */
+	historyScope?: 'global' | 'project';
 	/** CSM独自: TODO管理 */
 	todoEnabled?: boolean;
 	/** CSM独自: 親エージェント名 */
@@ -75,11 +77,16 @@ function getProjectAgentsDir(): string | undefined {
 
 // H-1: parseFrontmatterExtended は frontmatterUtils.ts に統合済み
 
-// M-4: global-agents-i18n.json のモジュールスコープキャッシュ（起動時1回だけ読み込み）
+// M-4: agents i18n 辞書のモジュールスコープキャッシュ（起動時1回だけ読み込み）
+// v0.5.0 T1.2: data/i18n/ja/agents.json へ移行（旧 data/global-agents-i18n.json との後方互換あり）
 let _i18nCache: Record<string, { displayName?: string; displayDescription?: string; displayRole?: string }> | null = null;
 function getI18nData(): Record<string, { displayName?: string; displayDescription?: string; displayRole?: string }> {
 	if (_i18nCache !== null) { return _i18nCache; }
-	const i18nPath = path.join(path.dirname(__dirname), 'data', 'global-agents-i18n.json');
+	const dataDir = path.join(path.dirname(__dirname), 'data');
+	// 新パスを優先し、なければ旧パスにフォールバック（マイグレーション前の互換性）
+	const newPath = path.join(dataDir, 'i18n', 'ja', 'agents.json');
+	const oldPath = path.join(dataDir, 'global-agents-i18n.json');
+	const i18nPath = fs.existsSync(newPath) ? newPath : oldPath;
 	try {
 		_i18nCache = JSON.parse(fs.readFileSync(i18nPath, 'utf-8'));
 	} catch {
@@ -113,6 +120,7 @@ async function parseAgentFile(filePath: string, scope: 'global' | 'project'): Pr
 			permissionMode: d.permissionMode ? String(d.permissionMode) : undefined,
 			isolation: d.isolation ? String(d.isolation) : undefined,
 			historyEnabled: d.historyEnabled === true || d.historyEnabled === 'true',
+			historyScope: (d.historyScope === 'global' || d.historyScope === 'project') ? d.historyScope : undefined,
 			todoEnabled: d.todoEnabled === true || d.todoEnabled === 'true',
 			parentAgent: d.parentAgent ? String(d.parentAgent) : undefined,
 			status: normalizeStatus(d.status),
@@ -289,6 +297,7 @@ export function toAgentConfig(def: AgentDefinition): AgentConfig {
 		thinkingEnabled: def.thinkingEnabled,
 		permissionMode: def.permissionMode,
 		historyEnabled: def.historyEnabled,
+		historyScope: def.historyScope,
 		todoEnabled: def.todoEnabled,
 		showInOrgChart: def.showInOrgChart,
 	};
@@ -419,6 +428,7 @@ function buildFrontmatter(def: Partial<AgentDefinition> & { name: string }): str
 	}
 	if (def.permissionMode) { lines.push(`permissionMode: ${def.permissionMode}`); }
 	if (def.historyEnabled !== undefined) { lines.push(`historyEnabled: ${def.historyEnabled}`); }
+	if (def.historyScope) { lines.push(`historyScope: "${def.historyScope}"`); }
 	if (def.todoEnabled !== undefined) { lines.push(`todoEnabled: ${def.todoEnabled}`); }
 	if (def.isolation) { lines.push(`isolation: ${def.isolation}`); }
 	if (def.parentAgent) { lines.push(`parentAgent: ${quoteYamlValue(def.parentAgent)}`); }
@@ -455,6 +465,7 @@ export async function saveAgentConfig(config: AgentConfig, body?: string): Promi
 		tools: config.allowedTools || existing?.tools,
 		permissionMode: config.permissionMode || existing?.permissionMode,
 		historyEnabled: config.historyEnabled !== undefined ? config.historyEnabled : existing?.historyEnabled,
+		historyScope: config.historyScope !== undefined ? config.historyScope : existing?.historyScope,
 		todoEnabled: config.todoEnabled !== undefined ? config.todoEnabled : existing?.todoEnabled,
 		isolation: existing?.isolation,
 		parentAgent: config.parentAgent,
