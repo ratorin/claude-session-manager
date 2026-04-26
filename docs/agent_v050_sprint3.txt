@@ -1,0 +1,85 @@
+# v0.5.0 Sprint 3 完了報告 (csm-impl)
+日時: 2026-04-27
+
+## 実装タスク (csm-impl 担当)
+
+### T3.1 ✅ snippetLibrary.ts 新規作成
+- loadAll() / filterByCategory() / search() / getById()
+- saveUserSnippet() / deleteUserSnippet() / insertIntoBody()
+- ユーザー定義スニペット (~/.claude/csm-snippets/) 対応
+
+### T3.11 ✅ orgBuilderService.ts — 診断ロジック
+- diagnose(projectId): missing-qa / missing-planner / no-parent-assigned / orphan-agent / redundant-agents / no-agents
+
+### T3.12 ✅ 提案生成
+- generateProposals(diagItems, projectId): 診断結果から構造化提案リスト
+
+### T3.13 ✅ 承認フロー (バックエンド)
+- promptApproval(proposals): VS Code QuickPick (canPickMany)
+- confirmProposal(proposal): Modal 詳細確認
+- executeProposals(proposals): 実行 + エラーハンドリング
+
+### T3.14 ✅ data/system-agents.json + isGuarded()
+- director, csm-dev, csm-impl 等9件を保護リストに登録
+- isGuarded(name, config): guarded フラグ または JSON リストで判定
+
+### T3.15 ✅ org-history.jsonl ロギング
+- logAction(entry): ~/.claude/csm-org-history.jsonl に JSONL 追記
+- readHistory(limit): 最新 N 件読み込み
+
+### T3.16 ✅ pathRelocator.ts — JSONLリンカー
+- buildProjectKey / reverseProjectKey
+- relinkProject(oldPath, newPath): JSONL再リンク + csm-projects.json 更新 + workDir更新
+
+### T3.17 ✅ symlink / hardlink / copy フォールバック
+- linkDir(src, dest, mode): Windows では junction 使用
+- copyDir() 再帰コピー実装
+
+### T3.19 ✅ 起動時整合性チェック + 警告通知
+- checkIntegrity(): csm-projects.json の rootPath 存在確認
+- 欠損時は vscode.window.showWarningMessage + 引っ越しウィザード誘導
+
+### T3.20 ✅ workDir 緩和 (F7)
+- cliBuilder.ts: isWorkDirCompatible() — isContainedIn 双方向チェック
+  + claudeManager.askAgent.allowAnyWorkDir 設定対応
+- csm-ask-agent.py: check_workdir_compatible() + CSM_ALLOW_ANY_WORKDIR env
+- agentCommands.ts: 既存チェックを isWorkDirCompatible() に置き換え
+
+### T3.22 ✅ パフォーマンスチューニング
+- discoverProjects() に TTL 1500ms キャッシュ追加
+- registerProject/removeProject で invalidateDiscoverCache()
+
+### T3.25 ✅ vsixビルド確認
+- npm run compile: エラーなし
+- npx @vscode/vsce package: claude-session-manager-0.5.0.vsix (1.41 MB, 233 files)
+
+---
+
+## 並行 dispatch 完了
+
+### csm-ui (commit: 5f7afed)
+- T3.3 snippetPickerPanel.ts (3タブ: スニペット/スキル参照/ツール注記)
+- T3.4 agentFormPanel "+ 機能追加" ボタン
+- T3.5 スキル参照タブ (i18n対応)
+- T3.6 ツール注記タブ (チェックボックス)
+- T3.7 挿入前差分プレビュー (modal)
+- T3.9 エージェント登録時 "日本語名を生成" オファー
+- T3.13 mainTabPanel 組織診断ボタン
+- T3.18 claudeManager.relocateProject コマンド登録
+
+### csm-i18n (commit: 720580e)
+- T3.8 i18nService Anthropic API 翻訳実装 (Haiku 4.5, キャッシュ対応)
+- T3.10 claudeManager.locale.autoTranslate 設定追加
+
+### csm-impl-light (commit: 3387fa5)
+- T3.2 data/snippets/core.json 標準スニペット10件
+- T3.21 helpFeedbackProvider ディスカッション URL 追加
+- T3.23 CHANGELOG.md Sprint 3 セクション追加
+- T3.24 README.md v0.5.0 新機能追記
+
+---
+
+## 完了状況
+- T3.1〜T3.25: 全25タスク完了 ✅
+- npm run compile: エラーなし ✅
+- VSIX 0.5.0: 1.41 MB ビルド成功 ✅
