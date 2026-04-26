@@ -2,6 +2,18 @@
 
 ## v0.5.0 (2026-04-27)
 
+### 利用率 StatusBar — クリックで QuickPick メニュー表示
+
+StatusBar の利用率表示をクリックしたとき、再取得のみ行っていた動作を改善。
+3 択の QuickPick メニューを表示し、用途に応じた操作を選択できるようにした。
+
+- **$(browser) Claude Code を開く** — `claude-vscode.sidebar.open` を実行（失敗時は `editor.open` にフォールバック）
+- **$(link-external) claude.ai/settings/usage をブラウザで開く** — ブラウザで使用量ページを表示
+- **$(refresh) 利用率を再取得** — 従来どおり最新データをフェッチ
+
+`claudeManager.refreshUsage` コマンドは既存のキーバインドや設定から引き続き利用可能。
+新コマンド `claudeManager.openUsageMenu` を package.json の commands に登録。
+
 ### v0.5.0 プロジェクトツリーモード追加 — プロジェクトタブにツリー表示を追加
 
 プロジェクトタブにカード表示とツリー表示を切り替えるモード切替機能を追加。

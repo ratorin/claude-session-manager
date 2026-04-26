@@ -241,6 +241,61 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
+	// 利用率メニュー（StatusBarクリック時）
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.openUsageMenu', async () => {
+			const items: vscode.QuickPickItem[] = [
+				{
+					label: '$(browser) Claude Code を開く',
+					description: 'Account & Usage はサイドバーから参照',
+					detail: 'Claude Code パネルをサイドバーに表示します',
+				},
+				{
+					label: '$(link-external) claude.ai/settings/usage をブラウザで開く',
+					description: '使用量ページをブラウザで表示',
+					detail: 'https://claude.ai/settings/usage',
+				},
+				{
+					label: '$(refresh) 利用率を再取得',
+					description: '最新の利用率データを取得します',
+				},
+			];
+
+			const selected = await vscode.window.showQuickPick(items, {
+				placeHolder: 'Claude 利用率 — 操作を選択',
+				title: 'Claude 利用状況',
+			});
+
+			if (!selected) { return; }
+
+			if (selected.label.startsWith('$(browser)')) {
+				// Claude Code パネルを開く（fallback あり）
+				try {
+					await vscode.commands.executeCommand('claude-vscode.sidebar.open');
+				} catch {
+					try {
+						await vscode.commands.executeCommand('claude-vscode.editor.open');
+					} catch {
+						vscode.window.showWarningMessage('Claude Code 拡張が見つかりません。拡張機能マーケットプレースからインストールしてください。');
+					}
+				}
+			} else if (selected.label.startsWith('$(link-external)')) {
+				// claude.ai をブラウザで開く
+				const primaryUrl = vscode.Uri.parse('https://claude.ai/settings/usage');
+				await vscode.env.openExternal(primaryUrl);
+			} else if (selected.label.startsWith('$(refresh)')) {
+				// 利用率を再取得
+				const enabled = getConfig<boolean>('enableUsageMonitor', false);
+				if (!enabled) {
+					vscode.window.showWarningMessage('利用制限モニターが無効です。設定から claudeManager.enableUsageMonitor を有効にしてください');
+					return;
+				}
+				await usageMonitor.refresh();
+				vscode.window.showInformationMessage('利用制限を更新しました');
+			}
+		})
+	);
+
 	// 設定変更時に AgentWatcher / UsageMonitor を再起動
 	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
 		if (

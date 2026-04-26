@@ -234,14 +234,14 @@ export class UsageMonitor implements vscode.Disposable {
 
 	constructor() {
 		this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
-		this.statusBarItem.command = 'claudeManager.refreshUsage';
+		this.statusBarItem.command = 'claudeManager.openUsageMenu';
 	}
 
 	// 監視を開始/再起動
 	start(intervalSec: number): void {
 		this.stop();
 		this.statusBarItem.text = '$(loading~spin) 利用率取得中...';
-		this.statusBarItem.tooltip = 'Claude Code 利用制限（クリックで更新）';
+		this.statusBarItem.tooltip = 'Claude Code 利用制限（クリックでメニュー表示）';
 		this.statusBarItem.show();
 		// 初回即時取得
 		this.fetchAndUpdate();
@@ -321,7 +321,7 @@ export class UsageMonitor implements vscode.Disposable {
 			const r5h = formatTimeRemaining(data.reset5h);
 			const r7d = formatTimeRemaining(data.reset7d);
 			const tooltipLines = [
-				'Claude Code 利用制限（クリックで更新）',
+				'Claude Code 利用制限（クリックでメニュー表示）',
 				'',
 				`5時間: ${fmtPct(data.usage5h)}%（リセットまで ${r5h}）`,
 				`7日間: ${fmtPct(data.usage7d)}%（リセットまで ${r7d}）`,

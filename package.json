@@ -38,6 +38,7 @@
 					"type": "webview",
 					"id": "claudeTabBar",
 					"name": "",
+					"initialSize": 1,
 					"when": "config.claudeManager.useNewMainPanel != false"
 				},
 				{
@@ -383,6 +384,12 @@
 				"command": "claudeManager.refreshUsage",
 				"title": "利用制限を更新",
 				"icon": "$(refresh)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.openUsageMenu",
+				"title": "利用率メニューを開く",
+				"icon": "$(dashboard)",
 				"category": "Claude Session Manager"
 			},
 			{
