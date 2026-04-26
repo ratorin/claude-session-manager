@@ -2,6 +2,24 @@
 
 ## v0.5.0 (2026-04-27)
 
+### プロジェクト情報パネル追加 (claudeProjectInfo)
+
+sidebar 最下部に新規 WebView パネル `claudeProjectInfo` を追加。
+エージェント/メモリ/プロジェクト各タブで生じていた下部空白を情報表示で活用する。
+
+#### 表示内容
+- 📁 プロジェクト名 & パス
+- 👤 エージェント数（全体 + 🟢 動作中数）、上位 5 体リスト（クリックでセッション表示）
+- 💬 セッション数 / 🧠 メモリ数
+- 🌿 git ブランチ名 / ⏱ 最終 commit 時刻（相対表示）+ コミットメッセージ
+- 🌐 組織図ボタン / 🔄 更新ボタン
+
+#### 実装詳細
+- `src/panels/projectInfoPanel.ts` 新規追加（WebviewViewProvider）
+- package.json に `claudeProjectInfo` ビュー登録 (`when: useNewMainPanel != false`)
+- データは起動時 + 表示時 + 30 秒ごと + agentWatcher 変化時に収集して postMessage でプッシュ
+- git 情報は `child_process.exec` で非同期取得（タイムアウト 5 秒）
+
 ### タブバー動的アクション行 + ステータス行
 
 タブバーのアクション行をタブ別に動的切替し、下部空白を解消するステータス行を追加。
