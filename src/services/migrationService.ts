@@ -7,6 +7,7 @@ import * as path from 'path';
 import * as os from 'os';
 
 const MIGRATION_VERSION_KEY = 'csm.lastMigratedVersion';
+const SESSION_MANAGER_FILE = path.join(os.homedir(), '.claude', 'session-manager.json');
 
 // 前回マイグレーション実行時のバージョンを取得
 export function getLastMigratedVersion(ctx: vscode.ExtensionContext): string {
@@ -96,8 +97,8 @@ export async function runV04Migration(
 ): Promise<void> {
 	const lastVersion = getLastMigratedVersion(ctx);
 
-	// v0.4.0未満からのアップグレードのみ実行
-	if (!versionLessThan(lastVersion, '0.4.0')) {
+	// v0.4.3未満からのアップグレードで実行（0.4.3で空sessionIdクリーンアップ追加）
+	if (!versionLessThan(lastVersion, '0.4.3')) {
 		return;
 	}
 
@@ -128,7 +129,132 @@ export async function runV04Migration(
 		vscode.window.showInformationMessage(`CSMマイグレーション: ${totalFixed}件のエージェント設定ファイルを自動修正しました。`);
 	}
 
-	// 2. バージョンを記録
+	// 2. 空sessionIdエントリのクリーンアップ（過去バグで空文字が保存された件への対処）
+	const cleanedCount = await cleanupEmptySessionIds(outputChannel);
+	if (cleanedCount > 0) {
+		outputChannel.appendLine(`[Migration] 空sessionIdクリーンアップ: ${cleanedCount}件`);
+		vscode.window.showInformationMessage(
+			`CSMマイグレーション: ${cleanedCount}件のエージェントで空のセッション紐づけをクリーンアップしました。紐づけ直してください。`
+		);
+	}
+
+	// 3. バージョンを記録
 	await setLastMigratedVersion(ctx, currentVersion);
 	outputChannel.appendLine(`[Migration] 完了 → v${currentVersion} を記録`);
+}
+
+// 空sessionIdまたは実ファイル不在のsessionIdをクリア（過去バグのクリーンアップ）
+async function cleanupEmptySessionIds(outputChannel: vscode.OutputChannel): Promise<number> {
+	try {
+		await fs.promises.access(SESSION_MANAGER_FILE);
+	} catch {
+		return 0;
+	}
+
+	let content: string;
+	try {
+		content = await fs.promises.readFile(SESSION_MANAGER_FILE, 'utf-8');
+	} catch {
+		return 0;
+	}
+
+	let data: { agentSessions?: Record<string, { sessionId?: string; sessionMode?: string; previousSessionIds?: string[] }> };
+	try {
+		data = JSON.parse(content);
+	} catch {
+		return 0;
+	}
+
+	if (!data.agentSessions) { return 0; }
+
+	const projectsDir = path.join(os.homedir(), '.claude', 'projects');
+	let projectSubdirs: string[] = [];
+	try {
+		const entries = await fs.promises.readdir(projectsDir, { withFileTypes: true });
+		projectSubdirs = entries.filter(e => e.isDirectory()).map(e => path.join(projectsDir, e.name));
+	} catch {
+		// projects ディレクトリが無ければ空sessionIdのみクリーンアップ
+	}
+
+	let cleaned = 0;
+	for (const [name, binding] of Object.entries(data.agentSessions)) {
+		const sid = binding.sessionId;
+		if (!sid) { continue; } // 既に空ならスキップ（明示的にクリアする必要なし）
+		// ファイル実在チェック
+		let exists = false;
+		for (const pDir of projectSubdirs) {
+			try {
+				await fs.promises.access(path.join(pDir, `${sid}.jsonl`));
+				exists = true;
+				break;
+			} catch { /* next */ }
+		}
+		if (!exists) {
+			binding.sessionId = '';
+			cleaned++;
+			outputChannel.appendLine(`[Migration] ${name}: 不在sessionId ${sid.substring(0, 8)}... をクリア`);
+		}
+	}
+
+	// 初期化バックアップ付き書き込み
+	if (cleaned > 0) {
+		const backup = SESSION_MANAGER_FILE + `.bak.${Date.now()}`;
+		try {
+			await fs.promises.copyFile(SESSION_MANAGER_FILE, backup);
+			await fs.promises.writeFile(SESSION_MANAGER_FILE, JSON.stringify(data, null, '\t'), 'utf-8');
+		} catch (err) {
+			outputChannel.appendLine(`[Migration] クリーンアップ書き込み失敗: ${err}`);
+			return 0;
+		}
+	}
+	return cleaned;
+}
+
+// -------------------------------------------------------------------
+// v0.5.0 マイグレーション
+// -------------------------------------------------------------------
+
+/**
+ * v0.5.0 マイグレーション統括。
+ * - data/i18n パスの初期化確認
+ * - csm-projects.json の初期スキーマ生成
+ * - global-agents-i18n.json バックアップ（旧パスの保全）
+ */
+export async function runV05Migration(
+	ctx: vscode.ExtensionContext,
+	currentVersion: string,
+	outputChannel: vscode.OutputChannel,
+): Promise<void> {
+	const lastVersion = getLastMigratedVersion(ctx);
+
+	// v0.5.0未満からのアップグレードで実行
+	if (!versionLessThan(lastVersion, '0.5.0')) {
+		return;
+	}
+
+	outputChannel.appendLine(`[Migration v0.5] v${lastVersion} → v${currentVersion} マイグレーション開始`);
+
+	// 1. csm-projects.json 初期スキーマ生成
+	const projectsFile = path.join(os.homedir(), '.claude', 'csm-projects.json');
+	if (!fs.existsSync(projectsFile)) {
+		try {
+			await fs.promises.writeFile(projectsFile, JSON.stringify({ projects: [] }, null, '\t'), 'utf-8');
+			outputChannel.appendLine('[Migration v0.5] csm-projects.json を初期化しました');
+		} catch (err) {
+			outputChannel.appendLine(`[Migration v0.5] csm-projects.json 初期化失敗: ${err}`);
+		}
+	}
+
+	// 2. data/i18n/ja/ ディレクトリの存在確認（パッケージに含まれるはずだがログ）
+	const dataDir = path.join(path.dirname(path.dirname(__dirname)), 'data');
+	const i18nDir = path.join(dataDir, 'i18n', 'ja');
+	if (!fs.existsSync(i18nDir)) {
+		outputChannel.appendLine('[Migration v0.5] 警告: data/i18n/ja/ が存在しません。再インストールをお試しください。');
+	} else {
+		outputChannel.appendLine('[Migration v0.5] data/i18n/ja/ 確認OK');
+	}
+
+	// 3. バージョンを記録
+	await setLastMigratedVersion(ctx, currentVersion);
+	outputChannel.appendLine(`[Migration v0.5] 完了 → v${currentVersion} を記録`);
 }

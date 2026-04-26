@@ -17,7 +17,7 @@ import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
 import { getConfig } from './utils/config';
 import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook, ensureRecapCaptureHook } from './services/hookService';
-import { runV04Migration } from './services/migrationService';
+import { runV04Migration, runV05Migration } from './services/migrationService';
 import { initErrorReporter, logError } from './utils/errorReporter';
 import { MainTabPanel } from './panels/mainTabPanel';
 import { HelpFeedbackProvider } from './providers/helpFeedbackProvider';
@@ -50,6 +50,9 @@ export function activate(context: vscode.ExtensionContext) {
 	// dispose漏れ防止: Extension Host 共有プロセスでリークしないよう subscriptions に登録
 	context.subscriptions.push(extensionOutputChannelEarly);
 	runV04Migration(context, currentVersion, extensionOutputChannelEarly).catch(() => {
+		// マイグレーション失敗は致命的ではない
+	});
+	runV05Migration(context, currentVersion, extensionOutputChannelEarly).catch(() => {
 		// マイグレーション失敗は致命的ではない
 	});
 
