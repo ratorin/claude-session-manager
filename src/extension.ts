@@ -20,7 +20,7 @@ import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook
 import { runV04Migration, runV05Migration } from './services/migrationService';
 import { initErrorReporter, logError } from './utils/errorReporter';
 import { MainTabPanel } from './panels/mainTabPanel';
-import { TabBarPanel } from './panels/tabBarPanel';
+import { TabBarPanel, StatusInfo } from './panels/tabBarPanel';
 import { HelpFeedbackProvider } from './providers/helpFeedbackProvider';
 import { setLocale, setAutoTranslate } from './services/i18nService';
 
@@ -191,6 +191,12 @@ export function activate(context: vscode.ExtensionContext) {
 		taskTracker.evaluate().then(() => {
 			dataStore.getTaskLogs().then(logs => taskTracker.notify(logs)).catch(() => {/* ignore */});
 		}).catch(() => {/* ignore */});
+		// TH5: エージェント状態変化時にステータス行を即時更新
+		tabBarPanel.pushStatusInfo({
+			runningAgents: agentWatcher.getLiveSessionIds().size,
+			lastRefresh: Date.now(),
+			projectName: vscode.workspace.workspaceFolders?.[0]?.name ?? '—',
+		});
 	});
 
 	// TaskTracker の状態変更時にツリーをリフレッシュ
@@ -388,6 +394,18 @@ export function activate(context: vscode.ExtensionContext) {
 			webviewOptions: { retainContextWhenHidden: true },
 		})
 	);
+
+	// TH5: TabBarPanel ステータス行 — プロバイダ登録 + 10秒定期プッシュ
+	const getTabBarStatus = (): StatusInfo => ({
+		runningAgents: agentWatcher.getLiveSessionIds().size,
+		lastRefresh: Date.now(),
+		projectName: vscode.workspace.workspaceFolders?.[0]?.name ?? '—',
+	});
+	tabBarPanel.setStatusProvider(getTabBarStatus);
+	const tabBarStatusTimer = setInterval(() => {
+		tabBarPanel.pushStatusInfo(getTabBarStatus());
+	}, 10000);
+	context.subscriptions.push({ dispose: () => clearInterval(tabBarStatusTimer) });
 
 	// T1.10: claudeMain WebviewView Container（projects タブ用 WebView）を登録
 	const mainTabPanel = new MainTabPanel(context.extensionUri);
