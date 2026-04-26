@@ -6,11 +6,16 @@ import * as vscode from 'vscode';
 
 // 利用率データ
 export interface UsageData {
-	usage5h: number;   // 5時間利用率（%）
-	usage7d: number;   // 7日利用率（%）
-	reset5h: number;   // 5時間リセット時刻（Unix秒）
-	reset7d: number;   // 7日リセット時刻（Unix秒）
-	fetchedAt: number; // 取得時刻（ms）
+	usage5h: number;    // 5時間利用率（%）
+	usage7d: number;    // 7日利用率（%）
+	reset5h: number;    // 5時間リセット時刻（Unix秒）
+	reset7d: number;    // 7日リセット時刻（Unix秒）
+	// T2.22: Sonnet 5d / Opus 5d（取得できない場合は -1）
+	usageSonnet5d: number;  // Sonnet 5日間利用率（%）
+	resetSonnet5d: number;  // Sonnet 5日リセット時刻（Unix秒）
+	usageOpus5d: number;    // Opus 5日間利用率（%）
+	resetOpus5d: number;    // Opus 5日リセット時刻（Unix秒）
+	fetchedAt: number;  // 取得時刻（ms）
 }
 
 // credentials.json からアクセストークンを取得
@@ -102,7 +107,23 @@ function fetchUsageHeaders(accessToken: string): Promise<FetchResult> {
 				const reset5h = parseFloat(headers['anthropic-ratelimit-unified-5h-reset'] as string);
 				const reset7d = parseFloat(headers['anthropic-ratelimit-unified-7d-reset'] as string);
 
-				log.appendLine(`  5h raw: ${usage5h}, 7d raw: ${usage7d}`);
+				// T2.22: Sonnet 5d / Opus 5d — 複数の候補ヘッダを試みる
+				const pickHeader = (keys: string[]): number => {
+					for (const k of keys) {
+						const v = parseFloat(headers[k] as string);
+						if (!isNaN(v)) { return v; }
+					}
+					return NaN;
+				};
+				const rawSonnet5d  = pickHeader(['anthropic-ratelimit-claude-sonnet-5d-utilization', 'anthropic-ratelimit-sonnet-5d-utilization', 'anthropic-ratelimit-unified-sonnet-5d-utilization']);
+				const rawOpus5d    = pickHeader(['anthropic-ratelimit-claude-opus-5d-utilization',   'anthropic-ratelimit-opus-5d-utilization',   'anthropic-ratelimit-unified-opus-5d-utilization']);
+				const resetSonnet5d = pickHeader(['anthropic-ratelimit-claude-sonnet-5d-reset',       'anthropic-ratelimit-sonnet-5d-reset',       'anthropic-ratelimit-unified-sonnet-5d-reset']);
+				const resetOpus5d   = pickHeader(['anthropic-ratelimit-claude-opus-5d-reset',         'anthropic-ratelimit-opus-5d-reset',         'anthropic-ratelimit-unified-opus-5d-reset']);
+
+				// 全rate-limitヘッダをデバッグログ出力（ヘッダ名発見用）
+				const allHeaders = Object.keys(headers).filter(h => h.includes('ratelimit'));
+				log.appendLine(`  ratelimit headers: ${allHeaders.join(', ')}`);
+				log.appendLine(`  5h raw: ${usage5h}, 7d raw: ${usage7d}, sonnet5d: ${rawSonnet5d}, opus5d: ${rawOpus5d}`);
 
 				if (isNaN(usage5h) && isNaN(usage7d)) {
 					resolve({ data: null, statusCode, errorDetail: 'レスポンスヘッダーに利用率情報なし' });
@@ -112,7 +133,9 @@ function fetchUsageHeaders(accessToken: string): Promise<FetchResult> {
 				// APIは0〜1の小数を返す（例: 0.91 = 91%）→ 100倍してパーセントに変換
 				const pct5h = isNaN(usage5h) ? 0 : Math.round(usage5h * 1000) / 10;
 				const pct7d = isNaN(usage7d) ? 0 : Math.round(usage7d * 1000) / 10;
-				log.appendLine(`  5h: ${pct5h}%, 7d: ${pct7d}%`);
+				const pctSonnet5d = isNaN(rawSonnet5d) ? -1 : Math.round(rawSonnet5d * 1000) / 10;
+				const pctOpus5d   = isNaN(rawOpus5d)   ? -1 : Math.round(rawOpus5d * 1000) / 10;
+				log.appendLine(`  5h: ${pct5h}%, 7d: ${pct7d}%, S5d: ${pctSonnet5d}%, O5d: ${pctOpus5d}%`);
 
 				resolve({
 					data: {
@@ -120,6 +143,10 @@ function fetchUsageHeaders(accessToken: string): Promise<FetchResult> {
 						usage7d: pct7d,
 						reset5h: isNaN(reset5h) ? 0 : reset5h,
 						reset7d: isNaN(reset7d) ? 0 : reset7d,
+						usageSonnet5d: pctSonnet5d,
+						resetSonnet5d: isNaN(resetSonnet5d) ? 0 : resetSonnet5d,
+						usageOpus5d: pctOpus5d,
+						resetOpus5d: isNaN(resetOpus5d) ? 0 : resetOpus5d,
 						fetchedAt: Date.now(),
 					},
 					statusCode,
@@ -165,11 +192,31 @@ function fmtPct(v: number): string {
 	return v % 1 === 0 ? `${v}` : v.toFixed(1);
 }
 
-// 利用率の表示テキストを生成
-export function formatUsageText(data: UsageData): string {
+/**
+ * 利用率の表示テキストを生成（T2.23）
+ * show5d=true:  "5% 4.5h / S 3% 5d20h / O 20% 5d10h"
+ * show5d=false: "5% 4.5h / 7% 7d"
+ */
+export function formatUsageText(data: UsageData, show5d = true): string {
 	const r5h = formatTimeRemaining(data.reset5h);
-	const r7d = formatTimeRemaining(data.reset7d);
-	return `${fmtPct(data.usage5h)}% ${r5h} / ${fmtPct(data.usage7d)}% ${r7d}`;
+	const base = `${fmtPct(data.usage5h)}% ${r5h}`;
+
+	if (!show5d || (data.usageSonnet5d < 0 && data.usageOpus5d < 0)) {
+		// Sonnet/Opus 5dデータなし → 従来フォーマット
+		const r7d = formatTimeRemaining(data.reset7d);
+		return `${base} / ${fmtPct(data.usage7d)}% ${r7d}`;
+	}
+
+	const parts: string[] = [base];
+	if (data.usageSonnet5d >= 0) {
+		const rs = formatTimeRemaining(data.resetSonnet5d);
+		parts.push(`S ${fmtPct(data.usageSonnet5d)}% ${rs}`);
+	}
+	if (data.usageOpus5d >= 0) {
+		const ro = formatTimeRemaining(data.resetOpus5d);
+		parts.push(`O ${fmtPct(data.usageOpus5d)}% ${ro}`);
+	}
+	return parts.join(' / ');
 }
 
 // 利用率監視クラス
@@ -254,10 +301,15 @@ export class UsageMonitor implements vscode.Disposable {
 
 			const data = result.data;
 			this.lastData = data;
-			this.statusBarItem.text = `$(dashboard) ${formatUsageText(data)}`;
+			// T2.23: show5dColumns 設定を読んで表示フォーマットを切り替え
+			const show5d = vscode.workspace.getConfiguration('claudeManager').get<boolean>('usage.show5dColumns', true);
+			this.statusBarItem.text = `$(dashboard) ${formatUsageText(data, show5d)}`;
 
-			// 警告色の判定（5hと7dの高い方で判定）
-			const maxUsage = Math.max(data.usage5h, data.usage7d);
+			// 警告色の判定（5h / Sonnet5d / Opus5d の最大値で判定）
+			const candidates = [data.usage5h, data.usage7d];
+			if (show5d && data.usageSonnet5d >= 0) { candidates.push(data.usageSonnet5d); }
+			if (show5d && data.usageOpus5d   >= 0) { candidates.push(data.usageOpus5d); }
+			const maxUsage = Math.max(...candidates);
 			if (maxUsage >= 95) {
 				this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
 			} else if (maxUsage >= 80) {
@@ -268,12 +320,19 @@ export class UsageMonitor implements vscode.Disposable {
 
 			const r5h = formatTimeRemaining(data.reset5h);
 			const r7d = formatTimeRemaining(data.reset7d);
-			this.statusBarItem.tooltip = [
+			const tooltipLines = [
 				'Claude Code 利用制限（クリックで更新）',
 				'',
 				`5時間: ${fmtPct(data.usage5h)}%（リセットまで ${r5h}）`,
 				`7日間: ${fmtPct(data.usage7d)}%（リセットまで ${r7d}）`,
-			].join('\n');
+			];
+			if (show5d && data.usageSonnet5d >= 0) {
+				tooltipLines.push(`Sonnet 5日: ${fmtPct(data.usageSonnet5d)}%（リセットまで ${formatTimeRemaining(data.resetSonnet5d)}）`);
+			}
+			if (show5d && data.usageOpus5d >= 0) {
+				tooltipLines.push(`Opus 5日: ${fmtPct(data.usageOpus5d)}%（リセットまで ${formatTimeRemaining(data.resetOpus5d)}）`);
+			}
+			this.statusBarItem.tooltip = tooltipLines.join('\n');
 
 			// 閾値通知（90% / 100%）
 			this.checkAndNotify(data.usage5h, r5h, '5時間',

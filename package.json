@@ -722,6 +722,12 @@
 						"maximum": 3600,
 						"order": 8,
 						"markdownDescription": "利用制限モニターの更新間隔（秒）。`#claudeManager.enableUsageMonitor#` が有効のときに使用されます"
+					},
+					"claudeManager.usage.show5dColumns": {
+						"type": "boolean",
+						"default": true,
+						"order": 9,
+						"description": "ステータスバーに Sonnet 5日 / Opus 5日 の利用率列を表示する（S xx% / O xx% 形式）。OFFにすると従来の 5h / 7d 表示のみになります"
 					}
 				}
 			},
