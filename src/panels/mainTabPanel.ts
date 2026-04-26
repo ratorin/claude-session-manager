@@ -102,6 +102,11 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				this._sendProjects();
 				break;
 
+			case 'getProjectTree':
+				// TT3: ツリーモード用まとめデータ
+				await this._sendProjectTree();
+				break;
+
 			case 'add-project': {
 				// T2.9: フォルダ選択ダイアログ
 				const folderUris = await vscode.window.showOpenDialog({
@@ -129,6 +134,21 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				if (message.payload?.path) {
 					const uri = vscode.Uri.file(String(message.payload.path));
 					await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: false });
+				}
+				break;
+
+			case 'open-memory-file':
+				// TT4: メモリファイルをプレビュー表示
+				if (message.payload?.filePath) {
+					try {
+						const uri = vscode.Uri.file(String(message.payload.filePath));
+						await vscode.commands.executeCommand('vscode.open', uri, {
+							preview: true,
+							viewColumn: vscode.ViewColumn.Beside,
+						});
+					} catch {
+						// ファイルが存在しない場合は無視
+					}
 				}
 				break;
 
@@ -261,6 +281,57 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 	private _sendProjects(): void {
 		const projects = discoverProjects();
 		this._view?.webview.postMessage({ type: 'projects-data', projects });
+	}
+
+	/** TT3: ツリーモード用まとめデータ送信 */
+	private async _sendProjectTree(): Promise<void> {
+		const projects = discoverProjects();
+		const allAgentAssignments = this._loadProjectAgentsAll();
+		const maxSessions = vscode.workspace
+			.getConfiguration('claudeManager')
+			.get<number>('maxSessionsShown', 500);
+		const [allSessions, memoryGroups] = await Promise.all([
+			loadAllSessions(maxSessions),
+			loadMemoryFiles(),
+		]);
+
+		const trees = projects.map(p => {
+			const agentNames = allAgentAssignments[p.id] ?? [];
+
+			// セッション: project フィールドがプロジェクトパスに一致するもの（最大 20 件）
+			const projectSessions = allSessions
+				.filter(s => !s.isSidechain && s.project === p.path)
+				.slice(0, 20)
+				.map(s => ({
+					id: s.id,
+					filePath: s.filePath,
+					title: s.customName ?? s.claudeTitle ?? s.firstMessage ?? s.id,
+					lastTimestamp: s.lastTimestamp?.getTime() ?? 0,
+				}));
+
+			// メモリ: dir がプロジェクトパスに対応するグループ
+			const memGroup = memoryGroups.find(g =>
+				g.project === p.path || g.dir.startsWith(p.path + '/')
+			);
+			const memories = memGroup?.files.map(f => ({
+				name: f.name,
+				description: f.description ?? '',
+				type: f.type ?? 'project',
+				filePath: f.filePath ?? '',
+			})) ?? [];
+
+			return {
+				projectId: p.id,
+				name: p.name,
+				path: p.path,
+				isCurrent: p.isCurrent ?? false,
+				agents: agentNames,
+				sessions: projectSessions,
+				memories,
+			};
+		});
+
+		this._view?.webview.postMessage({ type: 'project-tree-data', trees });
 	}
 
 	private async _sendProjectDetail(projectId: string): Promise<void> {
@@ -1241,6 +1312,167 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			align-items: center;
 			gap: 4px;
 		}
+
+		/* ==========================================
+		   プロジェクトツリーモード (TT1〜TT4)
+		   ========================================== */
+
+		.project-mode-toggle {
+			display: flex;
+			gap: 2px;
+			flex-shrink: 0;
+		}
+		.mode-toggle-btn {
+			padding: 3px 7px;
+			font-size: 11px;
+			background: transparent;
+			color: var(--vscode-descriptionForeground);
+			border: 1px solid var(--vscode-panel-border);
+			border-radius: 2px;
+			cursor: pointer;
+			font-family: inherit;
+			line-height: 1;
+		}
+		.mode-toggle-btn.active {
+			background: var(--vscode-focusBorder, #007acc);
+			color: #fff;
+			border-color: transparent;
+		}
+		.mode-toggle-btn:hover:not(.active) {
+			background: var(--vscode-list-hoverBackground);
+			color: var(--vscode-foreground);
+		}
+
+		/* ---- ツリー本体 ---- */
+		.project-tree { display: flex; flex-direction: column; gap: 4px; }
+		.project-tree-item {
+			border: 1px solid var(--vscode-panel-border);
+			border-radius: 3px;
+			overflow: hidden;
+		}
+		.project-tree-summary {
+			display: flex;
+			align-items: center;
+			gap: 5px;
+			padding: 5px 8px;
+			font-size: 11px;
+			font-weight: 600;
+			cursor: pointer;
+			user-select: none;
+			background: var(--vscode-editor-background);
+			list-style: none;
+			min-width: 0;
+		}
+		.project-tree-summary:hover { background: var(--vscode-list-hoverBackground); }
+		.project-tree-summary::-webkit-details-marker { display: none; }
+		.project-tree-chevron {
+			font-size: 8px;
+			color: var(--vscode-descriptionForeground);
+			flex-shrink: 0;
+			display: inline-block;
+			transition: transform 0.15s;
+		}
+		details.project-tree-item[open] > .project-tree-summary .project-tree-chevron {
+			transform: rotate(90deg);
+		}
+		.project-tree-name {
+			flex: 1;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+		.project-tree-badges { display: flex; gap: 3px; flex-shrink: 0; }
+		.project-tree-actions {
+			display: flex;
+			gap: 2px;
+			flex-shrink: 0;
+			opacity: 0;
+			transition: opacity 0.1s;
+		}
+		.project-tree-item:hover .project-tree-actions { opacity: 1; }
+		.tree-action-btn {
+			padding: 1px 5px;
+			font-size: 9px;
+			background: transparent;
+			color: var(--vscode-descriptionForeground);
+			border: 1px solid var(--vscode-panel-border);
+			border-radius: 2px;
+			cursor: pointer;
+			font-family: inherit;
+			white-space: nowrap;
+		}
+		.tree-action-btn:hover {
+			background: var(--vscode-list-hoverBackground);
+			color: var(--vscode-foreground);
+		}
+
+		/* ---- ツリー子ノード ---- */
+		.project-tree-body { background: var(--vscode-sideBar-background); }
+		.tree-category {
+			border-bottom: 1px solid var(--vscode-panel-border);
+		}
+		.tree-category:last-child { border-bottom: none; }
+		.tree-category-summary {
+			display: flex;
+			align-items: center;
+			gap: 4px;
+			padding: 3px 8px 3px 20px;
+			font-size: 10px;
+			font-weight: 600;
+			cursor: pointer;
+			user-select: none;
+			color: var(--vscode-descriptionForeground);
+			list-style: none;
+			background: transparent;
+		}
+		.tree-category-summary:hover { background: var(--vscode-list-hoverBackground); }
+		.tree-category-summary::-webkit-details-marker { display: none; }
+		.tree-category-summary::before {
+			content: '▶';
+			font-size: 7px;
+			color: var(--vscode-descriptionForeground);
+			transition: transform 0.1s;
+			flex-shrink: 0;
+		}
+		details.tree-category[open] > .tree-category-summary::before {
+			transform: rotate(90deg);
+		}
+		.tree-category-count {
+			font-size: 8px;
+			padding: 1px 4px;
+			border-radius: 6px;
+			background: var(--vscode-badge-background);
+			color: var(--vscode-badge-foreground);
+		}
+		.tree-leaf {
+			display: flex;
+			align-items: center;
+			gap: 4px;
+			padding: 2px 8px 2px 36px;
+			font-size: 10px;
+			cursor: pointer;
+			color: var(--vscode-foreground);
+			min-width: 0;
+		}
+		.tree-leaf:hover { background: var(--vscode-list-hoverBackground); }
+		.tree-leaf-icon { flex-shrink: 0; font-size: 10px; }
+		.tree-leaf-name {
+			flex: 1;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+		.tree-leaf-meta {
+			font-size: 9px;
+			color: var(--vscode-descriptionForeground);
+			flex-shrink: 0;
+			white-space: nowrap;
+		}
+		.tree-empty-msg {
+			font-size: 10px;
+			color: var(--vscode-descriptionForeground);
+			padding: 2px 8px 4px 36px;
+		}
 	</style>
 </head>
 <body>
@@ -1361,19 +1593,31 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			<div id="agent-project-list"></div>
 		</div>
 
-		<!-- ===== プロジェクトタブ (T2.1〜T2.9) ===== -->
+		<!-- ===== プロジェクトタブ (T2.1〜T2.9 / TT1〜TT4) ===== -->
 		<div class="tab-pane" id="pane-projects" role="tabpanel">
 			<div class="action-bar">
 				<button class="btn primary" id="btn-add-project">＋ 追加</button>
 				<button class="btn icon-btn" id="btn-refresh-projects" title="更新">↻</button>
+				<!-- TT1: モード切替トグル -->
+				<div class="project-mode-toggle" role="group" aria-label="表示モード">
+					<button class="mode-toggle-btn active" id="btn-mode-card"
+						title="カード表示" aria-pressed="true">📋</button>
+					<button class="mode-toggle-btn" id="btn-mode-tree"
+						title="ツリー表示" aria-pressed="false">🌲</button>
+				</div>
 			</div>
 
-			<!-- プロジェクト一覧 (T2.1/T2.2) -->
+			<!-- カードモード (T2.1/T2.2) -->
 			<div id="project-list">
 				<div class="placeholder">
 					<div class="icon">📁</div>
 					<div>読み込み中...</div>
 				</div>
+			</div>
+
+			<!-- ツリーモード (TT2) -->
+			<div id="project-tree" style="display:none;" role="tree" aria-label="プロジェクトツリー">
+				<div class="placeholder"><div class="icon">🌲</div><div>読み込み中...</div></div>
 			</div>
 
 			<!-- 詳細ペイン (T2.3〜T2.8) -->
@@ -1838,16 +2082,208 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		}
 
 		// ================================================================
-		// プロジェクトタブ (T2.1〜T2.9)
+		// プロジェクトタブ (T2.1〜T2.9 / TT1〜TT4)
 		// ================================================================
 
 		let selectedProjectId = null;
+
+		// ---- TT1: モード切替 ----
+		const PROJECT_MODE_KEY = 'csm.projectTab.mode';
+		let _projectMode = localStorage.getItem(PROJECT_MODE_KEY) || 'card';
+		let _projectTreeCache = null;
+
+		function applyProjectMode(mode) {
+			_projectMode = mode;
+			localStorage.setItem(PROJECT_MODE_KEY, mode);
+
+			const isCard = mode === 'card';
+			document.getElementById('project-list').style.display = isCard ? '' : 'none';
+			document.getElementById('project-tree').style.display  = isCard ? 'none' : '';
+
+			// 詳細ペインはカードモード専用 → ツリーに切り替えたら閉じる
+			if (!isCard) {
+				document.getElementById('project-detail-pane').style.display = 'none';
+				selectedProjectId = null;
+				document.querySelectorAll('.project-card').forEach(c => c.classList.remove('selected'));
+			}
+
+			const btnCard = document.getElementById('btn-mode-card');
+			const btnTree = document.getElementById('btn-mode-tree');
+			btnCard.classList.toggle('active', isCard);
+			btnCard.setAttribute('aria-pressed', isCard ? 'true' : 'false');
+			btnTree.classList.toggle('active', !isCard);
+			btnTree.setAttribute('aria-pressed', !isCard ? 'true' : 'false');
+
+			if (!isCard) {
+				if (_projectTreeCache) {
+					renderProjectTree(_projectTreeCache);
+				} else {
+					vscode.postMessage({ type: 'getProjectTree' });
+				}
+			}
+		}
+
+		document.getElementById('btn-mode-card').addEventListener('click', () => applyProjectMode('card'));
+		document.getElementById('btn-mode-tree').addEventListener('click', () => applyProjectMode('tree'));
+
+		// ---- TT2: ツリーレンダリング ----
+		function renderProjectTree(trees) {
+			_projectTreeCache = trees;
+			const container = document.getElementById('project-tree');
+			if (!trees || trees.length === 0) {
+				container.innerHTML = '<div class="placeholder"><div class="icon">📁</div><div>プロジェクトがありません</div></div>';
+				return;
+			}
+
+			container.innerHTML = '';
+			const treeEl = document.createElement('div');
+			treeEl.className = 'project-tree';
+
+			// 現在のプロジェクトを先頭に
+			const sorted = trees.slice().sort((a, b) => {
+				if (a.isCurrent && !b.isCurrent) { return -1; }
+				if (!a.isCurrent && b.isCurrent) { return 1; }
+				return a.name.localeCompare(b.name, 'ja');
+			});
+
+			sorted.forEach(p => treeEl.appendChild(makeProjectTreeNode(p)));
+			container.appendChild(treeEl);
+		}
+
+		function makeProjectTreeNode(p) {
+			const item = document.createElement('details');
+			item.className = 'project-tree-item';
+			item.dataset.projectId = p.projectId;
+
+			const currentBadge = p.isCurrent
+				? '<span class="badge badge-current" style="font-size:8px;">現在</span>'
+				: '';
+
+			const summary = document.createElement('summary');
+			summary.className = 'project-tree-summary';
+			summary.setAttribute('aria-label', escHtml(p.name) + 'プロジェクト');
+			summary.innerHTML =
+				'<span class="project-tree-chevron" aria-hidden="true">▶</span>' +
+				'<span aria-hidden="true" style="font-size:12px;">📁</span>' +
+				'<span class="project-tree-name" title="' + escHtml(p.path) + '">' + escHtml(p.name) + '</span>' +
+				'<div class="project-tree-badges">' + currentBadge + '</div>' +
+				'<div class="project-tree-actions">' +
+					'<button class="tree-action-btn" data-action="detail" aria-label="詳細を表示">詳細</button>' +
+					'<button class="tree-action-btn" data-action="vscode" aria-label="VS Codeで開く">VS Code</button>' +
+				'</div>';
+
+			summary.addEventListener('click', (e) => {
+				const btn = e.target.closest('[data-action]');
+				if (!btn) { return; }
+				const action = btn.dataset.action;
+				e.preventDefault();
+
+				if (action === 'detail') {
+					// カードモードへ戻して詳細ペインを開く
+					applyProjectMode('card');
+					// 少し遅延してプロジェクトカードが描画されてから詳細を開く
+					setTimeout(() => {
+						selectedProjectId = p.projectId;
+						document.getElementById('project-detail-pane').style.display = 'block';
+						document.getElementById('detail-project-name').textContent = p.name;
+						const projData = _projectsCache.find(pc => pc.id === p.projectId);
+						if (projData) { renderDetailMeta(projData); }
+						vscode.postMessage({ type: 'select-project', payload: { id: p.projectId } });
+					}, 50);
+				} else if (action === 'vscode') {
+					vscode.postMessage({ type: 'open-project', payload: { path: p.path } });
+				}
+			});
+
+			item.appendChild(summary);
+
+			const body = document.createElement('div');
+			body.className = 'project-tree-body';
+
+			// エージェントカテゴリ
+			body.appendChild(makeTreeCategory(
+				'👤 エージェント', p.agents.length,
+				p.agents.map(name => ({
+					icon: '👤',
+					name: name,
+					meta: '',
+					onClick() { vscode.postMessage({ type: 'open-agent-session', payload: { agentName: name } }); }
+				}))
+			));
+
+			// メモリカテゴリ
+			body.appendChild(makeTreeCategory(
+				'🧠 メモリ', p.memories.length,
+				p.memories.map(m => ({
+					icon: '📄',
+					name: m.name,
+					meta: m.type || '',
+					onClick() { vscode.postMessage({ type: 'open-memory-file', payload: { filePath: m.filePath, name: m.name } }); }
+				}))
+			));
+
+			// セッションカテゴリ
+			body.appendChild(makeTreeCategory(
+				'💬 セッション', p.sessions.length,
+				p.sessions.map(s => ({
+					icon: '💬',
+					name: s.title || s.id,
+					meta: s.lastTimestamp ? formatRelTime(s.lastTimestamp) : '',
+					onClick() { vscode.postMessage({ type: 'open-session', payload: { filePath: s.filePath, id: s.id } }); }
+				}))
+			));
+
+			item.appendChild(body);
+			return item;
+		}
+
+		function makeTreeCategory(label, count, leafDefs) {
+			const cat = document.createElement('details');
+			cat.className = 'tree-category';
+
+			const summary = document.createElement('summary');
+			summary.className = 'tree-category-summary';
+			summary.innerHTML =
+				escHtml(label) +
+				'<span class="tree-category-count">' + count + '</span>';
+			cat.appendChild(summary);
+
+			if (leafDefs.length === 0) {
+				const empty = document.createElement('div');
+				empty.className = 'tree-empty-msg';
+				empty.textContent = 'なし';
+				cat.appendChild(empty);
+			} else {
+				leafDefs.forEach(leaf => {
+					const el = document.createElement('div');
+					el.className = 'tree-leaf';
+					el.setAttribute('role', 'treeitem');
+					el.setAttribute('tabindex', '0');
+					el.innerHTML =
+						'<span class="tree-leaf-icon" aria-hidden="true">' + leaf.icon + '</span>' +
+						'<span class="tree-leaf-name">' + escHtml(leaf.name) + '</span>' +
+						(leaf.meta ? '<span class="tree-leaf-meta">' + escHtml(leaf.meta) + '</span>' : '');
+					el.addEventListener('click', leaf.onClick);
+					el.addEventListener('keydown', (e) => {
+						if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); leaf.onClick(); }
+					});
+					cat.appendChild(el);
+				});
+			}
+
+			return cat;
+		}
 
 		document.getElementById('btn-add-project').addEventListener('click', () => {
 			vscode.postMessage({ type: 'add-project' });
 		});
 		document.getElementById('btn-refresh-projects').addEventListener('click', () => {
 			vscode.postMessage({ type: 'refresh-projects' });
+			// ツリーモードなら再取得
+			if (_projectMode === 'tree') {
+				_projectTreeCache = null;
+				vscode.postMessage({ type: 'getProjectTree' });
+			}
 		});
 		document.getElementById('btn-close-detail').addEventListener('click', () => {
 			closeDetail();
@@ -2325,6 +2761,14 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 
 				case 'projects-data':
 					renderProjects(msg.projects);
+					// ツリーモードで起動した場合はツリーデータも要求
+					if (_projectMode === 'tree' && !_projectTreeCache) {
+						vscode.postMessage({ type: 'getProjectTree' });
+					}
+					break;
+
+				case 'project-tree-data':
+					renderProjectTree(msg.trees);
 					break;
 
 				case 'project-detail':
@@ -2369,6 +2813,11 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		function shortenPath(p) {
 			if (p.startsWith(HOME)) { return '~' + p.slice(HOME.length); }
 			return p;
+		}
+
+		// ---- TT1: 保存モードを初期適用（カード以外の場合のみ） ----
+		if (_projectMode === 'tree') {
+			applyProjectMode('tree');
 		}
 
 		// ---- 準備完了 ----
