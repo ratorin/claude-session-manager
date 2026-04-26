@@ -1,0 +1,64 @@
+# v0.5.0 Sprint 2 完了報告
+作成: 2026-04-26
+担当: csm-impl (バックエンド) + csm-ui (UI実装)
+
+## 概要
+
+v0.5.0 Sprint 2 (T2.1〜T2.24) の全タスクを完了し、VSIX v0.5.0 (1.36MB) を再ビルドしました。
+
+## 完了タスク一覧
+
+| タスク | 内容 | 担当 | コミット |
+|--------|------|------|---------|
+| T2.1〜T2.9 | プロジェクトタブ完全実装 | csm-ui | fd3ebd0 |
+| T2.10+T2.11 | bookmarkService (ブックマーク+最終使用日) | csm-impl | ae89697 |
+| T2.12〜T2.15 | エージェントタブ強化 | csm-ui | fd3ebd0 |
+| T2.16 | showOtherProjects 設定永続化 | csm-impl | 09c08d6 |
+| T2.17 | Cytoscape.js + ELK webviewアセット | csm-impl | 0b114f6 |
+| T2.18〜T2.21 | 組織図 Cytoscape 化 + ミニ組織図 | csm-ui | fd3ebd0 |
+| T2.22〜T2.24 | usageMonitor Sonnet/Opus 5d拡張 | csm-impl | 2433577 |
+
+## 成果物
+
+- VSIX: claude-session-manager-0.5.0.vsix (1.36 MB, 219ファイル)
+- 新規ファイル: 5ファイル
+- 変更ファイル: 7ファイル
+
+## アーキテクチャ変更点
+
+### bookmarkService.ts (T2.10+T2.11 統合)
+- 永続化: `~/.claude/csm-agent-meta.json` (bookmarks + lastUsed)
+- API: addBookmark / removeBookmark / toggleBookmark / getRecentlyUsed / relativeTime
+
+### progressCalculator.ts (T2.6)
+- エージェントディレクトリの TODO.md / HISTORY.md を横断スキャン
+- 5秒 TTL キャッシュで進捗データを提供
+- summarizeProgress() でUI表示用サマリー生成
+
+### mainTabPanel.ts (T2.1〜T2.15 統合)
+- プロジェクトタブ: カードグリッド + 詳細ペイン（概要/メモリ/紐づけ/進捗/ミニ組織図/クイックアクション）
+- エージェントタブ: ブックマーク / 最終使用日順 / フィルタ / スコープ分離
+
+### orgChartPanel.ts (T2.18〜T2.20)
+- Mermaid → Cytoscape.js + ELK へ全面刷新
+- 3モード: ツリー(ELK layered) / 関係(cose) / グループ(ELK box)
+- PNG/SVG エクスポート対応
+- buildMiniOrgChartData() エクスポート (T2.21用)
+
+### usageMonitor.ts (T2.22〜T2.24)
+- UsageData に usageSonnet5d / usageOpus5d 追加
+- formatUsageText(data, show5d): 新フォーマット `5% 4.5h / S 3% 5d20h / O 20% 5d10h`
+- claudeManager.usage.show5dColumns 設定 (default: true)
+
+## 注意事項
+- Sonnet/Opus 5d ヘッダ名は Anthropic API の実装次第で変わる可能性あり
+  → Output チャンネル "CSM Usage Monitor" に全 ratelimit ヘッダをログ出力済み
+- csm-project-agents.json は手動削除可能（起動時再生成される）
+- Cytoscape ELK レイアウトは elk.bundled.js (1.6MB) を含むため VSIX が 1.36MB に増加
+
+## 完了条件確認
+
+✅ T2.1〜T2.24 全タスク完了
+✅ npm run compile エラーなし
+✅ VSIX (0.5.0) 再ビルド成功 (1.36MB)
+✅ CHANGELOG Sprint 2 セクション追加
