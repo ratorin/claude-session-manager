@@ -2,6 +2,24 @@
 
 ## v0.5.0 (2026-04-27)
 
+### プロジェクト UI 改善 — 詳細別タブ化 / ダイアログ廃止 / エクスプローラで開く
+
+#### 詳細を WebView Editor タブで表示 (改善1)
+- `src/panels/projectDetailPanel.ts` を新規作成 (singleton WebviewPanel)
+- プロジェクト行クリック → `open-project-detail` → `showProjectDetail()` で Editor タブを開く
+- サイドバー内のインライン詳細ペイン (`#project-detail-pane`) を削除
+- プロジェクト一覧をコンパクトリスト形式に変更（行ごとに 詳細・エクスプローラ・削除ボタン）
+- エージェント割り当て／解除後はパネルを自動更新
+
+#### 別フォルダ確認ダイアログ廃止 (改善2)
+- `src/commands/agentCommands.ts`: エージェント/プロジェクトを別ワークスペースで開く際の
+  `showWarningMessage` ダイアログを削除
+- 代わりに `vscode.openFolder` を `forceNewWindow: true` で即時実行
+
+#### 📂 エクスプローラで開くボタン追加 (改善3)
+- プロジェクト詳細パネル・一覧行の両方に 📂 ボタンを追加
+- `revealFileInOS` コマンドで OS のファイルマネージャーを起動
+
 ### プロジェクトタブで タブバー統合 (試行)
 
 `claudeMain` (WebView) にタブバー + アクション行を内包し、プロジェクトタブ時は

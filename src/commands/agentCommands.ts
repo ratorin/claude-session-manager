@@ -479,29 +479,10 @@ context.subscriptions.push(
 			? normalize(sessionCwd) === normalize(wsFolder)
 			: false;
 
-		// 不一致ならIDEパネル連携しない可能性が高いので提案
+		// 不一致なら新しいウィンドウで対象フォルダを開く (ダイアログ廃止)
 		if (sessionCwd && wsFolder && !pathsMatch) {
-			const currentWs = wsFolder;
-			const sessionLabel = sessionCwd;
-			const choice = await vscode.window.showWarningMessage(
-				`このセッションは別のプロジェクトで作成されました。\n\n現在のワークスペース: ${currentWs}\nセッションのプロジェクト: ${sessionLabel}\n\nこのままではIDEパネルに表示されない可能性があります。`,
-				{ modal: true },
-				'そのフォルダを開く',
-				'ワークスペースに追加',
-				'このまま開く',
-			);
-			if (choice === 'そのフォルダを開く' && sessionCwd) {
-				await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(sessionCwd), { forceNewWindow: false });
-				return;
-			}
-			if (choice === 'ワークスペースに追加' && sessionCwd) {
-				const current = vscode.workspace.workspaceFolders || [];
-				vscode.workspace.updateWorkspaceFolders(current.length, 0, { uri: vscode.Uri.file(sessionCwd) });
-				vscode.window.showInformationMessage('ワークスペースに追加しました。もう一度「Claudeで開く（IDE）」を実行してください。');
-				return;
-			}
-			if (!choice) { return; } // キャンセル
-			// 'このまま開く' は通常フローに進む
+			await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(sessionCwd), { forceNewWindow: true });
+			return;
 		}
 
 		const scheme = vscode.env.uriScheme;
@@ -538,25 +519,9 @@ context.subscriptions.push(
 			const resolvedWorkDir = translateWorkDirPath(item.agent.workDir);
 			const { allowed: insideWorkspace } = isWorkDirCompatible(resolvedWorkDir);
 			if (!insideWorkspace) {
-				const choice = await vscode.window.showWarningMessage(
-					`「${item.agent.displayName || item.agent.name}」の作業ディレクトリ（${resolvedWorkDir}）は現在のワークスペース外です。IDEパネルでは開けません（ターミナルTUIのみ）。\nどうしますか？`,
-					{ modal: true },
-					'そのフォルダを開く',
-					'ワークスペースに追加',
-					'このままターミナルで開く'
-				);
-				if (choice === 'そのフォルダを開く') {
-					await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(resolvedWorkDir), { forceNewWindow: false });
-					return;
-				}
-				if (choice === 'ワークスペースに追加') {
-					const current = vscode.workspace.workspaceFolders || [];
-					vscode.workspace.updateWorkspaceFolders(current.length, 0, { uri: vscode.Uri.file(resolvedWorkDir) });
-					vscode.window.showInformationMessage('ワークスペースに追加しました。もう一度「開く」を実行してください。');
-					return;
-				}
-				if (!choice) { return; } // キャンセル
-				// 'このままターミナルで開く' は通常フローに進む
+				// 別フォルダは新しいウィンドウで開く (ダイアログ廃止)
+				await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(resolvedWorkDir), { forceNewWindow: true });
+				return;
 			}
 		}
 

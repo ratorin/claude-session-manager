@@ -31,6 +31,7 @@ import * as dataStore from '../models/dataStore';
 import { loadMemoryFiles, loadGlobalMemoryFiles } from '../utils/memoryManager';
 import { loadAllSessions } from '../utils/sessionLoader';
 import { buildMiniOrgChartData } from './orgChartPanel';
+import { showProjectDetail } from './projectDetailPanel';
 
 // -------------------------------------------------------------------
 // MainTabPanel — WebviewViewProvider 実装
@@ -147,10 +148,25 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				break;
 
 			case 'open-project':
-				// T2.8: VS Codeで開く
+				// T2.8: VS Codeで開く — 別フォルダは常に新ウィンドウ
 				if (message.payload?.path) {
 					const uri = vscode.Uri.file(String(message.payload.path));
-					await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: false });
+					await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+				}
+				break;
+
+			case 'open-project-detail':
+				// クリック → 詳細を WebView Editor で開く
+				if (message.payload?.id) {
+					await this._openProjectDetail(String(message.payload.id));
+				}
+				break;
+
+			case 'open-explorer':
+				// 📂 エクスプローラで開く
+				if (message.payload?.path) {
+					const explorerUri = vscode.Uri.file(String(message.payload.path));
+					await vscode.commands.executeCommand('revealFileInOS', explorerUri);
 				}
 				break;
 
@@ -181,9 +197,9 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				break;
 
 			case 'select-project':
-				// T2.2/T2.3: プロジェクト詳細を送信
+				// 後方互換: open-project-detail に同じ
 				if (message.payload?.id) {
-					await this._sendProjectDetail(String(message.payload.id));
+					await this._openProjectDetail(String(message.payload.id));
 				}
 				break;
 
@@ -192,7 +208,7 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				const { projectId, agentName } = (message.payload ?? {}) as Record<string, string>;
 				if (projectId && agentName) {
 					await this._assignAgentToProject(projectId, agentName);
-					await this._sendProjectDetail(projectId);
+					await this._openProjectDetail(projectId);
 				}
 				break;
 			}
@@ -202,7 +218,7 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				const { projectId: pid, agentName: an } = (message.payload ?? {}) as Record<string, string>;
 				if (pid && an) {
 					await this._unassignAgentFromProject(pid, an);
-					await this._sendProjectDetail(pid);
+					await this._openProjectDetail(pid);
 				}
 				break;
 			}
@@ -370,7 +386,7 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		this._view?.webview.postMessage({ type: 'project-tree-data', trees });
 	}
 
-	private async _sendProjectDetail(projectId: string): Promise<void> {
+	private async _openProjectDetail(projectId: string): Promise<void> {
 		const projects = discoverProjects();
 		const project = projects.find(p => p.id === projectId);
 		if (!project) { return; }
@@ -391,29 +407,67 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		// T2.21: ミニ組織図データ
 		const miniOrgNodes = await buildMiniOrgChartData(assignedAgentNames);
 
-		this._view?.webview.postMessage({
-			type: 'project-detail',
-			project,
-			progress,
-			allAgents: allAgents.map(a => ({
-				name: a.name,
-				displayName: a.displayName,
-				role: a.role,
-				model: a.model,
-				scope: a.scope,
-			})),
-			assignedAgentNames,
-			miniOrgNodes,
-			memoryGroups: memoryGroups.map(g => ({
-				project: g.project,
-				files: g.files.map(f => ({ name: f.name, description: f.description, type: f.type })),
-			})),
-			globalMemoryFiles: globalMemory?.files.map(f => ({
-				name: f.name,
-				description: f.description,
-				type: f.type,
-			})) ?? [],
-		});
+		showProjectDetail(
+			{
+				project: {
+					id: project.id,
+					name: project.name,
+					path: project.path,
+					source: project.source,
+					addedAt: project.addedAt,
+					isCurrent: project.isCurrent,
+				},
+				progress,
+				allAgents: allAgents.map(a => ({
+					name: a.name,
+					displayName: a.displayName,
+					role: a.role,
+					model: a.model,
+				})),
+				assignedAgentNames,
+				// MiniOrgChartNode.parent は string|null なので undefined に正規化
+				miniOrgNodes: miniOrgNodes.map(n => ({
+					...n,
+					parent: n.parent ?? undefined,
+				})),
+				memoryGroups: memoryGroups.map(g => ({
+					project: g.project,
+					files: g.files.map(f => ({ name: f.name, description: f.description, type: f.type })),
+				})),
+				globalMemoryFiles: globalMemory?.files.map(f => ({
+					name: f.name,
+					description: f.description,
+					type: f.type,
+				})) ?? [],
+			},
+			{
+				onOpenInVSCode: async (projectPath) => {
+					await vscode.commands.executeCommand(
+						'vscode.openFolder',
+						vscode.Uri.file(projectPath),
+						{ forceNewWindow: true }
+					);
+				},
+				onOpenInTerminal: (projectPath) => {
+					const terminal = vscode.window.createTerminal({
+						name: project.name,
+						cwd: projectPath,
+					});
+					terminal.show();
+				},
+				onOpenInExplorer: (projectPath) => {
+					void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(projectPath));
+				},
+				onAssignAgent: async (pid, agentName) => {
+					await this._assignAgentToProject(pid, agentName);
+					await this._openProjectDetail(pid);
+				},
+				onUnassignAgent: async (pid, agentName) => {
+					await this._unassignAgentFromProject(pid, agentName);
+					await this._openProjectDetail(pid);
+				},
+			}
+		);
 	}
 
 	private async _sendAgentsData(): Promise<void> {
@@ -1399,6 +1453,55 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			gap: 4px;
 		}
 
+		/* ---- プロジェクトコンパクトリスト ---- */
+		.project-list-row {
+			display: flex;
+			align-items: center;
+			gap: 6px;
+			padding: 4px 6px;
+			border-bottom: 1px solid var(--vscode-panel-border);
+			cursor: pointer;
+			min-width: 0;
+		}
+		.project-list-row:last-child { border-bottom: none; }
+		.project-list-row:hover { background: var(--vscode-list-hoverBackground); }
+		.project-list-name {
+			flex: 1;
+			font-size: 11px;
+			font-weight: 500;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+		.project-list-actions {
+			display: flex;
+			gap: 2px;
+			flex-shrink: 0;
+			opacity: 0;
+			transition: opacity 0.1s;
+		}
+		.project-list-row:hover .project-list-actions { opacity: 1; }
+		.project-row-btn {
+			padding: 1px 5px;
+			font-size: 9px;
+			background: transparent;
+			color: var(--vscode-descriptionForeground);
+			border: 1px solid var(--vscode-panel-border);
+			border-radius: 2px;
+			cursor: pointer;
+			font-family: inherit;
+			white-space: nowrap;
+		}
+		.project-row-btn:hover {
+			background: var(--vscode-list-hoverBackground);
+			color: var(--vscode-foreground);
+		}
+		.project-row-btn.danger:hover {
+			background: var(--vscode-inputValidation-errorBackground, rgba(200,0,0,0.1));
+			border-color: var(--vscode-errorForeground);
+			color: var(--vscode-errorForeground);
+		}
+
 		/* ==========================================
 		   プロジェクトツリーモード (TT1〜TT4)
 		   ========================================== */
@@ -1690,14 +1793,14 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				<!-- TT1: モード切替トグル -->
 				<div class="project-mode-toggle" role="group" aria-label="表示モード">
 					<button class="mode-toggle-btn active" id="btn-mode-card"
-						title="カード表示" aria-pressed="true">📋</button>
+						title="コンパクト表示" aria-pressed="true">📋</button>
 					<button class="mode-toggle-btn" id="btn-mode-tree"
 						title="ツリー表示" aria-pressed="false">🌲</button>
 				</div>
 			</div>
 
-			<!-- カードモード (T2.1/T2.2) -->
-			<div id="project-list">
+			<!-- コンパクトリストモード (T2.1/T2.2) — クリックで詳細パネルを開く -->
+			<div id="project-list" role="list" aria-label="プロジェクト一覧">
 				<div class="placeholder">
 					<div class="icon">📁</div>
 					<div>読み込み中...</div>
@@ -1707,57 +1810,6 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			<!-- ツリーモード (TT2) -->
 			<div id="project-tree" style="display:none;" role="tree" aria-label="プロジェクトツリー">
 				<div class="placeholder"><div class="icon">🌲</div><div>読み込み中...</div></div>
-			</div>
-
-			<!-- 詳細ペイン (T2.3〜T2.8) -->
-			<div id="project-detail-pane" style="display:none;" aria-label="プロジェクト詳細">
-				<div class="detail-pane">
-					<div class="detail-pane-header">
-						<span id="detail-project-name">プロジェクト詳細</span>
-						<button class="detail-pane-close" id="btn-close-detail" title="閉じる" aria-label="詳細を閉じる">✕</button>
-					</div>
-
-					<!-- T2.3: 概要 -->
-					<div class="detail-section">
-						<div class="detail-section-title">概要</div>
-						<div id="detail-meta"></div>
-					</div>
-
-					<!-- T2.8: クイックアクション -->
-					<div class="detail-section">
-						<div class="detail-section-title">クイックアクション</div>
-						<div style="display:flex; gap:4px; flex-wrap:wrap;">
-							<button class="project-card-btn" id="btn-detail-open-vscode">VS Codeで開く</button>
-							<button class="project-card-btn" id="btn-detail-open-terminal">ターミナル</button>
-						</div>
-					</div>
-
-					<!-- T2.4: 紐づけエージェント -->
-					<div class="detail-section">
-						<div class="detail-section-title">割当エージェント</div>
-						<div id="detail-assigned-agents"></div>
-						<div class="detail-section-title" style="margin-top:8px;">エージェントを追加</div>
-						<div id="detail-agent-candidates"></div>
-					</div>
-
-					<!-- T2.7: 進捗ダッシュボード -->
-					<div class="detail-section">
-						<div class="detail-section-title">進捗ダッシュボード</div>
-						<div id="detail-progress"></div>
-					</div>
-
-					<!-- T2.21: ミニ組織図 -->
-					<div class="detail-section">
-						<div class="detail-section-title">ミニ組織図</div>
-						<div id="detail-mini-org" style="overflow-x:auto;"></div>
-					</div>
-
-					<!-- T2.5: メモリ管理 -->
-					<div class="detail-section">
-						<div class="detail-section-title">メモリファイル</div>
-						<div id="detail-memory"></div>
-					</div>
-				</div>
 			</div>
 		</div>
 
@@ -2228,8 +2280,6 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 		// プロジェクトタブ (T2.1〜T2.9 / TT1〜TT4)
 		// ================================================================
 
-		let selectedProjectId = null;
-
 		// ---- TT1: モード切替 ----
 		const PROJECT_MODE_KEY = 'csm.projectTab.mode';
 		let _projectMode = localStorage.getItem(PROJECT_MODE_KEY) || 'tree';
@@ -2242,13 +2292,6 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			const isCard = mode === 'card';
 			document.getElementById('project-list').style.display = isCard ? '' : 'none';
 			document.getElementById('project-tree').style.display  = isCard ? 'none' : '';
-
-			// 詳細ペインはカードモード専用 → ツリーに切り替えたら閉じる
-			if (!isCard) {
-				document.getElementById('project-detail-pane').style.display = 'none';
-				selectedProjectId = null;
-				document.querySelectorAll('.project-card').forEach(c => c.classList.remove('selected'));
-			}
 
 			const btnCard = document.getElementById('btn-mode-card');
 			const btnTree = document.getElementById('btn-mode-tree');
@@ -2322,17 +2365,8 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				e.preventDefault();
 
 				if (action === 'detail') {
-					// カードモードへ戻して詳細ペインを開く
-					applyProjectMode('card');
-					// 少し遅延してプロジェクトカードが描画されてから詳細を開く
-					setTimeout(() => {
-						selectedProjectId = p.projectId;
-						document.getElementById('project-detail-pane').style.display = 'block';
-						document.getElementById('detail-project-name').textContent = p.name;
-						const projData = _projectsCache.find(pc => pc.id === p.projectId);
-						if (projData) { renderDetailMeta(projData); }
-						vscode.postMessage({ type: 'select-project', payload: { id: p.projectId } });
-					}, 50);
+					// 詳細を WebView Editor で開く
+					vscode.postMessage({ type: 'open-project-detail', payload: { id: p.projectId } });
 				} else if (action === 'vscode') {
 					vscode.postMessage({ type: 'open-project', payload: { path: p.path } });
 				}
@@ -2428,34 +2462,11 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				vscode.postMessage({ type: 'getProjectTree' });
 			}
 		});
-		document.getElementById('btn-close-detail').addEventListener('click', () => {
-			closeDetail();
-		});
-		document.getElementById('btn-detail-open-vscode').addEventListener('click', () => {
-			if (selectedProjectId) {
-				vscode.postMessage({ type: 'open-project', payload: { path: getSelectedProjectPath() } });
-			}
-		});
-		document.getElementById('btn-detail-open-terminal').addEventListener('click', () => {
-			if (selectedProjectId) {
-				vscode.postMessage({ type: 'open-terminal', payload: { path: getSelectedProjectPath() } });
-			}
-		});
 
 		let _projectsCache = [];
 
-		function getSelectedProjectPath() {
-			const p = _projectsCache.find(p => p.id === selectedProjectId);
-			return p ? p.path : '';
-		}
-
-		function closeDetail() {
-			document.getElementById('project-detail-pane').style.display = 'none';
-			document.querySelectorAll('.project-card').forEach(c => c.classList.remove('selected'));
-			selectedProjectId = null;
-		}
-
-		// ---- T2.1/T2.2: プロジェクト一覧レンダリング ----
+		// ---- T2.1/T2.2: コンパクトリストレンダリング ----
+		// クリックで詳細を WebView Editor (projectDetailPanel) で開く
 		function renderProjects(projects) {
 			_projectsCache = projects || [];
 			const list = document.getElementById('project-list');
@@ -2474,253 +2485,48 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 				hdr.className = 'section-header';
 				hdr.textContent = label;
 				list.appendChild(hdr);
-
-				const grid = document.createElement('div');
-				grid.className = 'project-grid';
-				items.forEach(p => grid.appendChild(makeProjectCard(p)));
-				list.appendChild(grid);
+				items.forEach(p => list.appendChild(makeProjectRow(p)));
 			}
 
 			renderSection(currentItems, '現在のプロジェクト');
 			renderSection(otherItems, 'その他');
 		}
 
-		function makeProjectCard(p) {
-			const card = document.createElement('div');
-			card.className = 'project-card';
-			card.dataset.id = p.id;
-			card.setAttribute('role', 'button');
-			card.setAttribute('aria-label', p.name + 'プロジェクト');
-			card.title = p.path;
+		function makeProjectRow(p) {
+			const row = document.createElement('div');
+			row.className = 'project-list-row';
+			row.setAttribute('role', 'listitem');
+			row.title = p.path;
 
-			const currentBadge = p.isCurrent ? '<span class="badge badge-current">現在</span>' : '';
-			const sourceBadge  = p.source === 'manual' ? '<span class="badge badge-manual">手動</span>' : '';
+			const currentBadge = p.isCurrent ? '<span class="badge badge-current" style="font-size:8px;">現在</span>' : '';
+			const manualBadge  = p.source === 'manual' ? '<span class="badge badge-manual" style="font-size:8px;">手動</span>' : '';
 
-			card.innerHTML =
-				'<div class="project-card-header">' +
-					'<span style="font-size:14px;" aria-hidden="true">📁</span>' +
-					'<span class="project-card-name">' + escHtml(p.name) + '</span>' +
-					'<div class="project-card-badges">' + currentBadge + sourceBadge + '</div>' +
-				'</div>' +
-				'<div class="project-card-path">' + escHtml(shortenPath(p.path)) + '</div>' +
-				'<div class="project-card-actions">' +
-					'<button class="project-card-btn" data-action="select">詳細</button>' +
-					'<button class="project-card-btn" data-action="vscode">VS Code</button>' +
-					'<button class="project-card-btn" data-action="terminal">端末</button>' +
-					(p.source === 'manual' ? '<button class="project-card-btn danger" data-action="remove">削除</button>' : '') +
+			row.innerHTML =
+				'<span aria-hidden="true" style="font-size:12px;flex-shrink:0;">📁</span>' +
+				'<span class="project-list-name">' + escHtml(p.name) + '</span>' +
+				'<span style="display:flex;gap:2px;flex-shrink:0;">' + currentBadge + manualBadge + '</span>' +
+				'<div class="project-list-actions">' +
+					'<button class="project-row-btn" data-action="detail" aria-label="' + escHtml(p.name) + 'の詳細を開く">詳細</button>' +
+					'<button class="project-row-btn" data-action="explorer" aria-label="エクスプローラで開く">📂</button>' +
+					(p.source === 'manual' ? '<button class="project-row-btn danger" data-action="remove" aria-label="登録を解除">削除</button>' : '') +
 				'</div>';
 
-			card.addEventListener('click', (e) => {
-				const action = e.target.dataset && e.target.dataset.action;
-				if (action === 'vscode') {
-					vscode.postMessage({ type: 'open-project', payload: { path: p.path } });
-					return;
-				}
-				if (action === 'terminal') {
-					vscode.postMessage({ type: 'open-terminal', payload: { path: p.path } });
-					return;
-				}
+			row.addEventListener('click', (e) => {
+				const btn = e.target.closest('[data-action]');
+				const action = btn ? btn.dataset.action : null;
 				if (action === 'remove') {
 					vscode.postMessage({ type: 'remove-project', payload: { id: p.id } });
-					if (selectedProjectId === p.id) { closeDetail(); }
 					return;
 				}
-				// カード全体クリック or 詳細ボタン → 詳細ペイン
-				document.querySelectorAll('.project-card').forEach(c => c.classList.remove('selected'));
-				card.classList.add('selected');
-				selectedProjectId = p.id;
-				document.getElementById('project-detail-pane').style.display = 'block';
-				document.getElementById('detail-project-name').textContent = p.name;
-				// メタデータ描画 (T2.3)
-				renderDetailMeta(p);
-				// 詳細データ要求
-				vscode.postMessage({ type: 'select-project', payload: { id: p.id } });
+				if (action === 'explorer') {
+					vscode.postMessage({ type: 'open-explorer', payload: { path: p.path } });
+					return;
+				}
+				// 行全体クリック or 詳細ボタン → WebView Editor で開く
+				vscode.postMessage({ type: 'open-project-detail', payload: { id: p.id } });
 			});
 
-			return card;
-		}
-
-		// ---- T2.3: 詳細ペイン — 概要 ----
-		function renderDetailMeta(p) {
-			const el = document.getElementById('detail-meta');
-			const rows = [
-				['パス', p.path],
-				['ソース', p.source === 'workspace' ? 'ワークスペース' : p.source === 'manual' ? '手動登録' : 'Claudeプロジェクト'],
-				['登録日', p.addedAt ? new Date(p.addedAt).toLocaleDateString('ja-JP') : '-'],
-			];
-			el.innerHTML = rows.map(([label, value]) =>
-				'<div class="detail-meta-row">' +
-					'<span class="detail-meta-label">' + escHtml(label) + '</span>' +
-					'<span class="detail-meta-value">' + escHtml(String(value)) + '</span>' +
-				'</div>'
-			).join('');
-		}
-
-		// ---- T2.7: 進捗ダッシュボード ----
-		function renderDetailProgress(progress) {
-			const el = document.getElementById('detail-progress');
-			if (!progress) { el.innerHTML = '<div class="info-text">データなし</div>'; return; }
-
-			const totalPending = progress.todos.reduce((s, t) => s + t.pending, 0);
-			const totalDone    = progress.todos.reduce((s, t) => s + t.done, 0);
-			const totalAll     = totalPending + totalDone;
-			const pct = totalAll > 0 ? Math.round(totalDone / totalAll * 100) : 0;
-
-			let html = '<div class="progress-stat">' +
-				'<span class="progress-stat-item"><span class="stat-dot stat-dot-todo"></span>TODO残 ' + totalPending + '件</span>' +
-				'<span class="progress-stat-item"><span class="stat-dot stat-dot-done"></span>完了 ' + totalDone + '件</span>' +
-				'<span class="progress-stat-item"><span class="stat-dot stat-dot-pending"></span>確認待ち ' +
-					progress.pendingTasks.reduce((s, t) => s + t.count, 0) + '件</span>' +
-			'</div>';
-
-			if (totalAll > 0) {
-				html += '<div class="progress-bar-wrap" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100">' +
-					'<div class="progress-bar-fill" style="width:' + pct + '%;"></div>' +
-				'</div>' +
-				'<div style="font-size:10px; color:var(--vscode-descriptionForeground); text-align:right;">' + pct + '% 完了</div>';
-			}
-
-			if (progress.history && progress.history.length > 0) {
-				html += '<div style="margin-top:6px; font-size:10px; font-weight:600; color:var(--vscode-descriptionForeground);">直近履歴</div>';
-				html += progress.history.slice(0, 5).map(h =>
-					'<div class="history-item">' +
-						'<span class="history-agent">' + escHtml(h.agent) + '</span>' +
-						'<span class="history-text">' + escHtml(h.lastEntry) + '</span>' +
-					'</div>'
-				).join('');
-			}
-
-			el.innerHTML = html;
-		}
-
-		// ---- T2.4: 紐づけエージェント管理 ----
-		function renderDetailAgents(assignedNames, allAgents, projectId) {
-			const assignedEl   = document.getElementById('detail-assigned-agents');
-			const candidatesEl = document.getElementById('detail-agent-candidates');
-
-			// 割当済みチップ
-			if (assignedNames.length === 0) {
-				assignedEl.innerHTML = '<div class="info-text">割当なし</div>';
-			} else {
-				assignedEl.innerHTML = '';
-				const wrap = document.createElement('div');
-				wrap.className = 'agent-assign-list';
-				assignedNames.forEach(name => {
-					const chip = document.createElement('span');
-					chip.className = 'agent-chip';
-					chip.innerHTML = escHtml(name) + ' <span class="agent-chip-remove" aria-label="' + escHtml(name) + 'を解除">✕</span>';
-					chip.title = name + ' — クリックで解除';
-					chip.addEventListener('click', () => {
-						vscode.postMessage({ type: 'unassign-agent', payload: { projectId, agentName: name } });
-					});
-					wrap.appendChild(chip);
-				});
-				assignedEl.appendChild(wrap);
-			}
-
-			// 未割当候補
-			const unassigned = allAgents.filter(a => !assignedNames.includes(a.name));
-			if (unassigned.length === 0) {
-				candidatesEl.innerHTML = '<div class="info-text">すべてのエージェントが割当済みです</div>';
-			} else {
-				candidatesEl.innerHTML = '';
-				const wrap = document.createElement('div');
-				wrap.className = 'agent-assign-list';
-				unassigned.slice(0, 10).forEach(a => {
-					const btn = document.createElement('button');
-					btn.className = 'agent-assign-item';
-					btn.textContent = '＋ ' + (a.displayName || a.name);
-					btn.title = a.role || a.name;
-					btn.setAttribute('aria-label', (a.displayName || a.name) + 'を割当');
-					btn.addEventListener('click', () => {
-						vscode.postMessage({ type: 'assign-agent', payload: { projectId, agentName: a.name } });
-					});
-					wrap.appendChild(btn);
-				});
-				candidatesEl.appendChild(wrap);
-			}
-		}
-
-		// ---- T2.5: メモリ管理 ----
-		function renderDetailMemory(memoryGroups, globalFiles) {
-			const el = document.getElementById('detail-memory');
-			let html = '';
-
-			if (globalFiles && globalFiles.length > 0) {
-				html += '<div style="font-size:10px; font-weight:600; color:var(--vscode-descriptionForeground); margin-bottom:3px;">グローバル</div>';
-				html += globalFiles.map(f => renderMemoryItem(f)).join('');
-			}
-
-			if (memoryGroups && memoryGroups.length > 0) {
-				memoryGroups.forEach(g => {
-					if (g.files && g.files.length > 0) {
-						html += '<div style="font-size:10px; font-weight:600; color:var(--vscode-descriptionForeground); margin:5px 0 3px;">' + escHtml(g.project) + '</div>';
-						html += g.files.map(f => renderMemoryItem(f)).join('');
-					}
-				});
-			}
-
-			if (!html) { html = '<div class="info-text">メモリファイルなし</div>'; }
-			el.innerHTML = html;
-		}
-
-		function renderMemoryItem(f) {
-			const typeClass = 'memory-type-' + (f.type || 'project');
-			return '<div class="memory-item">' +
-				'<span class="memory-type-badge ' + typeClass + '">' + escHtml(f.type || 'project') + '</span>' +
-				'<span class="memory-name">' + escHtml(f.name) + '</span>' +
-				(f.description ? ' <span class="memory-desc">— ' + escHtml(f.description) + '</span>' : '') +
-			'</div>';
-		}
-
-		// ---- T2.21: ミニ組織図 ----
-		function renderDetailMiniOrg(nodes) {
-			const el = document.getElementById('detail-mini-org');
-			if (!nodes || nodes.length === 0) {
-				el.innerHTML = '<div class="info-text">割当エージェントなし</div>';
-				return;
-			}
-
-			// 簡易ツリー: parent=null → ルート、それ以外 → 子
-			const roots   = nodes.filter(n => !n.parent);
-			const children = nodes.filter(n => n.parent);
-
-			function modelClass(model) {
-				if (model === 'opus')  return 'model-opus';
-				if (model === 'haiku') return 'model-haiku';
-				return 'model-sonnet';
-			}
-
-			function nodeHtml(n, indent) {
-				const indentClass = indent === 1 ? 'indent-1' : indent === 2 ? 'indent-2' : '';
-				const prefix = indent > 0 ? '<span class="mini-org-indent">└─</span>' : '';
-				return '<div class="mini-org-node ' + indentClass + '">' +
-					prefix +
-					'<span class="mini-org-model model-badge ' + modelClass(n.model) + '">' + escHtml(n.model) + '</span>' +
-					'<span class="mini-org-name" title="' + escHtml(n.role || n.id) + '">' + escHtml(n.label || n.id) + '</span>' +
-				'</div>';
-			}
-
-			let html = '<div class="mini-org-tree">';
-			for (const root of roots) {
-				html += nodeHtml(root, 0);
-				const level1 = children.filter(c => c.parent === root.id);
-				for (const c1 of level1) {
-					html += nodeHtml(c1, 1);
-					const level2 = children.filter(c => c.parent === c1.id);
-					for (const c2 of level2) {
-						html += nodeHtml(c2, 2);
-					}
-				}
-			}
-			// 孤立ノード（parent指定あるが実際の親が一覧にない）
-			const rootIds = new Set(roots.map(r => r.id));
-			const orphans = children.filter(c => !rootIds.has(c.parent));
-			for (const o of orphans) {
-				html += nodeHtml(o, 0);
-			}
-			html += '</div>';
-			el.innerHTML = html;
+			return row;
 		}
 
 		// ================================================================
@@ -2912,19 +2718,6 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 
 				case 'project-tree-data':
 					renderProjectTree(msg.trees);
-					break;
-
-				case 'project-detail':
-					// T2.3: 概要（既にrenderDetailMetaが呼ばれているので更新のみ）
-					renderDetailMeta(msg.project);
-					// T2.7: 進捗
-					renderDetailProgress(msg.progress);
-					// T2.4: エージェント割当
-					renderDetailAgents(msg.assignedAgentNames, msg.allAgents, msg.project.id);
-					// T2.21: ミニ組織図
-					renderDetailMiniOrg(msg.miniOrgNodes || []);
-					// T2.5: メモリ
-					renderDetailMemory(msg.memoryGroups, msg.globalMemoryFiles);
 					break;
 
 				case 'agents-data':
