@@ -38,6 +38,16 @@
 3. `claudeMain` 内の別タブ（セッション等）をクリック → `setContext` で `activeTab` 更新
 4. `claudeMain` が非表示、`claudeTabBar` が再表示
 
+### isOtherProject クロスプラットフォームパス比較修正
+
+`agentTreeProvider.ts` の `isOtherProject` 関数で、エージェントの `workDir`（Windows パス: `c:\GDrive\Craftwork`）を
+Linux の VS Code ワークスペースパス（`/mnt/hgfs/GDrive/craftwork`）と直接比較していたため、
+`workDir` 設定済みエージェントが全て「他プロジェクト」として扱われていた問題を修正。
+
+- `agentUtils.ts` に既存の `translateWorkDirPath()` を `agentTreeProvider.ts` の `isOtherProject` でも使用するよう変更
+- `workDir` をパス比較前に Linux パスへ変換（`c:/GDrive/` → `/mnt/hgfs/GDrive/`）
+- `ruleFile` パスは disk から読み取った絶対 Linux パスのため変換不要（変更なし）
+
 ### プロジェクト情報パネル削除（ユーザー意図と相違のため revert）
 
 commit ccbedcf で追加した `claudeProjectInfo` WebView パネルをリバート。

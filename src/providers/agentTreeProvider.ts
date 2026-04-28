@@ -5,7 +5,8 @@ import { AgentConfig, ParsedSession, TaskLog } from '../models/types';
 import * as dataStore from '../models/dataStore';
 import { getRuleFileInfo, resolveRuleFilePath } from '../agents/agentManager';
 import { isLegacyAutoFormat, hasFrontmatter } from '../utils/frontmatterUtils';
-import { shouldShowInOrgChart } from '../utils/agentUtils';
+import { shouldShowInOrgChart, translateWorkDirPath } from '../utils/agentUtils';
+import { resolveExternalSessionTitles } from '../utils/sessionLoader';
 
 type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem | SessionInjectInstallBannerItem;
 
@@ -156,6 +157,14 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			for (const s of sessions) {
 				titleMap.set(s.id, s.customName || s.claudeTitle || s.firstMessage.substring(0, 40));
 			}
+			// 現ワークスペースに無いセッションID（他プロジェクト）を全プロジェクト横断で解決
+			const missingSessionIds = globalAgents
+				.map(a => a.sessionId)
+				.filter((sid): sid is string => !!sid && !titleMap.has(sid));
+			if (missingSessionIds.length > 0) {
+				const externalTitles = await resolveExternalSessionTitles(missingSessionIds);
+				for (const [sid, title] of externalTitles) { titleMap.set(sid, title); }
+			}
 
 			const activeNames = this.activeAgentNamesFn();
 			const checkLive = (agent: AgentConfig): boolean => {
@@ -192,7 +201,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			if (!currentWorkspace) { return false; }
 			// workDirが設定されていて、現在のワークスペースと一致しない場合は「他プロジェクト」
 			if (a.workDir) {
-				const agentDir = a.workDir.toLowerCase().replace(/\\/g, '/');
+				const agentDir = translateWorkDirPath(a.workDir).toLowerCase().replace(/\\/g, '/');
 				return !(agentDir.startsWith(currentWorkspace) || currentWorkspace.startsWith(agentDir));
 			}
 			// プロジェクトスコープ: ruleFileのパスでワークスペース一致判定
@@ -213,6 +222,14 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		const titleMap = new Map<string, string>();
 		for (const s of sessions) {
 			titleMap.set(s.id, s.customName || s.claudeTitle || s.firstMessage.substring(0, 40));
+		}
+		// 他プロジェクトのセッションIDを全プロジェクト横断で解決
+		const missingSessionIds = agents
+			.map(a => a.sessionId)
+			.filter((sid): sid is string => !!sid && !titleMap.has(sid));
+		if (missingSessionIds.length > 0) {
+			const externalTitles = await resolveExternalSessionTitles(missingSessionIds);
+			for (const [sid, title] of externalTitles) { titleMap.set(sid, title); }
 		}
 
 		// エージェント名一覧（親の存在チェック用）
