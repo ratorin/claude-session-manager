@@ -7,8 +7,9 @@ import { getRuleFileInfo, resolveRuleFilePath } from '../agents/agentManager';
 import { isLegacyAutoFormat, hasFrontmatter } from '../utils/frontmatterUtils';
 import { shouldShowInOrgChart, translateWorkDirPath } from '../utils/agentUtils';
 import { resolveExternalSessionTitles } from '../utils/sessionLoader';
+import { getBookmarks } from '../services/bookmarkService';
 
-type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem | SessionInjectInstallBannerItem;
+type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem | SessionInjectInstallBannerItem | FavoriteTreeSectionItem | FavoriteAgentItem;
 
 // D&DのMIMEタイプ
 const AGENT_MIME = 'application/vnd.csm.agent';
@@ -190,6 +191,44 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			return result;
 		}
 
+		// ⭐ お気に入りツリーセクション の子
+		if (element instanceof FavoriteTreeSectionItem) {
+			const allAgents = await dataStore.getAgents();
+			const sessions = this.getSessionsFn();
+			const titleMap = new Map<string, string>();
+			for (const s of sessions) {
+				titleMap.set(s.id, s.customName || s.claudeTitle || s.firstMessage.substring(0, 40));
+			}
+			const activeNames = this.activeAgentNamesFn();
+			const checkLive = (a: AgentConfig): boolean =>
+				activeNames.has(a.name) || (a.sessionId ? this.isLiveFn(a.sessionId) : false);
+			return this._buildFavoriteRoots(allAgents, titleMap, checkLive);
+		}
+
+		// ⭐ お気に入りツリーの子エージェント（neededSet内の直接子のみ）
+		if (element instanceof FavoriteAgentItem) {
+			const allAgents = await dataStore.getAgents();
+			const sessions = this.getSessionsFn();
+			const titleMap = new Map<string, string>();
+			for (const s of sessions) {
+				titleMap.set(s.id, s.customName || s.claudeTitle || s.firstMessage.substring(0, 40));
+			}
+			const activeNames = this.activeAgentNamesFn();
+			const checkLive = (a: AgentConfig): boolean =>
+				activeNames.has(a.name) || (a.sessionId ? this.isLiveFn(a.sessionId) : false);
+			const needed = element.neededSet;
+			const bookmarks = new Set(getBookmarks());
+			const children = allAgents
+				.filter(a => a.parentAgent === element.agent.name && needed.has(a.name))
+				.sort((a, b) => {
+					const aLive = checkLive(a) ? 0 : 1;
+					const bLive = checkLive(b) ? 0 : 1;
+					if (aLive !== bLive) { return aLive - bLive; }
+					return a.name.localeCompare(b.name);
+				});
+			return children.map(a => this._makeFavoriteItem(a, allAgents, needed, bookmarks, titleMap, checkLive));
+		}
+
 		const allAgents = await dataStore.getAgents();
 
 		// 現在のワークスペースパス（小文字・スラッシュ統一）
@@ -296,6 +335,12 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				result.push(new MigrationBannerItem(legacyAgents.length));
 			}
 
+			// ⭐ お気に入りツリーセクション（ブックマークが1件以上の時のみ）
+			const bookmarkNames = getBookmarks();
+			if (bookmarkNames.length > 0) {
+				result.push(new FavoriteTreeSectionItem());
+			}
+
 			// トップレベル: parentAgent 未設定（または孤児）かつ組織図表示対象
 			// グローバルエージェント は仮想親の下に移動したので除外
 			const topLevel = agents.filter((a) => (!a.parentAgent || !agentNames.has(a.parentAgent)) && shouldShowInOrgChart(a));
@@ -356,6 +401,55 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		}
 
 		return result;
+	}
+
+	// ⭐ お気に入りツリー: ルートノード一覧を構築
+	private _buildFavoriteRoots(
+		allAgents: AgentConfig[],
+		titleMap: Map<string, string>,
+		checkLive: (a: AgentConfig) => boolean,
+	): FavoriteAgentItem[] {
+		const bookmarkNames = getBookmarks();
+		if (bookmarkNames.length === 0) { return []; }
+		const bookmarks = new Set(bookmarkNames);
+		const agentMap = new Map(allAgents.map(a => [a.name, a]));
+
+		// 必要ノード集合: ★ノードから祖先を全部辿る
+		const needed = new Set<string>();
+		for (const name of bookmarks) {
+			let cur: string | undefined = name;
+			while (cur && agentMap.has(cur)) {
+				needed.add(cur);
+				cur = agentMap.get(cur)!.parentAgent;
+			}
+		}
+
+		// ルートノード: needed 内で parentAgent が needed に含まれないもの
+		const roots = allAgents
+			.filter(a => needed.has(a.name) && (!a.parentAgent || !needed.has(a.parentAgent)))
+			.sort((a, b) => a.name.localeCompare(b.name));
+
+		return roots.map(a => this._makeFavoriteItem(a, allAgents, needed, bookmarks, titleMap, checkLive));
+	}
+
+	// ⭐ お気に入りツリー: 単一ノードを生成
+	private _makeFavoriteItem(
+		agent: AgentConfig,
+		allAgents: AgentConfig[],
+		needed: ReadonlySet<string>,
+		bookmarks: ReadonlySet<string>,
+		titleMap: Map<string, string>,
+		checkLive: (a: AgentConfig) => boolean,
+	): FavoriteAgentItem {
+		const hasChildren = allAgents.some(c => c.parentAgent === agent.name && needed.has(c.name));
+		return new FavoriteAgentItem(
+			agent,
+			checkLive(agent),
+			agent.sessionId ? titleMap.get(agent.sessionId) : undefined,
+			hasChildren,
+			!bookmarks.has(agent.name),
+			needed,
+		);
 	}
 }
 
@@ -680,6 +774,57 @@ async function detectLegacyAgents(agents: AgentConfig[]): Promise<AgentConfig[]>
 		}
 	}
 	return legacy;
+}
+
+// ⭐ お気に入りツリー セクションヘッダ
+export class FavoriteTreeSectionItem extends vscode.TreeItem {
+	constructor() {
+		super('⭐ お気に入りツリー', vscode.TreeItemCollapsibleState.Expanded);
+		this.description = 'ブックマーク済みエージェントの階層';
+		this.tooltip = new vscode.MarkdownString(
+			`**⭐ お気に入りツリー**\n\n` +
+			`ブックマーク（★）済みエージェントを親子階層で表示します。\n\n` +
+			`★ のないノードはツリー経路を示す中間ノードです。`
+		);
+		this.iconPath = new vscode.ThemeIcon('star-full', new vscode.ThemeColor('charts.yellow'));
+		this.contextValue = 'favoriteTreeSection';
+	}
+}
+
+// ⭐ お気に入りツリー内のエージェントノード
+export class FavoriteAgentItem extends AgentItem {
+	/** このツリー内で表示が必要な全ノード名のセット */
+	public readonly neededSet: ReadonlySet<string>;
+	/** true = ★ なしの経路中間ノード */
+	public readonly isIntermediateNode: boolean;
+
+	constructor(
+		agent: AgentConfig,
+		isLive: boolean,
+		sessionTitle: string | undefined,
+		hasChildren: boolean,
+		isIntermediate: boolean,
+		neededSet: ReadonlySet<string>,
+	) {
+		super(agent, isLive, sessionTitle, true, hasChildren, '', false, undefined, false);
+		this.neededSet = neededSet;
+		this.isIntermediateNode = isIntermediate;
+
+		if (isIntermediate) {
+			// 中間ノード: グレーアウトしてパス経由であることを示す
+			this.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('disabledForeground'));
+			this.description = `(経由)  ${typeof this.description === 'string' ? this.description : ''}`.trimEnd();
+		} else {
+			// ★ ブックマークノード: 黄色い星
+			this.iconPath = new vscode.ThemeIcon('star-full', new vscode.ThemeColor('charts.yellow'));
+		}
+
+		// contextValue を上書き（右クリックメニュー分岐用）
+		const linked = agent.sessionId ? 'Linked' : '';
+		this.contextValue = isIntermediate
+			? 'favoriteAgentIntermediate'
+			: `favoriteAgent${linked}`;
+	}
 }
 
 // タスクログのTreeItem
