@@ -19,37 +19,70 @@ function escapeTableCell(value: string): string {
 	return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
 
-// 子エージェント一覧からマーカー付きMarkdownセクションを生成
-function buildChildrenSection(children: AgentConfig[]): string {
-	if (children.length === 0) { return ''; }
+// 汎用連携先エージェント（どの部署からも利用可能）
+const COMMON_COLLABORATORS = ['qa', 'researcher'];
 
-	const lines: string[] = [
-		START_MARKER,
-		'## 配下エージェント',
-		'',
-		'| 部署名 | モデル | 役割 | セッションモード |',
-		'|--------|--------|------|------------------|',
-	];
+// 子エージェント一覧 + 連携先からマーカー付きMarkdownセクションを生成
+function buildChildrenSection(children: AgentConfig[], parentName?: string, allAgents?: AgentConfig[]): string {
+	const lines: string[] = [START_MARKER];
 
-	const sorted = [...children].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
-	for (const c of sorted) {
-		const name = escapeTableCell(c.name);
-		const model = escapeTableCell(c.model);
-		const mode = c.sessionMode === 'disposable' ? '使い捨て' : '固定';
-		const role = escapeTableCell(c.role || '未設定');
-		lines.push(`| ${name} | ${model} | ${role} | ${mode} |`);
+	// 配下エージェント（子がいる場合のみ）
+	if (children.length > 0) {
+		lines.push('## 配下エージェント');
+		lines.push('');
+		lines.push('| 部署名 | モデル | 役割 | セッションモード |');
+		lines.push('|--------|--------|------|------------------|');
+
+		const sorted = [...children].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+		for (const c of sorted) {
+			const name = escapeTableCell(c.displayName ? `${c.displayName}（${c.name}）` : c.name);
+			const model = escapeTableCell(c.model);
+			const mode = c.sessionMode === 'disposable' ? '使い捨て' : '固定';
+			const role = escapeTableCell(c.role || '未設定');
+			lines.push(`| ${name} | ${model} | ${role} | ${mode} |`);
+		}
+		lines.push('');
 	}
 
-	lines.push('');
-	lines.push('### 子エージェントへの委任方法');
-	lines.push('`/ask-agent` スキルを使用してください。セッションID・モデル・権限モードは自動取得されます。');
+	// 連携先エージェント（兄弟 + 汎用）
+	if (parentName && allAgents) {
+		const parent = allAgents.find(a => a.name === parentName);
+		const grandParent = parent?.parentAgent;
+
+		// 兄弟 = 同じ親を持つエージェント（自分と自分の子を除く）
+		const childNames = new Set(children.map(c => c.name));
+		const siblings = grandParent
+			? allAgents.filter(a => a.parentAgent === grandParent && a.name !== parentName && !childNames.has(a.name))
+			: [];
+
+		// 汎用エージェント（自分・自分の子・兄弟と重複しないもの）
+		const alreadyListed = new Set([parentName, ...childNames, ...siblings.map(s => s.name)]);
+		const commons = allAgents.filter(a => COMMON_COLLABORATORS.includes(a.name) && !alreadyListed.has(a.name));
+
+		const collaborators = [...siblings, ...commons];
+		if (collaborators.length > 0) {
+			lines.push('### 連携先エージェント');
+			lines.push('`/csm-ask-agent` で直接やりとりできます。');
+			lines.push('');
+			for (const c of collaborators) {
+				const dispName = c.displayName ? `${c.displayName}（${c.name}）` : c.name;
+				lines.push(`- **${dispName}**: ${c.role || '未設定'}`);
+			}
+			lines.push('');
+		}
+	}
+
+	// 委任方法
+	lines.push('### エージェントへの指示方法');
+	lines.push('`/csm-ask-agent` スキルを使用してください。セッションID・モデル・権限モードは自動取得されます。');
 	lines.push('');
 	lines.push('```');
-	lines.push('/ask-agent <子エージェント名> "指示内容"');
+	lines.push('/csm-ask-agent <エージェント名> "指示内容"');
 	lines.push('```');
 	lines.push('');
-	lines.push('繰り返し `/ask-agent` を呼ぶことで、子のセッションに会話が蓄積され反復的にやりとりできます。');
-	lines.push('`-p` モードのため子エージェントは質問できません。不明点は出力に書かれます。');
+	lines.push('繰り返し `/csm-ask-agent` を呼ぶことで、相手のセッションに会話が蓄積され反復的にやりとりできます。');
+	lines.push('`-p` モードのため相手は質問できません。不明点は出力に書かれます。');
+	lines.push('エージェント一覧: `python ~/.claude/scripts/csm-ask-agent.py --list`');
 	lines.push('');
 
 	lines.push(END_MARKER);
@@ -131,7 +164,7 @@ async function doSync(parentName: string, outputChannel?: vscode.OutputChannel):
 
 	// 子エージェント一覧を取得（全スコープ統合）
 	const children = agents.filter(a => a.parentAgent === parentName);
-	const newSection = buildChildrenSection(children);
+	const newSection = buildChildrenSection(children, parentName, agents);
 
 	// マーカーセクションを置換
 	const result = replaceChildrenSection(content, newSection);

@@ -25,6 +25,9 @@ export class TaskTracker implements vscode.Disposable {
 
 		const config = vscode.workspace.getConfiguration('claudeManager');
 		const stalledThreshold = Math.max(10, config.get<number>('taskStalledThreshold', 60)) * 1000;
+		// Claude Code v2.1.113+ はサブエージェントが10分ストールで明示失敗するが
+		// 対話セッションで無操作時間を誤検知する false positive を避けるため既定を30分に設定
+		const errorThreshold = Math.max(stalledThreshold, config.get<number>('taskErrorThreshold', 1800) * 1000);
 
 		// 変更があったログのバッチ更新用リスト
 		const batchUpdates: { id: string; changes: Partial<TaskLog> }[] = [];
@@ -43,7 +46,15 @@ export class TaskTracker implements vscode.Disposable {
 				// PID生存
 				if (mtime !== undefined) {
 					const elapsed = Date.now() - mtime;
-					newStatus = elapsed > stalledThreshold ? 'stalled' : 'running';
+					if (elapsed > errorThreshold) {
+						// 10分以上無反応 → Claude Code v2.1.113+ が明示失敗させるタイミング
+						newStatus = 'error';
+						completedAt = Date.now();
+					} else if (elapsed > stalledThreshold) {
+						newStatus = 'stalled';
+					} else {
+						newStatus = 'running';
+					}
 				} else {
 					newStatus = 'running';
 				}

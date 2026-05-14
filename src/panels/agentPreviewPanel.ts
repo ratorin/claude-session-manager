@@ -541,7 +541,9 @@ ${collaborators.length > 0 ? `
 	</div>
 	${hasTodo
 		? `<div class="todo-block">${renderTodoMarkdown(todoContent)}</div>`
-		: `<div class="empty-msg">OFFの状態です。ONにするとTODO管理が有効になります</div>`
+		: (todoOn
+			? `<div class="empty-msg">ON状態です。TODO.md はまだ空です（エージェントがタスクを追加すると反映されます）</div>`
+			: `<div class="empty-msg">OFF状態です。ONにするとTODO管理が有効になります</div>`)
 	}
 </div>
 
@@ -554,7 +556,9 @@ ${collaborators.length > 0 ? `
 	</div>
 	${hasHistory
 		? `<div class="history-block">${renderHistoryMarkdown(historyContent)}</div>`
-		: `<div class="empty-msg">OFFの状態です。ONにするとセッション履歴記録が有効になります</div>`
+		: (historyOn
+			? `<div class="empty-msg">ON状態です。HISTORY.md はまだ空です（セッション終了時に自動追記されます）</div>`
+			: `<div class="empty-msg">OFF状態です。ONにするとセッション履歴記録が有効になります</div>`)
 	}
 </div>
 

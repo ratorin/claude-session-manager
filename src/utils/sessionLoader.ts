@@ -2,10 +2,103 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { ParsedSession, SessionMessage, SimpleMessage, ContentBlock } from '../models/types';
+import { translateWorkDirPath } from './agentUtils';
 
 // Claude Codeのデータディレクトリを取得
 export function getClaudeDir(): string {
 	return path.join(os.homedir(), '.claude');
+}
+
+// 指定sessionIdのタイトルを全プロジェクト横断で検索
+// ~/.claude/projects/*/<sessionId>.jsonl を走査し claudeTitle/firstUserMessage を抽出
+// エージェントツリーの「他プロジェクトにあるセッション」の表示名解決用
+const _externalTitleCache = new Map<string, { title: string; ts: number }>();
+const EXTERNAL_TITLE_TTL_MS = 60_000;
+
+export async function resolveExternalSessionTitles(sessionIds: string[]): Promise<Map<string, string>> {
+	const result = new Map<string, string>();
+	const now = Date.now();
+	const unresolved: string[] = [];
+	for (const id of sessionIds) {
+		if (!id) { continue; }
+		const cached = _externalTitleCache.get(id);
+		if (cached && (now - cached.ts) < EXTERNAL_TITLE_TTL_MS) {
+			if (cached.title) { result.set(id, cached.title); }
+		} else {
+			unresolved.push(id);
+		}
+	}
+	if (unresolved.length === 0) { return result; }
+
+	const projectsDir = path.join(getClaudeDir(), 'projects');
+	let projectDirs: string[] = [];
+	try {
+		const entries = await fs.promises.readdir(projectsDir, { withFileTypes: true });
+		projectDirs = entries.filter(e => e.isDirectory()).map(e => path.join(projectsDir, e.name));
+	} catch {
+		return result;
+	}
+
+	await Promise.all(unresolved.map(async (sid) => {
+		for (const pDir of projectDirs) {
+			const fp = path.join(pDir, `${sid}.jsonl`);
+			try {
+				await fs.promises.access(fp);
+			} catch {
+				continue;
+			}
+			const title = await extractSessionTitle(fp);
+			_externalTitleCache.set(sid, { title, ts: now });
+			if (title) { result.set(sid, title); }
+			return;
+		}
+		_externalTitleCache.set(sid, { title: '', ts: now });
+	}));
+	return result;
+}
+
+// セッションJSONLから軽量にタイトル抽出（customTitle/ai-title 優先、次点で最初のユーザーメッセージ）
+async function extractSessionTitle(filePath: string): Promise<string> {
+	try {
+		const handle = await fs.promises.open(filePath, 'r');
+		try {
+			const stat = await handle.stat();
+			const readSize = Math.min(stat.size, 256 * 1024); // 先頭256KBのみ
+			if (readSize === 0) { return ''; }
+			const buf = Buffer.alloc(readSize);
+			await handle.read(buf, 0, readSize, 0);
+			const text = buf.toString('utf-8');
+			const lines = text.split('\n');
+			let firstUserMessage = '';
+			let firstQueueContent = ''; // -p モードの初回プロンプト（user message より優先度低）
+			for (const line of lines) {
+				if (!line.trim()) { continue; }
+				let parsed: { type?: string; customTitle?: string; aiTitle?: string; operation?: string; content?: string; message?: { role?: string; content?: unknown } } | null = null;
+				try { parsed = JSON.parse(line); } catch { continue; }
+				if (!parsed) { continue; }
+				if (parsed.type === 'custom-title' && parsed.customTitle) { return String(parsed.customTitle); }
+				if (parsed.type === 'ai-title' && parsed.aiTitle) { return String(parsed.aiTitle); }
+				if (!firstUserMessage && parsed.type === 'user' && parsed.message?.role === 'user') {
+					const content = parsed.message.content;
+					if (typeof content === 'string') {
+						firstUserMessage = content.substring(0, 40);
+					} else if (Array.isArray(content)) {
+						const textBlock = content.find((b: { type?: string; text?: string }) => b.type === 'text');
+						if (textBlock?.text) { firstUserMessage = String(textBlock.text).substring(0, 40); }
+					}
+				}
+				// -p モード（csm-ask-agent 経由）の初回プロンプトを queue-operation から拾う
+				if (!firstQueueContent && parsed.type === 'queue-operation' && parsed.operation === 'enqueue' && typeof parsed.content === 'string') {
+					firstQueueContent = parsed.content.substring(0, 40);
+				}
+			}
+			return firstUserMessage || firstQueueContent;
+		} finally {
+			await handle.close();
+		}
+	} catch {
+		return '';
+	}
 }
 
 // セッションファイル情報（親/子の区別付き）
@@ -107,9 +200,35 @@ export async function getSessionFileInfos(): Promise<SessionFileInfo[]> {
 		}
 	}));
 
-	cachedFileInfos = files;
+	// UUID重複排除: 同じsessionIdが複数のproject dirに存在する場合（クロスプラットフォームブリッジ等）、
+	// mtimeが最新のものだけ残す。subagentファイルはネスト構造で実質ユニークなので除外せず温存。
+	const dedupKey = (info: SessionFileInfo): string => {
+		if (info.isSubagent) { return info.filePath; }
+		return path.basename(info.filePath); // <UUID>.jsonl
+	};
+	const fileMtimes = new Map<string, number>();
+	await Promise.all(files.map(async (f) => {
+		try {
+			const st = await fs.promises.stat(f.filePath);
+			fileMtimes.set(f.filePath, st.mtimeMs);
+		} catch {
+			fileMtimes.set(f.filePath, 0);
+		}
+	}));
+	const seen = new Map<string, SessionFileInfo>();
+	for (const f of files) {
+		const k = dedupKey(f);
+		const prev = seen.get(k);
+		if (!prev) { seen.set(k, f); continue; }
+		const tNew = fileMtimes.get(f.filePath) ?? 0;
+		const tPrev = fileMtimes.get(prev.filePath) ?? 0;
+		if (tNew > tPrev) { seen.set(k, f); }
+	}
+	const dedupedFiles = Array.from(seen.values());
+
+	cachedFileInfos = dedupedFiles;
 	cachedFileInfosTimestamp = now;
-	return files;
+	return dedupedFiles;
 }
 
 // subagentのmeta.jsonを読み込み
@@ -204,11 +323,11 @@ function extractText(content: string | ContentBlock[], includeThinking: boolean 
 
 // プロジェクト名をディレクトリ名からデコード（フォールバック用）
 function decodeProjectName(dirName: string): string {
-	// "c--xampp" のような形式
+	// "c--xampp" のような形式（- はパス区切り文字）
 	return dirName
 		.replace(/^([a-zA-Z])--/, '$1:\\')
 		.replace(/--/g, '\\')
-		.replace(/-/g, ' ');
+		.replace(/-/g, '\\');
 }
 
 // エンコードされたプロジェクトディレクトリ名→実パスのマッピングを構築（非同期+キャッシュ）
@@ -381,8 +500,9 @@ export async function parseSessionFile(filePath: string, includeThinking: boolea
 		}
 
 		// プロジェクトパス: JSONLのcwdを優先、なければディレクトリ名からデコード
+		// translateWorkDirPathでWindows→Linux HGFSパスに変換（dev-lamp対応）
 		const projectDir = path.basename(path.dirname(filePath));
-		const project = cwd || decodeProjectName(projectDir);
+		const project = translateWorkDirPath(cwd || decodeProjectName(projectDir));
 		const id = sessionId || path.basename(filePath, '.jsonl');
 
 		return {
@@ -708,7 +828,7 @@ async function parseSessionQuick(filePath: string): Promise<ParsedSession | null
 		// ファイルサイズはそのまま保持（セッションのボリューム指標として使用）
 
 		const projectDir = path.basename(path.dirname(filePath));
-		const project = headState.cwd || decodeProjectName(projectDir);
+		const project = translateWorkDirPath(headState.cwd || decodeProjectName(projectDir));
 		const id = headState.sessionId || path.basename(filePath, '.jsonl');
 
 		return {

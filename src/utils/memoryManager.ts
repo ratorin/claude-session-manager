@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { MemoryFile } from '../models/types';
 import { buildProjectPathMap } from './sessionLoader';
+import { translateWorkDirPath } from './agentUtils';
 import { parseFrontmatter as parseFrontmatterYaml } from './frontmatterUtils';
 
 // メモリディレクトリの一覧を取得（非同期）
@@ -162,10 +163,12 @@ export async function loadMemoryFiles(): Promise<{ dir: string; project: string;
 	for (const dir of dirs) {
 		const projectDir = path.basename(path.dirname(dir));
 		// セッションJSONLのcwdから実パスを取得、なければフォールバックデコード
-		const project = pathMap.get(projectDir) || projectDir
+		// translateWorkDirPathでWindows→Linux HGFSパスに変換（dev-lamp対応）
+		const rawProject = pathMap.get(projectDir) || projectDir
 			.replace(/^([a-zA-Z])--/, '$1:\\')
 			.replace(/--/g, '\\')
 			.replace(/-/g, ' ');
+		const project = translateWorkDirPath(rawProject);
 
 		const files: MemoryFile[] = [];
 		let entries: string[];
@@ -205,7 +208,25 @@ export async function loadMemoryFiles(): Promise<{ dir: string; project: string;
 		}
 	}
 
-	return result;
+	// 同一プロジェクトパス（Windows→Linux変換後）のエントリをマージして重複を除去
+	// Linux側フォルダ（-mnt-hgfs- を含むdir）を優先し、旧Windowsフォルダのファイルを補完
+	const mergedMap = new Map<string, { dir: string; project: string; files: MemoryFile[] }>();
+	for (const entry of result) {
+		const key = entry.project.toLowerCase();
+		const existing = mergedMap.get(key);
+		if (!existing) {
+			mergedMap.set(key, entry);
+		} else {
+			const preferEntry = entry.dir.includes('-mnt-hgfs-') && !existing.dir.includes('-mnt-hgfs-');
+			const primary = preferEntry ? entry : existing;
+			const secondary = preferEntry ? existing : entry;
+			const primaryNames = new Set(primary.files.map(f => f.fileName));
+			const mergedFiles = [...primary.files, ...secondary.files.filter(f => !primaryNames.has(f.fileName))];
+			mergedMap.set(key, { dir: primary.dir, project: primary.project, files: mergedFiles });
+		}
+	}
+
+	return Array.from(mergedMap.values());
 }
 
 // メモリインデックス（MEMORY.md）の容量情報を取得

@@ -40,9 +40,43 @@ def main():
     if not agent_name:
         return
 
-    # HISTORY.mdのパス
-    history_file = os.path.join(os.path.expanduser('~'), '.claude', 'agents', agent_name, 'HISTORY.md')
-    if not os.path.isfile(history_file):
+    # HISTORY.mdのパス: エージェント定義 .md の実在スコープに合わせる
+    # （プロジェクト優先 → グローバル）。フロントマターに historyScope があれば上書き
+    import re
+    home = os.path.expanduser('~')
+    cwd = input_data.get('cwd', os.getcwd())
+    global_history = os.path.join(home, '.claude', 'agents', agent_name, 'HISTORY.md')
+    project_history = os.path.join(cwd, '.claude', 'agents', agent_name, 'HISTORY.md')
+    scoped = [
+        (os.path.join(cwd, '.claude', 'agents', agent_name + '.md'), project_history),
+        (os.path.join(home, '.claude', 'agents', agent_name + '.md'), global_history),
+    ]
+    history_file = ''
+    override = ''
+    for md_path, hist_path in scoped:
+        if not os.path.isfile(md_path):
+            continue
+        try:
+            with open(md_path, 'r', encoding='utf-8') as mf:
+                md_content = mf.read()
+        except Exception:
+            continue
+        fm = re.match(r'---\r?\n([\s\S]*?)\r?\n---', md_content)
+        if not fm:
+            continue
+        front = fm.group(1)
+        if not re.search(r'^historyEnabled:\s*true\s*$', front, re.M):
+            continue
+        history_file = hist_path
+        m2 = re.search(r'^historyScope:\s*[\"\']?(global|project)[\"\']?\s*$', front, re.M)
+        if m2:
+            override = m2.group(1)
+        break
+    if override == 'global':
+        history_file = global_history
+    elif override == 'project':
+        history_file = project_history
+    if not history_file or not os.path.isfile(history_file):
         return
 
     # トランスクリプトから直近のやり取りを要約
