@@ -4,3 +4,10 @@ out/
 local/
 .trash/
 docs/qiita/
+
+# 一時スクリプト・エージェント出力 (2026-05-14)
+temp/
+docs/agent_*.txt
+docs/feedback/
+.claude/agent-memory/
+.vscode/
