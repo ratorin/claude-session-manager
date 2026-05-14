@@ -139,7 +139,26 @@ function main() {
 	try {
 		fs.appendFileSync(historyPath, entryText, 'utf-8');
 	} catch { /* noop */ }
-	process.stdout.write('{}');
+
+	// terminalSequence 通知 (Claude Code 2.1.141+)
+	// session-manager.json の hookSettings.desktopNotification が true の場合のみ発火 (opt-in)
+	let desktopNotification = false;
+	try {
+		const smData = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'session-manager.json'), 'utf-8'));
+		desktopNotification = smData.hookSettings?.desktopNotification === true;
+	} catch { /* 設定読み取り失敗は無視 */ }
+
+	if (desktopNotification) {
+		// Claude Code 2.1.141+ terminalSequence:
+		// ESC ]2;... BEL = xterm window title (shows in taskbar / triggers terminal notification)
+		// BEL (\u0007) = terminal bell (audible / OS notification if terminal configured)
+		const esc = '\u001b';
+		const bel = '\u0007';
+		const titleSeq = `${esc}]2;CSM: ${agentName} \u30BB\u30C3\u30B7\u30E7\u30F3\u7D42\u4E86${bel}`;
+		process.stdout.write(JSON.stringify({ terminalSequence: titleSeq + bel }));
+	} else {
+		process.stdout.write('{}');
+	}
 }
 
 main();

@@ -4,6 +4,20 @@
 
 ---
 
+## 動作要件
+
+| 必須 / 推奨 | ソフトウェア | バージョン |
+|-------------|------------|-----------|
+| 必須 | VS Code | 1.85.0+ |
+| 必須 | Claude Code | 2.1.113+ |
+| 推奨 | Claude Code | **2.1.139+** — exec-form hook サポート（スペースを含むパスでのクォート問題解消） |
+| 全機能利用 | Claude Code | **2.1.141+** — `terminalSequence` 通知、`continueOnBlock` フィードバック |
+
+> Claude Code のバージョン確認: `claude --version`
+> アップデート: `npm install -g @anthropic-ai/claude-code`
+
+---
+
 ## ⚠️ 取締役セッション運用者へ（重要）
 
 ### エージェント運用について（v0.4.4 更新）

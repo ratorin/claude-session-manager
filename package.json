@@ -192,6 +192,24 @@
 				"category": "Claude Session Manager"
 			},
 			{
+				"command": "claudeManager.previewAgentByName",
+				"title": "エージェントプレビュー（名前指定）",
+				"icon": "$(eye)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.refreshLiveAgents",
+				"title": "ライブ状態を更新",
+				"icon": "$(refresh)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.showGoals",
+				"title": "目標一覧をコピー（/goal PoC）",
+				"icon": "$(target)",
+				"category": "Claude Session Manager"
+			},
+			{
 				"command": "claudeManager.copyAgentSessionId",
 				"title": "セッションIDをコピー",
 				"icon": "$(copy)",
@@ -759,6 +777,12 @@
 						"default": true,
 						"order": 9,
 						"description": "ステータスバーに Sonnet 5日 / Opus 5日 の利用率列を表示する（S xx% / O xx% 形式）。OFFにすると従来の 5h / 7d 表示のみになります"
+					},
+					"claudeManager.hooks.desktopNotification.enabled": {
+						"type": "boolean",
+						"default": false,
+						"order": 10,
+						"markdownDescription": "セッション終了時にターミナルベル（\\u0007）を発火してデスクトップ通知を行います。\n\n**Claude Code 2.1.141+** の `terminalSequence` 機能を使用します。ターミナルエミュレーターの通知設定も有効にしてください。\n\nOFF がデフォルトです（opt-in）。"
 					}
 				}
 			},
@@ -875,6 +899,28 @@
 							"recent"
 						],
 						"description": "エージェントタブで起動時に展開するセクション（bookmarks / recent / global / project）"
+					},
+					"claudeManager.claudeAgentsIntegration.enabled": {
+						"type": "boolean",
+						"default": true,
+						"description": "エージェントタブに「🟢 ライブ状態」セクションを表示する（claude agents コマンドを使用）。Claude Code 2.1.139+ が必要"
+					},
+					"claudeManager.claudeAgentsIntegration.pollingIntervalMs": {
+						"type": "number",
+						"default": 5000,
+						"minimum": 1000,
+						"maximum": 60000,
+						"description": "claude agents のポーリング間隔（ミリ秒）。デフォルト: 5000ms"
+					},
+					"claudeManager.claudeAgentsIntegration.scopeToWorkspace": {
+						"type": "boolean",
+						"default": true,
+						"description": "ライブ状態表示を現在のワークスペース（--cwd）に絞り込む"
+					},
+					"claudeManager.claudeAgentsIntegration.showUnregistered": {
+						"type": "boolean",
+						"default": true,
+						"description": "CSM に未登録のセッションもライブ状態セクションに表示する"
 					},
 					"claudeManager.useNewMainPanel": {
 						"type": "boolean",

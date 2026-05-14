@@ -2,6 +2,40 @@
 
 ## v0.5.0 (2026-05-14)
 
+### TASK-2: Claude Code 2.1.136 underscore パス修正の影響確認
+
+`--resume` / `--continue` の underscore パスバグ（2.1.136 で修正）の CSM 側影響を調査。
+
+- `getJsonlPath` のエンコーディング `replace(/[\s/]/g, '-')` はアンダースコアを変換しない → Claude Code 2.1.136+ の動作と一致 ✓
+- `decodeProjectName` はアンダースコアをそのまま通す ✓
+- `scanProjectsForAutoLink` は全ディレクトリスキャン方式でパスエンコードに依存しない ✓
+- **CSM 側の修正不要。既存実装で正しく動作している。**
+
+### TASK-3: csm-check-ask-agent.js に continueOnBlock 追加 (Claude Code 2.1.139+)
+
+`templates/csm-check-ask-agent.js` の block レスポンスに `continueOnBlock: true` を追加。
+
+- Claude Code 2.1.139+: ブロック後もターンを継続し、ブロック理由をフィードバックとして受け取れる
+- 旧バージョンは `continueOnBlock` フィールドを無視して従来通りの block 動作（後方互換）
+
+### TASK-8: csm-session-stop.js に terminalSequence 通知追加 (Claude Code 2.1.141+)
+
+セッション終了時にデスクトップ通知を発火する `terminalSequence` フィールドを Stop hook に追加。
+
+- 設定キー `claudeManager.hooks.desktopNotification.enabled` (デフォルト: false、opt-in)
+- extension.ts 起動時 / 設定変更時に `session-manager.json.hookSettings.desktopNotification` へ同期
+- `templates/csm-session-stop.js`: `hookSettings.desktopNotification` が true のとき `terminalSequence` を出力
+  - `]2;CSM: {agentName} セッション終了` (xterm window title + BEL)
+- `src/models/types.ts`: `CsmHookSettings` インターフェース追加、`ManagerData.hookSettings` フィールド追加
+- `src/models/dataStore.ts`: `setHookSetting()` / `getHookSettings()` 追加
+- `package.json`: `claudeManager.hooks.desktopNotification.enabled` 設定項目追加
+
+### TASK-10: README.md に推奨バージョン記載
+
+動作要件テーブルを README 冒頭に追加:
+- VS Code 1.85.0+ (必須)
+- Claude Code 2.1.113+ (必須) / 2.1.139+ (推奨) / 2.1.141+ (全機能)
+
 ### ⭐ お気に入りツリー — エージェントタブにブックマーク階層表示を追加
 
 既存のフラットな ★ブックマーク一覧に加え、親子階層を維持したツリー形式でブックマーク済みエージェントを表示するセクションを追加。

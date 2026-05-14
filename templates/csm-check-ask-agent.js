@@ -49,15 +49,18 @@ function main() {
 		return;
 	}
 
-	// block: /csm-ask-agent スキルの使用を促す
+	// block + continueOnBlock: Claude Code 2.1.139+ ではブロック理由をフィードバックして turn を継続
+	// 旧バージョンは continueOnBlock を無視して通常の block 動作になる（後方互換）
+	const reason =
+		'claude -p を --agent/--resume なしで実行しようとしています。' +
+		'正しい形式: claude --agent <name> -p または claude --resume <sessionId> -p。' +
+		'/csm-ask-agent スキルを使ってください。';
 	const response = {
 		hookSpecificOutput: {
 			hookEventName: 'PreToolUse',
 			permissionDecision: 'block',
-			permissionDecisionReason:
-				'claude -p を --agent/--resume なしで実行しようとしています。' +
-				'正しい形式: claude --agent <name> -p または claude --resume <sessionId> -p。' +
-				'/csm-ask-agent スキルを使ってください。',
+			permissionDecisionReason: reason,
+			continueOnBlock: true,  // 2.1.139+: ブロック後もターンを継続してフィードバック
 		},
 	};
 	process.stdout.write(JSON.stringify(response));

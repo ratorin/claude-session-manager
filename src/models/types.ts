@@ -156,6 +156,11 @@ export interface AgentSessionBinding {
 	sessionMode?: 'fixed' | 'disposable';
 }
 
+/** CSM フック設定（hook スクリプトが session-manager.json から読み取る） */
+export interface CsmHookSettings {
+	desktopNotification?: boolean; // Stop hook: terminalSequence でベル通知を発火 (default: false)
+}
+
 // 拡張機能の永続データ（グローバル）
 export interface ManagerData {
 	bookmarks: string[]; // セッションIDの配列
@@ -166,4 +171,5 @@ export interface ManagerData {
 	agentSessions?: Record<string, AgentSessionBinding>; // エージェント名 → セッション紐づけ（Phase 3+）
 	ruleFolder?: string; // ルールフォルダパス（例: ~/.claude/agents）
 	taskLogs?: TaskLog[]; // タスクログ
+	hookSettings?: CsmHookSettings; // フック動作設定（hook スクリプトが直接読む）
 }

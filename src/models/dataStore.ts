@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { ManagerData, LocalManagerData, AgentConfig, TaskLog, AgentSessionBinding } from './types';
+import { ManagerData, LocalManagerData, AgentConfig, TaskLog, AgentSessionBinding, CsmHookSettings } from './types';
 import * as agentFileManager from '../agents/agentFileManager';
 
 // グローバルデータファイル（~/.claude/session-manager.json）
@@ -558,4 +558,22 @@ export async function setAgentSession(
 		sessionMode: mode ?? existing?.sessionMode,
 	});
 	return true;
+}
+
+// ─── フック設定 ───────────────────────────────────────────────────────────────
+
+/** hookSettings の指定キーを更新する（hook スクリプトが session-manager.json から直接読む） */
+export async function setHookSetting<K extends keyof CsmHookSettings>(
+	key: K,
+	value: CsmHookSettings[K]
+): Promise<void> {
+	const data = await loadData();
+	data.hookSettings = { ...data.hookSettings, [key]: value };
+	await saveData(data);
+}
+
+/** hookSettings を取得する */
+export async function getHookSettings(): Promise<CsmHookSettings> {
+	const data = await loadData();
+	return data.hookSettings ?? {};
 }

@@ -23,6 +23,7 @@ import { MainTabPanel } from './panels/mainTabPanel';
 import { TabBarPanel, StatusInfo } from './panels/tabBarPanel';
 import { HelpFeedbackProvider } from './providers/helpFeedbackProvider';
 import { setLocale, setAutoTranslate } from './services/i18nService';
+import { ClaudeAgentsService } from './services/claudeAgentsService';
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -87,6 +88,20 @@ export function activate(context: vscode.ExtensionContext) {
 	ensureGovernanceHook(context.extensionPath, extensionOutputChannelEarly).catch(() => {
 		// hook登録失敗は致命的ではない
 	});
+
+	// desktopNotification 設定を session-manager.json に同期（hook スクリプトが読む）
+	const syncDesktopNotification = (): void => {
+		const enabled = vscode.workspace.getConfiguration('claudeManager.hooks').get<boolean>('desktopNotification.enabled', false);
+		dataStore.setHookSetting('desktopNotification', enabled).catch(() => { /* 失敗は無視 */ });
+	};
+	syncDesktopNotification();
+	context.subscriptions.push(
+		vscode.workspace.onDidChangeConfiguration((e) => {
+			if (e.affectsConfiguration('claudeManager.hooks.desktopNotification.enabled')) {
+				syncDesktopNotification();
+			}
+		})
+	);
 
 	// TreeViewプロバイダーを作成
 	const sessionProvider = new SessionTreeProvider();
@@ -214,6 +229,24 @@ export function activate(context: vscode.ExtensionContext) {
 	const initialGroupMode = getConfig<string>('defaultGroupMode', 'date');
 	sessionProvider.setSortMode(initialSortMode as 'updated-desc' | 'updated-asc' | 'created-desc' | 'created-asc' | 'name' | 'count' | 'model');
 	sessionProvider.setGroupMode(initialGroupMode as 'date' | 'tag' | 'agent' | 'flat');
+
+	// --- TASK-5: ClaudeAgentsService 初期化 ---
+	const claudeAgentsService = new ClaudeAgentsService();
+	context.subscriptions.push(claudeAgentsService);
+	agentProvider.setClaudeAgentsService(claudeAgentsService);
+
+	// TASK-5 Phase 3: claude agents の running セッションを PID チェックに補完
+	claudeAgentsService.onDidChange(() => {
+		const entries = claudeAgentsService.getEntries();
+		const runningSessions = new Set(
+			entries
+				.filter(e => e.status === 'running' && e.sessionId)
+				.map(e => e.sessionId!)
+		);
+		if (runningSessions.size > 0) {
+			agentWatcher.supplementLiveFromClaudeAgents(runningSessions);
+		}
+	});
 
 	// AgentWatcher を起動
 	agentWatcher.start();
@@ -375,12 +408,17 @@ export function activate(context: vscode.ExtensionContext) {
 	}
 
 	// TreeViewを登録（Disposableをsubscriptionsに追跡）
+	const claudeAgentsTreeView = vscode.window.createTreeView('claudeAgents', {
+		treeDataProvider: agentProvider,
+		dragAndDropController: agentProvider,
+		canSelectMany: false,
+	});
 	context.subscriptions.push(
 		vscode.window.createTreeView('claudeSessions', { treeDataProvider: sessionProvider }),
 		vscode.window.createTreeView('claudeBookmarks', { treeDataProvider: bookmarkProvider }),
 		vscode.window.createTreeView('claudeTags', { treeDataProvider: tagProvider }),
 		vscode.window.createTreeView('claudeMemory', { treeDataProvider: memoryProvider }),
-		vscode.window.createTreeView('claudeAgents', { treeDataProvider: agentProvider, dragAndDropController: agentProvider, canSelectMany: false }),
+		claudeAgentsTreeView,
 	);
 
 	// TH4: ハイブリッドタブ — defaultTab を取得して activeTab コンテキストを初期化
@@ -453,6 +491,47 @@ export function activate(context: vscode.ExtensionContext) {
 	registerUtilityCommands(context, {
 		sessionProvider, bookmarkProvider, memoryProvider, refreshAll,
 	});
+
+	// TASK-5: ライブ状態の手動リフレッシュコマンド
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.refreshLiveAgents', async () => {
+			await claudeAgentsService.forceRefresh();
+			vscode.window.showInformationMessage('ライブ状態を更新しました');
+		})
+	);
+
+	// TASK-5: エージェントタブの可視性変化を ClaudeAgentsService に通知
+	// claudeAgents TreeView の可視性を監視してポーリングを制御
+	context.subscriptions.push(
+		claudeAgentsTreeView.onDidChangeVisibility(e => {
+			claudeAgentsService.setTabVisible(e.visible);
+			agentProvider.notifyTabVisible(e.visible);
+		})
+	);
+	// 起動時: TreeView が既に可視なら即座にポーリング開始
+	if (claudeAgentsTreeView.visible) {
+		claudeAgentsService.setTabVisible(true);
+	}
+
+	// TASK-7: /goal コマンド連動 PoC — CSM タスクログを目標として表示
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.showGoals', async () => {
+			const logs = await dataStore.getTaskLogs();
+			const running = logs.filter(l => l.status === 'running' || l.status === 'pending');
+			if (running.length === 0) {
+				vscode.window.showInformationMessage('現在実行中のタスク目標はありません');
+				return;
+			}
+			// タスクの要約を改行区切りでクリップボードにコピー（/goal コマンドへの貼り付け用）
+			const goalText = running
+				.map((l, i) => `${i + 1}. [${l.agentName}] ${l.summary}`)
+				.join('\n');
+			await vscode.env.clipboard.writeText(goalText);
+			vscode.window.showInformationMessage(
+				`${running.length} 件の目標をクリップボードにコピーしました。Claude Code で /goal を実行して貼り付けてください。`
+			);
+		})
+	);
 
 	// エージェントフィルター: 他プロジェクトのエージェントを非表示/表示切り替え (T2.16: 設定に永続化)
 	context.subscriptions.push(
