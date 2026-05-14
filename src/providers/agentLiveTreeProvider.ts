@@ -1,17 +1,16 @@
 // agentLiveTreeProvider.ts — ライブ状態エージェント専用 TreeDataProvider
-// claudeAgentsLive ビューに表示される「claude agents」コマンドの結果
+// データソース: agentWatcher (PID/JSONL 監視) — claude agents コマンド不使用
+// TTY 必須の claude agents コマンドの代わりに既存の PID/JSONL 監視データを利用する
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { AgentConfig } from '../models/types';
 import * as dataStore from '../models/dataStore';
 import {
-	ClaudeAgentsService,
 	LiveAgentView,
 	ClaudeAgentEntry,
 	formatElapsed,
-	AvailabilityStatus,
 } from '../services/claudeAgentsService';
+import { AgentWatcher } from '../watchers/agentWatcher';
 
 type LiveTreeNode = LiveAgentItem | LiveStatusMessageItem;
 
@@ -25,19 +24,23 @@ export class AgentLiveTreeProvider
 	private _onDidChangeTreeData = new vscode.EventEmitter<LiveTreeNode | undefined>();
 	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-	private _claudeAgentsService: ClaudeAgentsService | undefined;
+	private _agentWatcher: AgentWatcher | undefined;
+	private _watcherDisposable: vscode.Disposable | undefined;
 
 	dispose(): void {
+		this._watcherDisposable?.dispose();
 		this._onDidChangeTreeData.dispose();
 	}
 
-	setClaudeAgentsService(service: ClaudeAgentsService): void {
-		this._claudeAgentsService = service;
-		service.onDidChange(() => this.refresh());
+	setAgentWatcher(watcher: AgentWatcher): void {
+		this._watcherDisposable?.dispose();
+		this._agentWatcher = watcher;
+		this._watcherDisposable = watcher.onDidChange(() => this.refresh());
 	}
 
-	notifyTabVisible(visible: boolean): void {
-		this._claudeAgentsService?.setTabVisible(visible);
+	/** 後方互換: タブ可視性通知（agentWatcher は常時監視なので no-op） */
+	notifyTabVisible(_visible: boolean): void {
+		// agentWatcher はタブ可視性に依存しないため何もしない
 	}
 
 	refresh(): void {
@@ -52,28 +55,57 @@ export class AgentLiveTreeProvider
 		// フラットリスト — 子ノードなし
 		if (element) { return []; }
 
-		const service = this._claudeAgentsService;
-		if (!service) { return []; }
+		const watcher = this._agentWatcher;
+		if (!watcher) { return []; }
 
-		const availability = service.getAvailability();
+		// エージェント監視が無効の場合
+		if (!watcher.isEnabled()) {
+			return [new LiveStatusMessageItem(
+				'エージェント監視が無効です',
+				'設定: claudeManager.enableAgentMonitor を有効にしてください',
+				'info',
+			)];
+		}
+
 		const config = vscode.workspace.getConfiguration('claudeManager.claudeAgentsIntegration');
 		const showUnregistered = config.get<boolean>('showUnregistered', true);
 
-		if (availability === 'unavailable') {
-			return [new LiveStatusMessageItem(
-				'claude agents が使えません',
-				'Claude Code 2.1.139+ または対応ターミナルが必要です',
-				'warning',
-			)];
-		}
-		if (availability === 'unknown') {
-			return [new LiveStatusMessageItem('確認中...', '', 'loading')];
-		}
-		if (availability === 'disabled') {
-			return [];
+		const states = watcher.getStates();
+		const liveSessionIds = watcher.getLiveSessionIds();
+		const cwdMap = watcher.getLiveSessionCwdMap();
+
+		const entries: ClaudeAgentEntry[] = [];
+		const registeredSessions = new Set<string>();
+
+		// 登録済みエージェントのうちライブ状態のものを追加
+		for (const [, state] of states) {
+			if (state.isLive) {
+				registeredSessions.add(state.sessionId);
+				entries.push({
+					sessionId: state.sessionId,
+					agentName: state.agentName,
+					status: 'running',
+					cwd: cwdMap.get(state.sessionId) || '',
+					rawLine: '',
+				});
+			}
 		}
 
-		const entries = service.getEntries();
+		// 未登録セッション（設定で表示が有効な場合のみ）
+		if (showUnregistered) {
+			for (const sessionId of liveSessionIds) {
+				if (!registeredSessions.has(sessionId)) {
+					entries.push({
+						sessionId,
+						agentName: undefined,
+						status: 'running',
+						cwd: cwdMap.get(sessionId) || '',
+						rawLine: '',
+					});
+				}
+			}
+		}
+
 		if (entries.length === 0) {
 			return [new LiveStatusMessageItem(
 				'ライブ状態のエージェントなし',
@@ -84,8 +116,7 @@ export class AgentLiveTreeProvider
 
 		const allAgents = await dataStore.getAgents();
 		const views = buildLiveAgentViews(entries, allAgents);
-		const filtered = showUnregistered ? views : views.filter(v => v.matchLevel !== 'none');
-		return filtered.map(v => new LiveAgentItem(v));
+		return views.map(v => new LiveAgentItem(v));
 	}
 }
 
@@ -95,14 +126,14 @@ export class AgentLiveTreeProvider
 
 export function buildLiveAgentViews(
 	entries: ClaudeAgentEntry[],
-	agents: AgentConfig[],
+	agents: Awaited<ReturnType<typeof dataStore.getAgents>>,
 ): LiveAgentView[] {
-	const sidMap = new Map<string, AgentConfig>();
+	const sidMap = new Map<string, (typeof agents)[number]>();
 	for (const a of agents) {
 		if (a.sessionId) { sidMap.set(a.sessionId, a); }
 	}
 
-	const cwdMap = new Map<string, AgentConfig>();
+	const cwdMap = new Map<string, (typeof agents)[number]>();
 	for (const a of agents) {
 		if (a.workDir) {
 			const norm = a.workDir.replace(/\\/g, '/').toLowerCase();
@@ -123,16 +154,18 @@ export function buildLiveAgentViews(
 			}
 		}
 
-		const entryCwd = entry.cwd.replace(/\\/g, '/').toLowerCase();
-		const cwdMatched = cwdMap.get(entryCwd)
-			|| [...cwdMap.entries()].find(([k]) => entryCwd.startsWith(k) || k.startsWith(entryCwd))?.[1];
-		if (cwdMatched) {
-			return {
-				entry,
-				linkedAgentName: cwdMatched.name,
-				linkedDisplayName: cwdMatched.displayName || cwdMatched.name,
-				matchLevel: 'cwd' as const,
-			};
+		if (entry.cwd) {
+			const entryCwd = entry.cwd.replace(/\\/g, '/').toLowerCase();
+			const cwdMatched = cwdMap.get(entryCwd)
+				|| [...cwdMap.entries()].find(([k]) => entryCwd.startsWith(k) || k.startsWith(entryCwd))?.[1];
+			if (cwdMatched) {
+				return {
+					entry,
+					linkedAgentName: cwdMatched.name,
+					linkedDisplayName: cwdMatched.displayName || cwdMatched.name,
+					matchLevel: 'cwd' as const,
+				};
+			}
 		}
 
 		return { entry, matchLevel: 'none' as const };
@@ -174,7 +207,7 @@ export class LiveAgentItem extends vscode.TreeItem {
 		this.view = view;
 
 		const statusBadge = `[${entry.status}]`;
-		const cwdShort = path.basename(entry.cwd) || entry.cwd;
+		const cwdShort = entry.cwd ? (path.basename(entry.cwd) || entry.cwd) : '—';
 		const elapsed = entry.elapsedSec !== undefined ? `  ${formatElapsed(entry.elapsedSec)}` : '';
 		this.description = `${statusBadge}  ${cwdShort}${elapsed}`;
 
@@ -197,7 +230,7 @@ export class LiveAgentItem extends vscode.TreeItem {
 			`**${name}**\n\n` +
 			`| | |\n|---|---|\n` +
 			`| ステータス | \`${entry.status}\` |\n` +
-			`| 作業ディレクトリ | \`${entry.cwd}\` |\n` +
+			`| 作業ディレクトリ | \`${entry.cwd || '—'}\` |\n` +
 			`| 経過時間 | ${elapsedStr} |\n` +
 			(entry.sessionId ? `| セッション ID | \`${entry.sessionId}\` |\n` : '') +
 			(view.linkedAgentName ? `| CSM エージェント | ${view.linkedAgentName} |\n` : '') +

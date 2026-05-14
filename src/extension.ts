@@ -25,7 +25,8 @@ import { MainTabPanel } from './panels/mainTabPanel';
 import { TabBarPanel, StatusInfo } from './panels/tabBarPanel';
 import { HelpFeedbackProvider } from './providers/helpFeedbackProvider';
 import { setLocale, setAutoTranslate } from './services/i18nService';
-import { ClaudeAgentsService } from './services/claudeAgentsService';
+// ClaudeAgentsService は TTY 必須のため現在未使用 (将来 JSON API 対応時に復活)
+// import { ClaudeAgentsService } from './services/claudeAgentsService';
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -219,6 +220,8 @@ export function activate(context: vscode.ExtensionContext) {
 		agentProvider.refresh();
 		agentFavoritesProvider.setWatcherStates(agentWatcher.getStates());
 		agentFavoritesProvider.refresh();
+		// ライブ状態ビューをリフレッシュ（agentWatcher ベースに切替済み）
+		agentLiveProvider.refresh();
 		// ライブセッション情報をsessionTreeProviderに連携（H-3: 二重ポーリング統合）
 		sessionProvider.setLiveSessionIds(agentWatcher.getLiveSessionIds());
 		// タスク状態を評価（通知含む）
@@ -244,24 +247,9 @@ export function activate(context: vscode.ExtensionContext) {
 	sessionProvider.setSortMode(initialSortMode as 'updated-desc' | 'updated-asc' | 'created-desc' | 'created-asc' | 'name' | 'count' | 'model');
 	sessionProvider.setGroupMode(initialGroupMode as 'date' | 'tag' | 'agent' | 'flat');
 
-	// --- TASK-5: ClaudeAgentsService 初期化 ---
-	const claudeAgentsService = new ClaudeAgentsService();
-	context.subscriptions.push(claudeAgentsService);
-	// ライブ状態プロバイダに ClaudeAgentsService を注入（agentProvider には不要になった）
-	agentLiveProvider.setClaudeAgentsService(claudeAgentsService);
-
-	// TASK-5 Phase 3: claude agents の running セッションを PID チェックに補完
-	claudeAgentsService.onDidChange(() => {
-		const entries = claudeAgentsService.getEntries();
-		const runningSessions = new Set(
-			entries
-				.filter(e => e.status === 'running' && e.sessionId)
-				.map(e => e.sessionId!)
-		);
-		if (runningSessions.size > 0) {
-			agentWatcher.supplementLiveFromClaudeAgents(runningSessions);
-		}
-	});
+	// ライブ状態プロバイダに agentWatcher を注入（PID/JSONL 監視ベース）
+	// 旧: ClaudeAgentsService (claude agents コマンド / TTY 必須のため廃止)
+	agentLiveProvider.setAgentWatcher(agentWatcher);
 
 	// AgentWatcher を起動
 	agentWatcher.start();
@@ -513,10 +501,10 @@ export function activate(context: vscode.ExtensionContext) {
 		sessionProvider, bookmarkProvider, memoryProvider, refreshAll,
 	});
 
-	// TASK-5: ライブ状態の手動リフレッシュコマンド
+	// ライブ状態の手動リフレッシュコマンド（agentWatcher ベース）
 	context.subscriptions.push(
-		vscode.commands.registerCommand('claudeManager.refreshLiveAgents', async () => {
-			await claudeAgentsService.forceRefresh();
+		vscode.commands.registerCommand('claudeManager.refreshLiveAgents', () => {
+			agentWatcher.scheduleUpdate();
 			vscode.window.showInformationMessage('ライブ状態を更新しました');
 		})
 	);

@@ -560,6 +560,11 @@ export class AgentWatcher implements vscode.Disposable {
 		return new Set(this.liveSessionIds);
 	}
 
+	// ライブセッションのセッションID→cwd マップを取得（agentLiveTreeProvider 連携用）
+	getLiveSessionCwdMap(): Map<string, string> {
+		return new Map(this.sessionCwdMap);
+	}
+
 	// 全エージェントの状態マップを取得（コピーを返す）
 	getStates(): Map<string, AgentWatcherState> {
 		return new Map(this.states);

@@ -976,8 +976,8 @@
 					},
 					"claudeManager.claudeAgentsIntegration.enabled": {
 						"type": "boolean",
-						"default": true,
-						"description": "エージェントタブに「🟢 ライブ状態」セクションを表示する（claude agents コマンドを使用）。Claude Code 2.1.139+ が必要"
+						"default": false,
+						"description": "廃止予定: claude agents コマンドは TTY 必須のため VS Code 拡張から使用不可。ライブ状態は PID/JSONL 監視 (enableAgentMonitor) で代替。"
 					},
 					"claudeManager.claudeAgentsIntegration.pollingIntervalMs": {
 						"type": "number",

@@ -1,5 +1,46 @@
 # 更新履歴
 
+## v0.5.0 (2026-05-14) — ライブ状態セクション PID/JSONL ベースに切替
+
+### ライブ状態セクションのデータソース変更
+
+`claude agents` コマンドが TTY 必須の対話モードコマンドであり、VS Code 拡張から `execFile()` 経由で呼ぶと「is not available in this environment」が返される制約が実機検証で判明。
+既存の `agentWatcher` (PID/JSONL 監視) が同等の情報を保持しているため、データソースを切り替え。
+
+- **`agentLiveTreeProvider`**: データ取得元を `ClaudeAgentsService` → `AgentWatcher` に変更
+- **`agentWatcher`**: `getLiveSessionCwdMap()` を新規公開（セッション ID → cwd マップ）
+- **`extension.ts`**: `ClaudeAgentsService` の初期化を削除。`agentLiveProvider.setAgentWatcher()` に変更
+- **`claudeManager.claudeAgentsIntegration.enabled`**: デフォルトを `false` に変更（TTY 非対応の旨を Description に明記）
+- エラー表示なしで稼働中エージェントを正常表示
+
+---
+
+## v0.5.0 (2026-05-14) — エージェントタブ 3分割 + セッションタブ並び順統一
+
+### UI 再構成: エージェントタブを3つの独立ビューに分割
+
+#### エージェントタブ
+- **`claudeAgentsLive`** (新規): 「ライブ状態」専用ビュー — `claude agents` コマンドの結果を表示
+  - 既存 `agentTreeProvider` の `LiveStatusSectionItem` / `LiveAgentItem` を `agentLiveTreeProvider.ts` に分離
+  - `AgentLiveTreeProvider` が `ClaudeAgentsService` を直接注入、タブ可視性ポーリングも独立制御
+- **`claudeAgentsFavorites`** (新規): 「お気に入りエージェント」専用ビュー — ブックマーク済みフラットリスト
+  - 既存 `FavoriteTreeSectionItem` / `FavoriteAgentItem` を `agentFavoritesTreeProvider.ts` に分離
+  - `AgentFavoritesTreeProvider` が `agentWatcher` 状態と連動してリフレッシュ
+- **`claudeAgents`** (既存): エージェント一覧のみ — Live・Favorite セクションを除去してスリム化
+
+#### セッションタブ並び順統一
+- 旧: 一覧 → ブックマーク → タグ
+- **新: ブックマーク → タグ → 一覧**（ブックマークを最上位に）
+
+#### 技術的変更
+- `agentTreeProvider.ts`: `ClaudeAgentsService` 依存・`getBookmarks` 依存・Live/Favorite クラス群を削除
+- `agentLiveTreeProvider.ts`: 新規作成（`LiveAgentItem`, `LiveStatusMessageItem`, `buildLiveAgentViews`）
+- `agentFavoritesTreeProvider.ts`: 新規作成（`FavoriteAgentItem` を `AgentItem` のサブクラスとして継承）
+- `extension.ts`: 2つの新 TreeView 登録、`claudeAgentsLiveTreeView.onDidChangeVisibility` 配線
+- `package.json`: 2つの新 view 定義、セッションビュー並び順変更、お気に入りビューの inline/context メニュー追加
+
+---
+
 ## v0.5.0 (2026-05-14) — QA HIGH 修正 (H-1 + H-2)
 
 ### セキュリティ・堅牢性修正
