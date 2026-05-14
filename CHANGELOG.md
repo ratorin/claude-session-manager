@@ -1,6 +1,61 @@
 # 更新履歴
 
-## v0.5.0 (2026-05-14)
+## v0.5.0 (2026-05-14) — claude agents 統合
+
+### TASK-5 Phase 1+2+3: `claude agents` コマンド統合（ライブ状態セクション）
+
+Claude Code 2.1.139+ の `claude agents` コマンドを CSM エージェントタブに統合し、
+「🟢 ライブ状態」セクションをエージェントタブ最上部に追加。
+
+#### 新機能
+- **🟢 ライブ状態セクション**: `claude agents` の出力を5秒ポーリングでリアルタイム表示
+- **ステータス別アイコン**: 🟢 running / 🟡 blocked / ⚪ done をアイコン色で区別
+- **CSM マッチング**: sessionId または cwd でエージェント名と自動紐づけ
+- **未登録セッション表示**: CSM 未登録セッションも "(未登録)" として表示（設定で非表示化可）
+- **タブ可視時のみポーリング**: エージェントタブ非表示中はポーリング停止（CPU 節約）
+- **バックオフリトライ**: 連続失敗時に 5s → 30s → 5min と間隔を延長
+- **非対応環境検出**: `'claude agents' is not available` を検知してセクションに説明を表示
+- **手動リフレッシュ**: `claudeManager.refreshLiveAgents` コマンドで即時更新可能
+- **フレキシブルパーサー**: テキスト形式 (A/B/C/D の4フォーマット) + 将来の `--json` に自動対応
+
+#### Phase 3: PID チェック補完 (TASK-5 Phase 3)
+- `claude agents` の running セッションを `agentWatcher` の PID ライブセットに補完
+- フォールバック: `claude agents` 利用不可時は既存 PID チェックのみで動作（既存機能維持）
+
+#### 設定キー追加
+| キー | デフォルト | 説明 |
+|---|---|---|
+| `claudeManager.claudeAgentsIntegration.enabled` | `true` | ライブ状態セクションを有効化 |
+| `claudeManager.claudeAgentsIntegration.pollingIntervalMs` | `5000` | ポーリング間隔（ms） |
+| `claudeManager.claudeAgentsIntegration.scopeToWorkspace` | `true` | --cwd でワークスペースに絞り込み |
+| `claudeManager.claudeAgentsIntegration.showUnregistered` | `true` | 未登録セッションも表示 |
+
+#### 実装ファイル
+- `src/services/claudeAgentsService.ts` (新規): fetch + parse + 可用性検出 + キャッシュ + ポーリング
+- `src/providers/agentTreeProvider.ts`: LiveStatusSectionItem / LiveAgentItem / LiveStatusMessageItem 追加
+- `src/watchers/agentWatcher.ts`: `supplementLiveFromClaudeAgents()` 追加 (Phase 3)
+- `src/commands/agentCommands.ts`: `previewAgentByName` コマンド追加
+- `src/extension.ts`: ClaudeAgentsService 初期化 + TreeView 可視性監視
+- `package.json`: 設定キー / コマンド追加
+
+### TASK-4: JSONL `attributes` フィールドから agent_id 読み取り強化
+
+OTEL / x-claude-code-agent-id ヘッダー由来の `attributes` フィールドをセッション自動紐づけの
+第2手段として追加。
+
+- `agentWatcher.ts`: `readAgentIdFromAttributes()` 追加（先頭 4KB / 10 行を検索）
+- 対応キー: `attributes.x-claude-code-agent-id` / `agent_id` / `agentId` / `agent.name`
+- フォールバック: `agent-setting` タイプが見つからない場合に自動切り替え
+- `scanProjectsForAutoLink` も同様に拡張（バッチスキャン時）
+
+### TASK-7: /goal コマンド連動 PoC
+
+CSM タスクログを `/goal` コマンド用の目標テキストとしてクリップボードに出力する PoC。
+
+- コマンド: `claudeManager.showGoals` — 実行中タスクを番号付きリストでクリップボードへコピー
+- Claude Code で `/goal` を実行後に貼り付けて使用する想定
+
+---
 
 ### TASK-2: Claude Code 2.1.136 underscore パス修正の影響確認
 

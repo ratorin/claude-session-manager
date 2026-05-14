@@ -593,6 +593,26 @@ export class AgentWatcher implements vscode.Disposable {
 		return map;
 	}
 
+	// --- TASK-5 Phase 3: claude agents 由来データで PID チェックを補完 ---
+
+	/**
+	 * claude agents 出力の running セッションを PID ライブセットに補完する。
+	 * extension.ts から claudeAgentsService.onDidChange 時に呼ばれる。
+	 * フォールバック: 既存 PID チェックに干渉しない（追加のみ）
+	 */
+	supplementLiveFromClaudeAgents(runningSessions: ReadonlySet<string>): void {
+		let changed = false;
+		for (const sid of runningSessions) {
+			if (!this.liveSessionIds.has(sid)) {
+				this.liveSessionIds.add(sid);
+				changed = true;
+			}
+		}
+		if (changed) {
+			this._onDidChange.fire();
+		}
+	}
+
 	// --- 自動紐づけ (agent-setting JSONL 先頭行解析) ---
 
 	/** JSONL ファイルの先頭行を効率よく読み取る（最大 1 KB） */
@@ -612,7 +632,53 @@ export class AgentWatcher implements vscode.Disposable {
 	}
 
 	/**
+	 * TASK-4: JSONL の先頭数行から attributes フィールド内の agent_id を読み取る。
+	 * OTEL/ヘッダー由来の x-claude-code-agent-id を検索する。
+	 * 最大 4 KB を読んで先頭 10 行を確認する。
+	 */
+	private async readAgentIdFromAttributes(filePath: string): Promise<string | undefined> {
+		try {
+			const handle = await fs.promises.open(filePath, 'r');
+			try {
+				const buf = Buffer.alloc(4096);
+				const { bytesRead } = await handle.read(buf, 0, 4096, 0);
+				const text = buf.slice(0, bytesRead).toString('utf-8');
+				const lines = text.split('\n').slice(0, 10); // 先頭10行のみ確認
+				for (const line of lines) {
+					const s = line.trim();
+					if (!s) { continue; }
+					try {
+						const obj = JSON.parse(s) as Record<string, unknown>;
+						// attributes フィールドから agent_id を探す
+						const attrs = obj['attributes'] as Record<string, unknown> | undefined;
+						if (attrs && typeof attrs === 'object') {
+							const agentId =
+								attrs['x-claude-code-agent-id'] ??
+								attrs['agent_id'] ??
+								attrs['agentId'] ??
+								attrs['agent.name'];
+							if (typeof agentId === 'string' && agentId) {
+								return agentId;
+							}
+						}
+						// systemPrompt / metadata からも探す
+						const meta = obj['metadata'] as Record<string, unknown> | undefined;
+						if (meta && typeof meta === 'object') {
+							const agentId = meta['agentId'] ?? meta['agent_id'];
+							if (typeof agentId === 'string' && agentId) { return agentId; }
+						}
+					} catch { continue; }
+				}
+			} finally {
+				await handle.close();
+			}
+		} catch { /* ファイル読み取り失敗は無視 */ }
+		return undefined;
+	}
+
+	/**
 	 * 単一セッションの JSONL を確認して agent-setting があれば自動紐づけを試みる。
+	 * TASK-4: agent-setting が見つからない場合は attributes フィールドから agent_id を探す。
 	 * processedAutoLinkSids に追加して二重処理を防ぐ。
 	 */
 	private async tryAutoLinkSession(sessionId: string, cwd: string): Promise<void> {
@@ -629,20 +695,26 @@ export class AgentWatcher implements vscode.Disposable {
 			let parsed: Record<string, unknown>;
 			try { parsed = JSON.parse(firstLine); } catch { return; }
 
-			if (parsed['type'] !== 'agent-setting') { return; }
+			// --- 方法1: agent-setting タイプ（既存）---
+			if (parsed['type'] === 'agent-setting') {
+				const agentName = typeof parsed['agentSetting'] === 'string' ? parsed['agentSetting'] : undefined;
+				const sid = typeof parsed['sessionId'] === 'string' ? parsed['sessionId'] : undefined;
+				if (agentName && sid) {
+					const agentDef = await agentFileManager.getAgentByName(agentName);
+					if (!agentDef) { return; }
+					const linked = await dataStore.setAgentSession(agentName, sid);
+					if (linked) { this._onDidChange.fire(); }
+					return;
+				}
+			}
 
-			const agentName = typeof parsed['agentSetting'] === 'string' ? parsed['agentSetting'] : undefined;
-			const sid = typeof parsed['sessionId'] === 'string' ? parsed['sessionId'] : undefined;
-			if (!agentName || !sid) { return; }
-
-			// agents/*.md ファイルの存在を確認（定義のないエージェントへの誤紐づけを防ぐ）
-			const agentDef = await agentFileManager.getAgentByName(agentName);
-			if (!agentDef) { return; } // .md なし → スキップ
-
-			// 自動紐づけ実行（既にリンク済みなら内部でスキップ）
-			const linked = await dataStore.setAgentSession(agentName, sid);
-			if (linked) {
-				this._onDidChange.fire();
+			// --- 方法2: TASK-4 — attributes フィールドから agent_id を読み取り ---
+			const agentIdFromAttrs = await this.readAgentIdFromAttributes(jsonlPath);
+			if (agentIdFromAttrs) {
+				const agentDef = await agentFileManager.getAgentByName(agentIdFromAttrs);
+				if (!agentDef) { return; }
+				const linked = await dataStore.setAgentSession(agentIdFromAttrs, sessionId);
+				if (linked) { this._onDidChange.fire(); }
 			}
 		} catch { /* ファイル読み取り失敗はサイレントに無視 */ }
 	}
@@ -691,13 +763,33 @@ export class AgentWatcher implements vscode.Disposable {
 									let parsed: Record<string, unknown>;
 									try { parsed = JSON.parse(firstLine); } catch { return; }
 
-									if (parsed['type'] !== 'agent-setting') { return; }
+									// 方法1: agent-setting タイプ（既存）
+								let agentName: string | undefined;
+								if (parsed['type'] === 'agent-setting') {
+									agentName = typeof parsed['agentSetting'] === 'string'
+										? parsed['agentSetting']
+										: undefined;
+								}
 
-									const agentName = typeof parsed['agentSetting'] === 'string' ? parsed['agentSetting'] : undefined;
-									if (!agentName || !unlinkedNames.has(agentName)) { return; }
+								// TASK-4: 方法2 — attributes フィールドから agent_id を探す
+								if (!agentName) {
+									const attrs = parsed['attributes'] as Record<string, unknown> | undefined;
+									if (attrs && typeof attrs === 'object') {
+										const attrAgentId =
+											attrs['x-claude-code-agent-id'] ??
+											attrs['agent_id'] ??
+											attrs['agentId'] ??
+											attrs['agent.name'];
+										if (typeof attrAgentId === 'string' && attrAgentId) {
+											agentName = attrAgentId;
+										}
+									}
+								}
 
-									if (!candidates.has(agentName)) { candidates.set(agentName, []); }
-									candidates.get(agentName)!.push({ sessionId: sid, mtime: stat.mtimeMs });
+								if (!agentName || !unlinkedNames.has(agentName)) { return; }
+
+								if (!candidates.has(agentName)) { candidates.set(agentName, []); }
+								candidates.get(agentName)!.push({ sessionId: sid, mtime: stat.mtimeMs });
 								} catch { /* skip */ }
 							})
 					);

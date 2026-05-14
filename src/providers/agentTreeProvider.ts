@@ -8,8 +8,9 @@ import { isLegacyAutoFormat, hasFrontmatter } from '../utils/frontmatterUtils';
 import { shouldShowInOrgChart, translateWorkDirPath } from '../utils/agentUtils';
 import { resolveExternalSessionTitles } from '../utils/sessionLoader';
 import { getBookmarks } from '../services/bookmarkService';
+import { ClaudeAgentsService, LiveAgentView, ClaudeAgentEntry, formatElapsed, AvailabilityStatus } from '../services/claudeAgentsService';
 
-type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem | SessionInjectInstallBannerItem | FavoriteTreeSectionItem | FavoriteAgentItem;
+type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem | SessionInjectInstallBannerItem | FavoriteTreeSectionItem | FavoriteAgentItem | LiveStatusSectionItem | LiveAgentItem;
 
 // D&DのMIMEタイプ
 const AGENT_MIME = 'application/vnd.csm.agent';
@@ -29,6 +30,21 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 	private getSessionsFn: () => ParsedSession[];
 	private isLiveFn: (id: string) => boolean;
 	private watcherStates: Map<string, import('../models/types').AgentWatcherState> = new Map();
+
+	// --- TASK-5: claude agents ライブ状態サービス ---
+	private _claudeAgentsService: ClaudeAgentsService | undefined;
+
+	/** ClaudeAgentsService を注入する（extension.ts から呼び出す） */
+	setClaudeAgentsService(service: ClaudeAgentsService): void {
+		this._claudeAgentsService = service;
+		// サービスの変更時にツリーをリフレッシュ
+		service.onDidChange(() => this.refresh());
+	}
+
+	/** タブ可視性をサービスに通知 */
+	notifyTabVisible(visible: boolean): void {
+		this._claudeAgentsService?.setTabVisible(visible);
+	}
 
 	setWatcherStates(states: Map<string, import('../models/types').AgentWatcherState>): void {
 		this.watcherStates = states;
@@ -148,6 +164,12 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		if (element instanceof CsmAskAgentInstallBannerItem) { return []; }
 		if (element instanceof AskAgentMigrationBannerItem) { return []; }
 		if (element instanceof SessionInjectInstallBannerItem) { return []; }
+		if (element instanceof LiveAgentItem) { return []; }
+
+		// --- TASK-5 Phase 2: 🟢 ライブ状態セクション の子 ---
+		if (element instanceof LiveStatusSectionItem) {
+			return this._buildLiveAgentChildren();
+		}
 		if (element instanceof GlobalAgentsSectionItem) {
 			// グローバルエージェント を返す
 			const allAgents = await dataStore.getAgents();
@@ -306,6 +328,13 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		if (!element) {
 			const result: AgentTreeNode[] = [];
 
+			// --- TASK-5 Phase 2: 🟢 ライブ状態セクション ---
+			const liveService = this._claudeAgentsService;
+			if (liveService && liveService.isEnabled()) {
+				const availability = liveService.getAvailability();
+				result.push(new LiveStatusSectionItem(availability, liveService.getEntries().length));
+			}
+
 			// /csm-ask-agent グローバルインストールバナー: 未インストール時のみ表示
 			const csmAskAgentInstalled = await isCsmAskAgentInstalled();
 			if (!csmAskAgentInstalled) {
@@ -401,6 +430,52 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		}
 
 		return result;
+	}
+
+	// -------------------------------------------------------------------
+	// TASK-5 Phase 2: ライブ状態セクションの子ノード構築
+	// -------------------------------------------------------------------
+
+	private async _buildLiveAgentChildren(): Promise<AgentTreeNode[]> {
+		const service = this._claudeAgentsService;
+		if (!service) { return []; }
+
+		const availability = service.getAvailability();
+		const config = vscode.workspace.getConfiguration('claudeManager.claudeAgentsIntegration');
+		const showUnregistered = config.get<boolean>('showUnregistered', true);
+
+		// 可用性に応じたフォールバック表示
+		if (availability === 'unavailable') {
+			return [new LiveStatusMessageItem(
+				'claude agents が使えません',
+				'Claude Code 2.1.139+ または対応ターミナルが必要です',
+				'warning'
+			)];
+		}
+		if (availability === 'unknown') {
+			return [new LiveStatusMessageItem('確認中...', '', 'loading')];
+		}
+		if (availability === 'disabled') {
+			return [];
+		}
+
+		const entries = service.getEntries();
+		if (entries.length === 0) {
+			return [new LiveStatusMessageItem(
+				'ライブ状態のエージェントなし',
+				'現在稼働中のバックグラウンドエージェントはありません',
+				'info'
+			)];
+		}
+
+		// CSM エージェントデータとのジョイン
+		const allAgents = await dataStore.getAgents();
+		const views = buildLiveAgentViews(entries, allAgents);
+
+		// showUnregistered=false の場合は未登録エントリを除外
+		const filtered = showUnregistered ? views : views.filter(v => v.matchLevel !== 'none');
+
+		return filtered.map(v => new LiveAgentItem(v));
 	}
 
 	// ⭐ お気に入りツリー: ルートノード一覧を構築
@@ -774,6 +849,194 @@ async function detectLegacyAgents(agents: AgentConfig[]): Promise<AgentConfig[]>
 		}
 	}
 	return legacy;
+}
+
+// -------------------------------------------------------------------
+// TASK-5: ライブ状態セクション ヘルパー関数
+// -------------------------------------------------------------------
+
+/**
+ * ClaudeAgentEntry[] と CSM AgentConfig[] を突き合わせて LiveAgentView[] を生成する。
+ * マッチング規則:
+ *   1. sessionId 一致 → 確定マッチ
+ *   2. cwd 一致 → 推定マッチ
+ *   3. なし → "(未登録)" として表示
+ */
+function buildLiveAgentViews(
+	entries: ClaudeAgentEntry[],
+	agents: AgentConfig[],
+): LiveAgentView[] {
+	// sessionId → agent のマップ
+	const sidMap = new Map<string, AgentConfig>();
+	for (const a of agents) {
+		if (a.sessionId) { sidMap.set(a.sessionId, a); }
+	}
+
+	// cwd → agent のマップ（最初に見つかった最優先）
+	const cwdMap = new Map<string, AgentConfig>();
+	for (const a of agents) {
+		if (a.workDir) {
+			const norm = a.workDir.replace(/\\/g, '/').toLowerCase();
+			if (!cwdMap.has(norm)) { cwdMap.set(norm, a); }
+		}
+	}
+
+	return entries.map(entry => {
+		// sessionId マッチ
+		if (entry.sessionId) {
+			const matched = sidMap.get(entry.sessionId);
+			if (matched) {
+				return {
+					entry,
+					linkedAgentName: matched.name,
+					linkedDisplayName: matched.displayName || matched.name,
+					matchLevel: 'session-id' as const,
+				};
+			}
+		}
+
+		// cwd マッチ（正規化して比較）
+		const entryCwd = entry.cwd.replace(/\\/g, '/').toLowerCase();
+		const cwdMatched = cwdMap.get(entryCwd)
+			|| [...cwdMap.entries()].find(([k]) => entryCwd.startsWith(k) || k.startsWith(entryCwd))?.[1];
+		if (cwdMatched) {
+			return {
+				entry,
+				linkedAgentName: cwdMatched.name,
+				linkedDisplayName: cwdMatched.displayName || cwdMatched.name,
+				matchLevel: 'cwd' as const,
+			};
+		}
+
+		// 未登録
+		return { entry, matchLevel: 'none' as const };
+	});
+}
+
+// -------------------------------------------------------------------
+// TASK-5: ライブ状態セクション ツリーアイテム
+// -------------------------------------------------------------------
+
+/** 🟢 ライブ状態 セクションヘッダ */
+export class LiveStatusSectionItem extends vscode.TreeItem {
+	constructor(availability: AvailabilityStatus, count: number) {
+		// 可用性ごとにラベルを変える
+		const label = availability === 'unavailable'
+			? '🔴 ライブ状態'
+			: availability === 'unknown'
+			? '🟡 ライブ状態（確認中）'
+			: count === 0
+			? '⚪ ライブ状態'
+			: `🟢 ライブ状態 (${count})`;
+
+		super(label, vscode.TreeItemCollapsibleState.Expanded);
+		this.description = availability === 'available'
+			? `${count} 件`
+			: availability === 'unavailable'
+			? '環境非対応'
+			: availability === 'unknown'
+			? '...'
+			: '';
+		this.tooltip = new vscode.MarkdownString(
+			`**🟢 ライブ状態**\n\n` +
+			`\`claude agents\` コマンドで取得した現在稼働中のエージェント一覧です。\n\n` +
+			`| 状態 | 説明 |\n|---|---|\n` +
+			`| 🟢 running | 実行中 |\n` +
+			`| 🟡 blocked | 入力待ち |\n` +
+			`| ⚪ done | 完了 |\n\n` +
+			(availability === 'unavailable'
+				? `⚠ **環境非対応**: Claude Code 2.1.139+ が必要です。\n設定 \`claudeManager.claudeAgentsIntegration.enabled\` で無効化できます。`
+				: `設定: \`claudeManager.claudeAgentsIntegration\``)
+		);
+		this.iconPath = new vscode.ThemeIcon('pulse', new vscode.ThemeColor(
+			availability === 'available' && count > 0 ? 'terminal.ansiGreen'
+			: availability === 'unavailable' ? 'errorForeground'
+			: 'foreground'
+		));
+		this.contextValue = 'liveStatusSection';
+	}
+}
+
+/** ライブ状態メッセージ（空・エラー・ローディング） */
+export class LiveStatusMessageItem extends vscode.TreeItem {
+	constructor(label: string, description: string, kind: 'info' | 'warning' | 'loading') {
+		super(label, vscode.TreeItemCollapsibleState.None);
+		this.description = description;
+		this.iconPath = new vscode.ThemeIcon(
+			kind === 'loading' ? 'sync~spin'
+			: kind === 'warning' ? 'warning'
+			: 'info',
+			kind === 'warning' ? new vscode.ThemeColor('terminal.ansiYellow') : undefined
+		);
+		this.contextValue = 'liveStatusMessage';
+	}
+}
+
+/** ライブ状態の個別エージェントアイテム */
+export class LiveAgentItem extends vscode.TreeItem {
+	public readonly view: LiveAgentView;
+
+	constructor(view: LiveAgentView) {
+		const entry = view.entry;
+
+		// 表示名
+		const name = view.linkedDisplayName
+			|| entry.agentName
+			|| (entry.sessionId ? entry.sessionId.substring(0, 8) : '(未登録)');
+		const matchSuffix = view.matchLevel === 'cwd' ? ' (推定)' : '';
+
+		super(`${name}${matchSuffix}`, vscode.TreeItemCollapsibleState.None);
+		this.view = view;
+
+		// description: ステータスバッジ + cwd + 経過時間
+		const statusBadge = `[${entry.status}]`;
+		const cwdShort = path.basename(entry.cwd) || entry.cwd;
+		const elapsed = entry.elapsedSec !== undefined ? `  ${formatElapsed(entry.elapsedSec)}` : '';
+		this.description = `${statusBadge}  ${cwdShort}${elapsed}`;
+
+		// アイコン: ステータスに応じて色を変える
+		switch (entry.status) {
+			case 'running':
+				this.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('terminal.ansiGreen'));
+				break;
+			case 'blocked':
+				this.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('terminal.ansiYellow'));
+				break;
+			case 'done':
+				this.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('foreground'));
+				break;
+			default:
+				this.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('disabledForeground'));
+		}
+
+		// ツールチップ
+		const elapsedStr = entry.elapsedSec !== undefined ? formatElapsed(entry.elapsedSec) : '不明';
+		this.tooltip = new vscode.MarkdownString(
+			`**${name}**\n\n` +
+			`| | |\n|---|---|\n` +
+			`| ステータス | \`${entry.status}\` |\n` +
+			`| 作業ディレクトリ | \`${entry.cwd}\` |\n` +
+			`| 経過時間 | ${elapsedStr} |\n` +
+			(entry.sessionId ? `| セッション ID | \`${entry.sessionId}\` |\n` : '') +
+			(view.linkedAgentName ? `| CSM エージェント | ${view.linkedAgentName} |\n` : '') +
+			(view.matchLevel === 'cwd' ? '\n*cwd によるマッチング（推定）*' : '') +
+			(view.matchLevel === 'none' ? '\n*CSM に未登録のセッションです*' : '')
+		);
+		this.tooltip.isTrusted = true;
+
+		// contextValue: クリックアクション・右クリックメニュー分岐用
+		const linked = view.matchLevel !== 'none' ? 'Linked' : '';
+		this.contextValue = `liveAgent${linked}`;
+
+		// クリックでプレビュー（紐づきエージェントがあれば）
+		if (view.linkedAgentName) {
+			this.command = {
+				command: 'claudeManager.previewAgentByName',
+				title: 'エージェントプレビュー',
+				arguments: [view.linkedAgentName],
+			};
+		}
+	}
 }
 
 // ⭐ お気に入りツリー セクションヘッダ

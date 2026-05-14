@@ -160,6 +160,51 @@ context.subscriptions.push(
 	})
 );
 
+// TASK-5 Phase 2: エージェント名でプレビューを開く（LiveAgentItem クリック用）
+context.subscriptions.push(
+	vscode.commands.registerCommand('claudeManager.previewAgentByName', async (agentName: string) => {
+		const agents = await dataStore.getAgents();
+		const agent = agents.find(a => a.name === agentName);
+		if (!agent) {
+			vscode.window.showWarningMessage(`エージェント「${agentName}」が見つかりません`);
+			return;
+		}
+		const isLive = agent.sessionId ? sessionProvider.isLiveSession(agent.sessionId) : false;
+		const sessions = sessionProvider.getSessions();
+		const session = agent.sessionId ? sessions.find((s) => s.id === agent.sessionId) : undefined;
+		const sessionTitle = session ? (session.customName || session.claudeTitle || session.firstMessage.substring(0, 40)) : undefined;
+		showAgentPreview(agent, isLive, sessionTitle, {
+			onEdit: (a) => {
+				vscode.commands.executeCommand('claudeManager.editAgent', { agent: a });
+			},
+			onEditRuleFile: async (a) => {
+				if (!a.ruleFile) { return; }
+				const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(a.ruleFile));
+				await vscode.window.showTextDocument(doc);
+			},
+			onOpenInClaude: (sessionId) => {
+				const scheme = vscode.env.uriScheme;
+				const uri = vscode.Uri.parse(`${scheme}://anthropic.claude-code/open?session=${encodeURIComponent(sessionId)}`);
+				vscode.env.openExternal(uri);
+			},
+			onOpenInTerminal: (a) => {
+				const args = buildResumeArgs(a);
+				if (!args) { return; }
+				if (a.permissionMode) { args.push('--permission-mode', a.permissionMode); }
+				const terminal = vscode.window.createTerminal({ name: `🤖 ${a.displayName || a.name}`, cwd: a.workDir ? translateWorkDirPath(a.workDir) : undefined });
+				terminal.show();
+				terminal.sendText(args.join(' '));
+			},
+			onRenewSession: (a) => {
+				vscode.commands.executeCommand('claudeManager.renewAgentSession', { agent: a });
+			},
+			onLinkSession: (a) => {
+				vscode.commands.executeCommand('claudeManager.linkSession', { agent: a });
+			},
+		});
+	})
+);
+
 // エージェントに紐づいたセッションIDをクリップボードにコピー
 context.subscriptions.push(
 	vscode.commands.registerCommand('claudeManager.copyAgentSessionId', async (item: AgentItem) => {
