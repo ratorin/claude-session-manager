@@ -4,6 +4,8 @@ import { BookmarkTreeProvider } from './providers/bookmarkTreeProvider';
 import { TagTreeProvider } from './providers/tagTreeProvider';
 import { MemoryTreeProvider } from './providers/memoryTreeProvider';
 import { AgentTreeProvider, AgentDecorationProvider } from './providers/agentTreeProvider';
+import { AgentLiveTreeProvider } from './providers/agentLiveTreeProvider';
+import { AgentFavoritesTreeProvider } from './providers/agentFavoritesTreeProvider';
 import { shouldShowInOrgChart } from './utils/agentUtils';
 import { AgentWatcher } from './watchers/agentWatcher';
 import { TaskTracker } from './watchers/taskTracker';
@@ -122,8 +124,18 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 	agentProvider.setHideOtherProjects(!showOtherProjectsInit);
 
+	// ライブ状態ビュー専用プロバイダ
+	const agentLiveProvider = new AgentLiveTreeProvider();
+
+	// お気に入りビュー専用プロバイダ
+	const agentFavoritesProvider = new AgentFavoritesTreeProvider(
+		() => sessionProvider.getSessions(),
+		(id) => agentWatcher.isLive(id),
+		() => agentWatcher.getActiveAgentNames()
+	);
+
 	// TreeDataProviderのEventEmitter解放を追跡
-	context.subscriptions.push(sessionProvider, bookmarkProvider, tagProvider, memoryProvider, agentProvider);
+	context.subscriptions.push(sessionProvider, bookmarkProvider, tagProvider, memoryProvider, agentProvider, agentLiveProvider, agentFavoritesProvider);
 
 	// デコレーションプロバイダーを登録
 	context.subscriptions.push(vscode.window.registerFileDecorationProvider(sessionDecoProvider));
@@ -205,6 +217,8 @@ export function activate(context: vscode.ExtensionContext) {
 		// モデル不一致情報をagentProviderに連携してからリフレッシュ
 		agentProvider.setWatcherStates(agentWatcher.getStates());
 		agentProvider.refresh();
+		agentFavoritesProvider.setWatcherStates(agentWatcher.getStates());
+		agentFavoritesProvider.refresh();
 		// ライブセッション情報をsessionTreeProviderに連携（H-3: 二重ポーリング統合）
 		sessionProvider.setLiveSessionIds(agentWatcher.getLiveSessionIds());
 		// タスク状態を評価（通知含む）
@@ -233,7 +247,8 @@ export function activate(context: vscode.ExtensionContext) {
 	// --- TASK-5: ClaudeAgentsService 初期化 ---
 	const claudeAgentsService = new ClaudeAgentsService();
 	context.subscriptions.push(claudeAgentsService);
-	agentProvider.setClaudeAgentsService(claudeAgentsService);
+	// ライブ状態プロバイダに ClaudeAgentsService を注入（agentProvider には不要になった）
+	agentLiveProvider.setClaudeAgentsService(claudeAgentsService);
 
 	// TASK-5 Phase 3: claude agents の running セッションを PID チェックに補完
 	claudeAgentsService.onDidChange(() => {
@@ -395,6 +410,7 @@ export function activate(context: vscode.ExtensionContext) {
 		bookmarkProvider.refresh();
 		tagProvider.refresh();
 		agentProvider.refresh();
+		agentFavoritesProvider.refresh();
 		sessionDecoProvider.refresh();
 		// agentWatcher.scheduleUpdate() → onDidChange → updateStatusBar() の順で実行
 		// updateStatusBar()を直接呼ぶとstates再構築前の古いデータを表示するため、
@@ -413,12 +429,17 @@ export function activate(context: vscode.ExtensionContext) {
 		dragAndDropController: agentProvider,
 		canSelectMany: false,
 	});
+	const claudeAgentsLiveTreeView = vscode.window.createTreeView('claudeAgentsLive', {
+		treeDataProvider: agentLiveProvider,
+	});
 	context.subscriptions.push(
 		vscode.window.createTreeView('claudeSessions', { treeDataProvider: sessionProvider }),
 		vscode.window.createTreeView('claudeBookmarks', { treeDataProvider: bookmarkProvider }),
 		vscode.window.createTreeView('claudeTags', { treeDataProvider: tagProvider }),
 		vscode.window.createTreeView('claudeMemory', { treeDataProvider: memoryProvider }),
+		vscode.window.createTreeView('claudeAgentsFavorites', { treeDataProvider: agentFavoritesProvider }),
 		claudeAgentsTreeView,
+		claudeAgentsLiveTreeView,
 	);
 
 	// TH4: ハイブリッドタブ — defaultTab を取得して activeTab コンテキストを初期化
@@ -500,17 +521,16 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	// TASK-5: エージェントタブの可視性変化を ClaudeAgentsService に通知
-	// claudeAgents TreeView の可視性を監視してポーリングを制御
+	// TASK-5: ライブ状態ビューの可視性変化を ClaudeAgentsService に通知
+	// claudeAgentsLive TreeView の可視性を監視してポーリングを制御
 	context.subscriptions.push(
-		claudeAgentsTreeView.onDidChangeVisibility(e => {
-			claudeAgentsService.setTabVisible(e.visible);
-			agentProvider.notifyTabVisible(e.visible);
+		claudeAgentsLiveTreeView.onDidChangeVisibility(e => {
+			agentLiveProvider.notifyTabVisible(e.visible);
 		})
 	);
 	// 起動時: TreeView が既に可視なら即座にポーリング開始
-	if (claudeAgentsTreeView.visible) {
-		claudeAgentsService.setTabVisible(true);
+	if (claudeAgentsLiveTreeView.visible) {
+		agentLiveProvider.notifyTabVisible(true);
 	}
 
 	// TASK-7: /goal コマンド連動 PoC — CSM タスクログを目標として表示

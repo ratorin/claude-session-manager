@@ -49,12 +49,6 @@
 					"when": "config.claudeManager.useNewMainPanel != false && claudeManager.activeTab == 'projects'"
 				},
 				{
-					"id": "claudeSessions",
-					"name": "会話一覧（セッション）",
-					"icon": "$(comment-discussion)",
-					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'sessions'"
-				},
-				{
 					"id": "claudeBookmarks",
 					"name": "会話ブックマーク",
 					"icon": "$(star-full)",
@@ -65,6 +59,24 @@
 					"name": "会話タグ",
 					"icon": "$(tag)",
 					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'sessions'"
+				},
+				{
+					"id": "claudeSessions",
+					"name": "会話一覧（セッション）",
+					"icon": "$(comment-discussion)",
+					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'sessions'"
+				},
+				{
+					"id": "claudeAgentsLive",
+					"name": "ライブ状態",
+					"icon": "$(pulse)",
+					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'agents'"
+				},
+				{
+					"id": "claudeAgentsFavorites",
+					"name": "お気に入りエージェント",
+					"icon": "$(star-full)",
+					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'agents'"
 				},
 				{
 					"id": "claudeAgents",
@@ -92,6 +104,11 @@
 				"view": "claudeAgents",
 				"contents": "エージェントが未登録です。\nまずは取締役を登録して、マルチエージェント運用を始めましょう。\n[取締役を登録](command:claudeManager.registerDirector)\n[使い方ガイドを開く](command:claudeManager.openGuide)",
 				"when": "!claudeManager.hasAgents"
+			},
+			{
+				"view": "claudeAgentsFavorites",
+				"contents": "お気に入りエージェントがありません。\nエージェントリストで ☆ をクリックして追加しましょう。",
+				"when": "claudeManager.hasAgents"
 			}
 		],
 		"commands": [
@@ -642,6 +659,11 @@
 					"group": "inline@20"
 				},
 				{
+					"command": "claudeManager.removeAgentFavorite",
+					"when": "view == claudeAgentsFavorites && viewItem =~ /^favoriteAgent/",
+					"group": "inline@20"
+				},
+				{
 					"command": "claudeManager.previewAgent",
 					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
 					"group": "0_open@0"
@@ -690,6 +712,26 @@
 					"command": "claudeManager.removeAgentFavorite",
 					"when": "view == claudeAgents && (viewItem =~ /^agentItem.*Bookmarked/ || viewItem =~ /^favoriteAgent/)",
 					"group": "2_favorite"
+				},
+				{
+					"command": "claudeManager.removeAgentFavorite",
+					"when": "view == claudeAgentsFavorites && viewItem =~ /^favoriteAgent/",
+					"group": "2_favorite"
+				},
+				{
+					"command": "claudeManager.previewAgent",
+					"when": "view == claudeAgentsFavorites && viewItem =~ /favoriteAgentLinked/",
+					"group": "0_open@0"
+				},
+				{
+					"command": "claudeManager.openAgentInClaude",
+					"when": "view == claudeAgentsFavorites && viewItem =~ /favoriteAgentLinked/",
+					"group": "0_open@1"
+				},
+				{
+					"command": "claudeManager.openAgentSession",
+					"when": "view == claudeAgentsFavorites && viewItem =~ /favoriteAgentLinked/",
+					"group": "0_open@2"
 				},
 				{
 					"command": "claudeManager.deleteAgent",
