@@ -34,6 +34,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		this.watcherStates = states;
 	}
 	private activeAgentNamesFn: () => Set<string>;
+	private getSessionMtimeFn: ((sessionId: string) => number | undefined) | undefined;
 	private getVisibleTasksFn: ((agentName: string) => TaskLog[]) | undefined;
 	private hideOtherProjects: boolean = false;
 
@@ -46,11 +47,13 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 	constructor(
 		getSessions: () => ParsedSession[],
 		isLive: (id: string) => boolean,
-		getActiveAgentNames?: () => Set<string>
+		getActiveAgentNames?: () => Set<string>,
+		getSessionMtime?: (sessionId: string) => number | undefined,
 	) {
 		this.getSessionsFn = getSessions;
 		this.isLiveFn = isLive;
 		this.activeAgentNamesFn = getActiveAgentNames || (() => new Set());
+		this.getSessionMtimeFn = getSessionMtime;
 	}
 
 	// TaskTracker 連携用セッター（循環依存回避のため後付け）
@@ -187,7 +190,8 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				const isLive = checkLive(agent);
 				const sessionTitle = agent.sessionId ? titleMap.get(agent.sessionId) : undefined;
 				const ws = this.watcherStates.get(agent.name);
-				result.push(new AgentItem(agent, isLive, sessionTitle, true, false, '', ws?.modelMismatch ?? false, ws?.actualModel));
+				const mtimeMs = agent.sessionId ? this.getSessionMtimeFn?.(agent.sessionId) : undefined;
+				result.push(new AgentItem(agent, isLive, sessionTitle, true, false, '', ws?.modelMismatch ?? false, ws?.actualModel, false, mtimeMs));
 			}
 			return result;
 		}
@@ -317,7 +321,8 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				const hasTasks = this.getVisibleTasksFn ? this.getVisibleTasksFn(agent.name).length > 0 : false;
 				const hasChildrenFlag = childMap.has(agent.name) || hasTasks;
 				const ws = this.watcherStates.get(agent.name);
-				result.push(new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent)));
+				const mtimeMs = agent.sessionId ? this.getSessionMtimeFn?.(agent.sessionId) : undefined;
+				result.push(new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs));
 			}
 
 			// グローバルエージェント の仮想親ノード
@@ -346,7 +351,8 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			const hasTasks = this.getVisibleTasksFn ? this.getVisibleTasksFn(agent.name).length > 0 : false;
 			const hasChildren = childMap.has(agent.name) || hasTasks;
 			const ws = this.watcherStates.get(agent.name);
-			result.push(new AgentItem(agent, isLive, sessionTitle, true, hasChildren, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent)));
+			const mtimeMs = agent.sessionId ? this.getSessionMtimeFn?.(agent.sessionId) : undefined;
+			result.push(new AgentItem(agent, isLive, sessionTitle, true, hasChildren, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs));
 		}
 
 		// タスクログ
@@ -360,6 +366,17 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		return result;
 	}
 
+}
+
+// ライブ経過時間を短い日本語形式に変換: 30秒 / 5分 / 2時間 / 3日
+function formatLiveElapsed(ms: number): string {
+	const sec = Math.floor(ms / 1000);
+	if (sec < 60) { return `${sec}秒`; }
+	const min = Math.floor(sec / 60);
+	if (min < 60) { return `${min}分`; }
+	const hr = Math.floor(min / 60);
+	if (hr < 24) { return `${hr}時間`; }
+	return `${Math.floor(hr / 24)}日`;
 }
 
 // エージェント管理サイドバーのTreeItem
@@ -376,6 +393,7 @@ export class AgentItem extends vscode.TreeItem {
 		modelMismatch: boolean = false,
 		actualModel?: string,
 		public readonly isOtherProject: boolean = false,
+		mtimeMs?: number,
 	) {
 		// モデル頭文字（会話一覧と同じ全角表記）
 		const modelChar = agent.model === 'opus' ? 'Ｏ'
@@ -388,11 +406,27 @@ export class AgentItem extends vscode.TreeItem {
 		// モデル不一致警告ラベル
 		const mismatchLabel = modelMismatch ? ' ⚠️' : '';
 
-		// 表示名: "Ｏ  CSM開発部（csm-dev）使い捨て ⚠️"
+		// ライブプレフィックス: [Open] または [経過時間]
+		// - isLive かつ mtime が 30 秒以内 → [Open] (現在対話中と推定)
+		// - isLive かつ mtime が古い      → [5分] のような経過時間
+		// - 停止中                        → プレフィックスなし
+		let livePrefix = '';
+		if (isLive && !isOtherProject) {
+			if (mtimeMs !== undefined) {
+				const elapsedMs = Date.now() - mtimeMs;
+				livePrefix = elapsedMs < 30_000
+					? '[Open] '
+					: `[${formatLiveElapsed(elapsedMs)}] `;
+			} else {
+				livePrefix = '[実行中] ';
+			}
+		}
+
+		// 表示名: "[Open] Ｏ  CSM開発部（csm-dev）使い捨て ⚠️"
 		const agentDisplayName = agent.displayName
 			? `${agent.displayName}（${agent.name}）`
 			: agent.name;
-		const displayName = `${modelChar}\u2007${agentDisplayName}${disposableLabel}${mismatchLabel}`;
+		const displayName = `${livePrefix}${modelChar}\u2007${agentDisplayName}${disposableLabel}${mismatchLabel}`;
 
 		// 折りたたみ状態
 		const collapsible = hasChildren

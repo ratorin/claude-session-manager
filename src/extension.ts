@@ -121,7 +121,8 @@ export function activate(context: vscode.ExtensionContext) {
 	const agentProvider = new AgentTreeProvider(
 		() => sessionProvider.getSessions(),
 		(id) => agentWatcher.isLive(id),
-		() => agentWatcher.getActiveAgentNames()
+		() => agentWatcher.getActiveAgentNames(),
+		(sessionId) => agentWatcher.getSessionMtime(sessionId),
 	);
 	agentProvider.setHideOtherProjects(!showOtherProjectsInit);
 

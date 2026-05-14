@@ -1,5 +1,23 @@
 # 更新履歴
 
+## v0.5.0 (2026-05-14) — エージェント管理ラベルに [Open]/[経過時間] プレフィックス追加
+
+### エージェント管理ラベル改善
+
+エージェント管理セクションの各エージェント行に稼働状態プレフィックスを追加。
+
+- **動作中かつ最近更新 (30秒以内)** → `[Open] Ｓ エージェント名` — 現在対話中と推定
+- **動作中かつ古い** → `[5分] Ｓ エージェント名` — 経過時間表示 (秒/分/時間/日)
+- **停止中** → `Ｓ エージェント名` — プレフィックスなし (従来通り)
+
+実装:
+- `agentTreeProvider.AgentItem`: `mtimeMs?` パラメータ追加、`formatLiveElapsed()` ヘルパー追加
+- `AgentTreeProvider`: `getSessionMtimeFn` コールバック追加
+- `extension.ts`: `agentWatcher.getSessionMtime` を `AgentTreeProvider` に注入
+- `agentWatcher.onDidChange` → `AgentItem` ラベルも自動更新 (reload 不要)
+
+---
+
 ## v0.5.0 (2026-05-14) — ライブ状態セクション PID/JSONL ベースに切替
 
 ### ライブ状態セクションのデータソース変更
