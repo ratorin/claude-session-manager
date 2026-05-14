@@ -15,11 +15,11 @@
  *   claudeManager.claudeAgentsIntegration.showUnregistered  (boolean, default: true)
  */
 
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
 
-const execp = promisify(exec);
+const execFilep = promisify(execFile);
 
 // -------------------------------------------------------------------
 // 型定義
@@ -369,13 +369,14 @@ export class ClaudeAgentsService implements vscode.Disposable {
  * 非対応環境では ClaudeAgentsUnavailableError を throw する。
  */
 export async function fetchClaudeAgents(cwd?: string): Promise<ClaudeAgentEntry[]> {
-	const cwdArg = cwd ? `--cwd ${shellQuote(cwd)}` : '';
-	const cmd = `claude agents${cwdArg ? ' ' + cwdArg : ''}`;
+	const args = ['agents', ...(cwd ? ['--cwd', cwd] : [])];
 
 	try {
-		const { stdout, stderr } = await execp(cmd, {
+		const { stdout, stderr } = await execFilep('claude', args, {
 			timeout: 8000,
 			maxBuffer: 1024 * 1024,
+			// Windows では .cmd シムのため shell が必要
+			...(process.platform === 'win32' ? { shell: true } : {}),
 		});
 		const combined = stdout + stderr;
 
@@ -435,8 +436,3 @@ function jsonEntryToClaudeAgentEntry(item: unknown): ClaudeAgentEntry {
 	};
 }
 
-/** シェル引数の安全なクォート処理 */
-function shellQuote(s: string): string {
-	// シングルクォートで囲み、内部のシングルクォートをエスケープ
-	return `'${s.replace(/'/g, "'\\''")}'`;
-}
