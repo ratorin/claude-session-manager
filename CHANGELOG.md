@@ -1,5 +1,23 @@
 # 更新履歴
 
+## v0.5.0 (2026-05-14) — QA HIGH 修正 (H-1 + H-2)
+
+### セキュリティ・堅牢性修正
+
+#### H-1: `claudeAgentsService` — `exec()` → `execFile()` 置換
+- シェル経由の `exec(`claude agents ...`)` を `execFile('claude', [...args])` に変更
+- パスに特殊文字が含まれる場合のクォート不全を根本解消
+- Windows では `.cmd` シム対応のため `shell: true` を適用
+- `shellQuote()` ヘルパー削除
+
+#### H-2: `dataStore.setAgentSession()` — `force` パラメータ + ロギング追加
+- `force?: boolean` パラメータ追加: `true` 時は既存 sessionId ガードをバイパス
+- `outputChannel?: vscode.OutputChannel` パラメータ追加: スキップ時のログ出力先
+- スキップ時: `"[CSM] 既存 sessionId XXX を保持 (force=false)"` をログ出力
+- ユニットテスト追加: `test/unit/setAgentSession.test.js` (3ケース: empty→new / existing→skip / force=true→overwrite)
+
+---
+
 ## v0.5.0 (2026-05-14)
 
 ### ⭐ お気に入りエージェント UI 改善 — 会話風フラットリスト + ★追加ボタン

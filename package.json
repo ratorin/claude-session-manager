@@ -1001,7 +1001,8 @@
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
 		"compile": "tsc -p ./",
-		"watch": "tsc -watch -p ./"
+		"watch": "tsc -watch -p ./",
+		"test": "npm run compile && node test/unit/setAgentSession.test.js"
 	},
 	"repository": {
 		"type": "git",

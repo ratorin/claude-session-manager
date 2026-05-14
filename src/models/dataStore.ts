@@ -537,18 +537,23 @@ export async function migrateAgentsToAgentSessions(): Promise<boolean> {
  * エージェントのセッションIDを自動紐づけ（未紐づけの場合のみ）
  * 既に sessionId が設定されている場合は何もしない（ユーザー操作を尊重）
  *
+ * @param force - true の場合、既存 sessionId ガードをバイパスして上書きする
+ * @param outputChannel - スキップ時のログ出力先（省略可）
  * @returns true = 紐づけ成功、false = スキップ（既にリンク済み or バインディング新規作成不要）
  */
 export async function setAgentSession(
 	name: string,
 	sessionId: string,
-	mode?: 'fixed' | 'disposable'
+	mode?: 'fixed' | 'disposable',
+	force?: boolean,
+	outputChannel?: vscode.OutputChannel
 ): Promise<boolean> {
 	const bindings = await getAgentSessionBindings();
 	const existing = bindings[name];
 
 	// ガード: sessionId が既に設定されている場合はスキップ（ユーザー操作を尊重）
-	if (existing && existing.sessionId && existing.sessionId !== '' && existing.sessionId !== 'unlinked') {
+	if (!force && existing && existing.sessionId && existing.sessionId !== '' && existing.sessionId !== 'unlinked') {
+		outputChannel?.appendLine(`[CSM] 既存 sessionId ${existing.sessionId} を保持 (force=false)`);
 		return false;
 	}
 
