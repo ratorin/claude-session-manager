@@ -38,6 +38,24 @@
 3. `claudeMain` 内の別タブ（セッション等）をクリック → `setContext` で `activeTab` 更新
 4. `claudeMain` が非表示、`claudeTabBar` が再表示
 
+### hook を exec-form (args[]) に統一 (Claude Code 2.1.139+ クォート問題解消)
+
+CSM が登録する全 hook を `command: "node"` + `args: [scriptPath, ...]` の exec-form に統一。
+シェルを経由しない直接 spawn になるため、スペースを含むパスでのクォート問題が完全に解消される。
+
+#### 変更内容
+- `src/services/hookService.ts` に exec-form サポート用ヘルパーを追加:
+  - `supportsExecForm()` — `claude --version` でバージョン判定（初回のみ実行・キャッシュ）
+  - `buildHookDef(scriptPath, timeout, extraArgs?, extra?)` — 2.1.139+ なら exec-form、未満なら shell-form を返す
+  - `hookMatchesMarker(hh, marker)` — shell/exec 両形式でマーカー一致判定
+  - `signalHookMatches(hh, marker, action)` — subagent-signal 用 action 付き判定
+  - `migrateHookToExecForm(hh)` — shell-form を exec-form に in-place 変換
+- `migrateHooksToExecForm(outputChannel)` を export — 起動時に既存設定を一括変換
+- 対象 hook: csm-precompact / csm-precompact-summary / csm-session-stop / csm-recap-capture /
+  csm-session-agent-inject / csm-governance-capture / csm-check-ask-agent / subagent-signal
+- `src/extension.ts`: 起動時に `migrateHooksToExecForm()` を呼び出して既存設定を自動変換
+- Claude Code < 2.1.139 ではフォールバックとして従来の shell-form を維持
+
 ### isOtherProject クロスプラットフォームパス比較修正
 
 `agentTreeProvider.ts` の `isOtherProject` 関数で、エージェントの `workDir`（Windows パス: `c:\GDrive\Craftwork`）を

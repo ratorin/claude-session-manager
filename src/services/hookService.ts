@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { spawnSync } from 'child_process';
 import { AgentConfig } from '../models/types';
 import { addToIndex } from '../utils/memoryManager';
 
@@ -62,6 +63,94 @@ async function modifySettingsJson(
 	return settingsWriteQueue;
 }
 
+// ─── exec-form サポート (Claude Code 2.1.139+) ────────────────────────────────
+// args: string[] 形式はシェル経由しない直接 spawn のためクォート問題が消える。
+
+let _execFormSupported: boolean | null = null;
+
+/** Claude Code バージョンを取得し exec-form (args[]) が使えるか判定（初回のみ実行） */
+function supportsExecForm(): boolean {
+	if (_execFormSupported !== null) { return _execFormSupported; }
+	try {
+		const result = spawnSync('claude', ['--version'], { encoding: 'utf-8', timeout: 3000 });
+		const output = (result.stdout || '').trim();
+		const m = output.match(/(\d+)\.(\d+)\.(\d+)/);
+		if (!m) { _execFormSupported = false; return false; }
+		const [major, minor, patch] = [Number(m[1]), Number(m[2]), Number(m[3])];
+		_execFormSupported = (
+			major > 2 ||
+			(major === 2 && minor > 1) ||
+			(major === 2 && minor === 1 && patch >= 139)
+		);
+	} catch {
+		_execFormSupported = false;
+	}
+	return _execFormSupported;
+}
+
+/**
+ * CSM hook オブジェクトを構築（exec-form / shell-form を自動選択）
+ * @param scriptPath  フックスクリプトの絶対パス
+ * @param timeout     タイムアウト秒数
+ * @param extraArgs   スクリプトに渡す追加引数（例: ["start"]）
+ * @param extra       追加フィールド（例: { async: true }）
+ */
+function buildHookDef(
+	scriptPath: string,
+	timeout: number,
+	extraArgs: string[] = [],
+	extra: Record<string, unknown> = {}
+): Record<string, unknown> {
+	const normalizedPath = scriptPath.replace(/\\/g, '/');
+	if (supportsExecForm()) {
+		return { type: 'command', command: 'node', args: [normalizedPath, ...extraArgs], timeout, ...extra };
+	}
+	const suffix = extraArgs.length > 0 ? ` ${extraArgs.join(' ')}` : '';
+	return { type: 'command', command: `node "${normalizedPath}"${suffix}`, timeout, ...extra };
+}
+
+/**
+ * hook オブジェクトが指定マーカー（スクリプトパスの一部）を含むか判定
+ * shell-form: command に含む / exec-form: args に含む
+ */
+function hookMatchesMarker(hh: Record<string, unknown>, marker: string): boolean {
+	if (typeof hh.command === 'string' && hh.command.includes(marker)) { return true; }
+	if (Array.isArray(hh.args) && (hh.args as string[]).some((a) => a.includes(marker))) { return true; }
+	return false;
+}
+
+/**
+ * signal hook がマーカーと action 両方に一致するか判定（shell/exec 両形式対応）
+ */
+function signalHookMatches(hh: Record<string, unknown>, marker: string, action: string): boolean {
+	// shell-form: "node \"...signal.js\" start"
+	if (typeof hh.command === 'string' && hh.command.includes(marker) && hh.command.includes(action)) { return true; }
+	// exec-form: { command: 'node', args: ['...signal.js', 'start'] }
+	if (hh.command === 'node' && Array.isArray(hh.args)) {
+		const args = hh.args as string[];
+		return args.some((a) => a.includes(marker)) && args.includes(action);
+	}
+	return false;
+}
+
+/**
+ * shell-form の CSM hook を exec-form に in-place 変換する。
+ * 変換した場合は true を返す。
+ */
+function migrateHookToExecForm(hh: Record<string, unknown>): boolean {
+	if (!supportsExecForm()) { return false; }
+	if (typeof hh.command !== 'string') { return false; }
+	if (hh.command === 'node' && Array.isArray(hh.args)) { return false; } // 既に exec-form
+	// shell-form: node "/path/script.js" [arg1 arg2 ...]
+	const m = (hh.command as string).match(/^node\s+"([^"]+)"(.*)$/);
+	if (!m) { return false; }
+	const scriptPath = m[1];
+	const rest = m[2].trim();
+	hh.command = 'node';
+	hh.args = rest ? [scriptPath, ...rest.split(/\s+/)] : [scriptPath];
+	return true;
+}
+
 // SubagentStart/Stop フックを settings.json に登録する
 export async function ensureSubagentHooks(outputChannel: vscode.OutputChannel): Promise<void> {
 	const homeDir = os.homedir();
@@ -90,7 +179,7 @@ export async function ensureSubagentHooks(outputChannel: vscode.OutputChannel): 
 					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
 					if (!Array.isArray(innerHooks)) { return false; }
 					return innerHooks.some((hh: Record<string, unknown>) =>
-						typeof hh.command === 'string' && hh.command.includes(CSM_SIGNAL_MARKER) && hh.command.includes(action)
+						signalHookMatches(hh, CSM_SIGNAL_MARKER, action)
 					);
 				});
 			};
@@ -103,7 +192,7 @@ export async function ensureSubagentHooks(outputChannel: vscode.OutputChannel): 
 					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
 					if (!Array.isArray(innerHooks)) { return true; }
 					return !innerHooks.some((hh: Record<string, unknown>) =>
-						typeof hh.command === 'string' && hh.command.includes(CSM_SIGNAL_MARKER)
+						hookMatchesMarker(hh, CSM_SIGNAL_MARKER)
 					);
 				});
 				if (filtered.length !== originalLen) {
@@ -118,12 +207,7 @@ export async function ensureSubagentHooks(outputChannel: vscode.OutputChannel): 
 					hooksObj[eventKey] = [];
 				}
 				const entries = hooksObj[eventKey] as Array<Record<string, unknown>>;
-				const hook = {
-					type: 'command',
-					command: `node "${signalScript.replace(/\\/g, '/')}" ${action}`,
-					timeout: 10,
-					async: true,
-				};
+				const hook = buildHookDef(signalScript, 10, [action], { async: true });
 				const existing = entries.find((e: Record<string, unknown>) => e.matcher === '*');
 				if (existing && Array.isArray(existing.hooks)) {
 					(existing.hooks as Array<Record<string, unknown>>).push(hook);
@@ -199,12 +283,15 @@ export async function ensureSessionAgentInjectHook(extensionPath: string, output
 					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
 					if (!Array.isArray(innerHooks)) { continue; }
 					for (const hh of innerHooks) {
-						if (typeof hh.command !== 'string') { continue; }
-						if (!hh.command.includes(CSM_MARKER)) { continue; }
-						if (hh.command.includes('.sh')) {
+						if (!hookMatchesMarker(hh, CSM_MARKER)) { continue; }
+						// shell-form .sh → 要マイグレーション
+						if (typeof hh.command === 'string' && hh.command.includes('.sh')) {
 							needsMigration = true;
-						} else if (hh.command.includes('.js')) {
+						} else {
+							// .js shell-form または exec-form → インストール済み
 							alreadyNodeInstalled = true;
+							// exec-form へのマイグレーション試行
+							migrateHookToExecForm(hh);
 						}
 					}
 				}
@@ -233,11 +320,7 @@ export async function ensureSessionAgentInjectHook(extensionPath: string, output
 			}
 			(hooksObj['SessionStart'] as Array<Record<string, unknown>>).push({
 				matcher: '*',
-				hooks: [{
-					type: 'command',
-					command: `node "${hookScript.replace(/\\/g, '/')}"`,
-					timeout: 10,
-				}]
+				hooks: [buildHookDef(hookScript, 10)]
 			});
 			return true;
 		}, (msg) => outputChannel.appendLine(msg));
@@ -326,7 +409,6 @@ export async function ensurePreCompactHook(extensionPath: string, outputChannel:
 				settings.hooks = {};
 			}
 			const hooksObj = settings.hooks as Record<string, unknown>;
-			const jsCommand = `node "${hookScript.replace(/\\/g, '/')}"`;
 			const preCompact = hooksObj['PreCompact'];
 			let updatedOldEntry = false;
 
@@ -335,13 +417,14 @@ export async function ensurePreCompactHook(extensionPath: string, outputChannel:
 					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
 					if (!Array.isArray(innerHooks)) { continue; }
 					for (const hh of innerHooks) {
-						if (typeof hh.command === 'string' && hh.command.includes(CSM_MARKER)) {
-							if (hh.command.startsWith('bash ')) {
-								hh.command = jsCommand; // 旧 bash → node に更新
-								updatedOldEntry = true;
-							} else {
-								return false; // 既に node コマンドで登録済み
-							}
+						if (!hookMatchesMarker(hh, CSM_MARKER)) { continue; }
+						if (typeof hh.command === 'string' && hh.command.startsWith('bash ')) {
+							// 旧 bash → node exec-form に更新
+							Object.assign(hh, buildHookDef(hookScript, 15));
+							updatedOldEntry = true;
+						} else {
+							// 既に node 形式 → exec-form へマイグレーション試行して終了
+							return migrateHookToExecForm(hh);
 						}
 					}
 				}
@@ -353,7 +436,7 @@ export async function ensurePreCompactHook(extensionPath: string, outputChannel:
 				}
 				(hooksObj['PreCompact'] as Array<Record<string, unknown>>).push({
 					matcher: '*',
-					hooks: [{ type: 'command', command: jsCommand, timeout: 15 }]
+					hooks: [buildHookDef(hookScript, 15)]
 				});
 			}
 			return true;
@@ -403,21 +486,28 @@ export async function ensurePreCompactSummaryHook(extensionPath: string, outputC
 			const hooksObj = settings.hooks as Record<string, unknown>;
 			const preCompact = hooksObj['PreCompact'];
 			if (Array.isArray(preCompact)) {
-				const alreadyInstalled = (preCompact as Array<Record<string, unknown>>).some((entry) => {
+				let changed = false;
+				for (const entry of preCompact as Array<Record<string, unknown>>) {
 					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
-					if (!Array.isArray(innerHooks)) { return false; }
-					return innerHooks.some((hh) =>
-						typeof hh.command === 'string' && hh.command.includes(CSM_MARKER)
-					);
-				});
-				if (alreadyInstalled) { return false; }
+					if (!Array.isArray(innerHooks)) { continue; }
+					for (const hh of innerHooks) {
+						if (!hookMatchesMarker(hh, CSM_MARKER)) { continue; }
+						// 既にインストール済み → exec-form マイグレーション試行
+						if (migrateHookToExecForm(hh)) { changed = true; }
+					}
+				}
+				// インストール済みならマイグレーション結果のみ返す
+				if ((preCompact as Array<Record<string, unknown>>).some((entry) => {
+					const ih = entry.hooks as Array<Record<string, unknown>> | undefined;
+					return Array.isArray(ih) && ih.some((hh) => hookMatchesMarker(hh, CSM_MARKER));
+				})) { return changed; }
 			}
 			if (!Array.isArray(hooksObj['PreCompact'])) {
 				hooksObj['PreCompact'] = [];
 			}
 			(hooksObj['PreCompact'] as Array<Record<string, unknown>>).push({
 				matcher: '*',
-				hooks: [{ type: 'command', command: `node "${hookScript.replace(/\\/g, '/')}"`, timeout: 15 }]
+				hooks: [buildHookDef(hookScript, 15)]
 			});
 			return true;
 		}, (msg) => outputChannel.appendLine(msg));
@@ -463,21 +553,26 @@ export async function ensureSessionStopHook(extensionPath: string, outputChannel
 			const hooksObj = settings.hooks as Record<string, unknown>;
 			const stopArr = hooksObj['Stop'];
 			if (Array.isArray(stopArr)) {
-				const alreadyInstalled = (stopArr as Array<Record<string, unknown>>).some((entry) => {
+				let changed = false;
+				for (const entry of stopArr as Array<Record<string, unknown>>) {
 					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
-					if (!Array.isArray(innerHooks)) { return false; }
-					return innerHooks.some((hh) =>
-						typeof hh.command === 'string' && hh.command.includes(CSM_MARKER)
-					);
-				});
-				if (alreadyInstalled) { return false; }
+					if (!Array.isArray(innerHooks)) { continue; }
+					for (const hh of innerHooks) {
+						if (!hookMatchesMarker(hh, CSM_MARKER)) { continue; }
+						if (migrateHookToExecForm(hh)) { changed = true; }
+					}
+				}
+				if ((stopArr as Array<Record<string, unknown>>).some((entry) => {
+					const ih = entry.hooks as Array<Record<string, unknown>> | undefined;
+					return Array.isArray(ih) && ih.some((hh) => hookMatchesMarker(hh, CSM_MARKER));
+				})) { return changed; }
 			}
 			if (!Array.isArray(hooksObj['Stop'])) {
 				hooksObj['Stop'] = [];
 			}
 			(hooksObj['Stop'] as Array<Record<string, unknown>>).push({
 				matcher: '*',
-				hooks: [{ type: 'command', command: `node "${hookScript.replace(/\\/g, '/')}"`, timeout: 10 }]
+				hooks: [buildHookDef(hookScript, 10)]
 			});
 			return true;
 		}, (msg) => outputChannel.appendLine(msg));
@@ -518,19 +613,21 @@ export async function ensureGovernanceHook(extensionPath: string, outputChannel:
 				settings.hooks = {};
 			}
 			const hooksObj = settings.hooks as Record<string, unknown>;
-			const scriptCmd = `node "${hookScript.replace(/\\/g, '/')}"`;
 			let changed = false;
 
 			for (const eventKey of ['PreToolUse', 'PostToolUse']) {
 				const entries = hooksObj[eventKey];
 				if (Array.isArray(entries)) {
-					const alreadyInstalled = (entries as Array<Record<string, unknown>>).some((entry) => {
+					let alreadyInstalled = false;
+					for (const entry of entries as Array<Record<string, unknown>>) {
 						const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
-						if (!Array.isArray(innerHooks)) { return false; }
-						return innerHooks.some((hh) =>
-							typeof hh.command === 'string' && hh.command.includes(CSM_MARKER)
-						);
-					});
+						if (!Array.isArray(innerHooks)) { continue; }
+						for (const hh of innerHooks) {
+							if (!hookMatchesMarker(hh, CSM_MARKER)) { continue; }
+							alreadyInstalled = true;
+							if (migrateHookToExecForm(hh)) { changed = true; }
+						}
+					}
 					if (alreadyInstalled) { continue; }
 				}
 				if (!Array.isArray(hooksObj[eventKey])) {
@@ -538,7 +635,7 @@ export async function ensureGovernanceHook(extensionPath: string, outputChannel:
 				}
 				(hooksObj[eventKey] as Array<Record<string, unknown>>).push({
 					matcher: 'Bash|Write|Edit|MultiEdit',
-					hooks: [{ type: 'command', command: scriptCmd, timeout: 10 }]
+					hooks: [buildHookDef(hookScript, 10)]
 				});
 				changed = true;
 			}
@@ -569,16 +666,20 @@ export async function registerCsmAskAgentHook(claudeDir: string): Promise<void> 
 		if (Array.isArray(preToolUse)) {
 			let hasOldBash = false;
 			let hasNewNode = false;
+			let changed = false;
 			for (const entry of preToolUse as Array<Record<string, unknown>>) {
 				const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
 				if (!Array.isArray(innerHooks)) { continue; }
 				for (const hh of innerHooks) {
-					if (typeof hh.command !== 'string') { continue; }
-					if (hh.command.includes(OLD_MARKER) && hh.command.startsWith('bash ')) { hasOldBash = true; }
-					if (hh.command.includes(CSM_MARKER) && hh.command.startsWith('node ')) { hasNewNode = true; }
+					if (typeof hh.command === 'string' && hh.command.includes(OLD_MARKER) && hh.command.startsWith('bash ')) {
+						hasOldBash = true;
+					} else if (hookMatchesMarker(hh, CSM_MARKER)) {
+						hasNewNode = true;
+						if (migrateHookToExecForm(hh)) { changed = true; }
+					}
 				}
 			}
-			if (hasNewNode && !hasOldBash) { return false; } // 最新版インストール済み
+			if (hasNewNode && !hasOldBash) { return changed; } // 最新版インストール済み（マイグレーション結果のみ返す）
 
 			if (hasOldBash) {
 				hooksObj['PreToolUse'] = (preToolUse as Array<Record<string, unknown>>).map((entry) => {
@@ -597,7 +698,7 @@ export async function registerCsmAskAgentHook(claudeDir: string): Promise<void> 
 		}
 		(hooksObj['PreToolUse'] as Array<Record<string, unknown>>).push({
 			matcher: 'Bash',
-			hooks: [{ type: 'command', command: `node "${jsHookPath}"`, timeout: 5 }]
+			hooks: [buildHookDef(jsHookPath, 5)]
 		});
 		return true;
 	});
@@ -638,21 +739,26 @@ export async function ensureRecapCaptureHook(extensionPath: string, outputChanne
 			const hooksObj = settings.hooks as Record<string, unknown>;
 			const stopArr = hooksObj['Stop'];
 			if (Array.isArray(stopArr)) {
-				const alreadyInstalled = (stopArr as Array<Record<string, unknown>>).some((entry) => {
+				let changed = false;
+				for (const entry of stopArr as Array<Record<string, unknown>>) {
 					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
-					if (!Array.isArray(innerHooks)) { return false; }
-					return innerHooks.some((hh) =>
-						typeof hh.command === 'string' && hh.command.includes(CSM_MARKER)
-					);
-				});
-				if (alreadyInstalled) { return false; }
+					if (!Array.isArray(innerHooks)) { continue; }
+					for (const hh of innerHooks) {
+						if (!hookMatchesMarker(hh, CSM_MARKER)) { continue; }
+						if (migrateHookToExecForm(hh)) { changed = true; }
+					}
+				}
+				if ((stopArr as Array<Record<string, unknown>>).some((entry) => {
+					const ih = entry.hooks as Array<Record<string, unknown>> | undefined;
+					return Array.isArray(ih) && ih.some((hh) => hookMatchesMarker(hh, CSM_MARKER));
+				})) { return changed; }
 			}
 			if (!Array.isArray(hooksObj['Stop'])) {
 				hooksObj['Stop'] = [];
 			}
 			(hooksObj['Stop'] as Array<Record<string, unknown>>).push({
 				matcher: '*',
-				hooks: [{ type: 'command', command: `node "${hookScript.replace(/\\/g, '/')}"`, timeout: 15 }]
+				hooks: [buildHookDef(hookScript, 15)]
 			});
 			return true;
 		}, (msg) => outputChannel.appendLine(msg));
@@ -660,6 +766,53 @@ export async function ensureRecapCaptureHook(extensionPath: string, outputChanne
 		outputChannel.appendLine(`[${new Date().toISOString()}] Recap Capture hookを settings.json に登録しました`);
 	} catch (err) {
 		outputChannel.appendLine(`[${new Date().toISOString()}] Recap Capture hook登録エラー: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
+// ─── 既存 hook の exec-form 一括マイグレーション ────────────────────────────────
+/**
+ * settings.json 内に残っている CSM の旧 shell-form hook を exec-form に一括変換する。
+ * Claude Code 2.1.139+ の場合のみ動作。拡張機能起動時に 1 回呼び出す。
+ */
+export async function migrateHooksToExecForm(outputChannel: vscode.OutputChannel): Promise<void> {
+	if (!supportsExecForm()) { return; }
+	const homeDir = os.homedir();
+	const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+	const CSM_SCRIPT_MARKERS = [
+		'csm-precompact',
+		'csm-recap-capture',
+		'csm-session-stop',
+		'csm-check-ask-agent',
+		'csm-precompact-summary',
+		'csm-session-agent-inject',
+		'csm-governance-capture',
+		'csm/subagent-signal',
+	];
+
+	try {
+		await modifySettingsJson(settingsPath, (settings) => {
+			const hooksObj = settings.hooks as Record<string, unknown> | undefined;
+			if (!hooksObj || typeof hooksObj !== 'object') { return false; }
+			let changed = false;
+			for (const eventHooks of Object.values(hooksObj)) {
+				if (!Array.isArray(eventHooks)) { continue; }
+				for (const entry of eventHooks as Array<Record<string, unknown>>) {
+					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+					if (!Array.isArray(innerHooks)) { continue; }
+					for (const hh of innerHooks) {
+						if (typeof hh.command !== 'string') { continue; }
+						const cmd = hh.command as string;
+						if (!CSM_SCRIPT_MARKERS.some((marker) => cmd.includes(marker))) { continue; }
+						if (migrateHookToExecForm(hh)) { changed = true; }
+					}
+				}
+			}
+			return changed;
+		}, (msg) => outputChannel.appendLine(msg));
+
+		outputChannel.appendLine(`[${new Date().toISOString()}] CSM hook exec-form マイグレーション完了 (Claude Code 2.1.139+)`);
+	} catch (err) {
+		outputChannel.appendLine(`[${new Date().toISOString()}] CSM hook マイグレーションエラー: ${err instanceof Error ? err.message : String(err)}`);
 	}
 }
 

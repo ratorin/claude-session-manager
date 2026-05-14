@@ -16,7 +16,7 @@ import { registerMigrationCommands } from './commands/migrationCommands';
 import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
 import { getConfig, getLocaleConfig, getAutoTranslateConfig } from './utils/config';
-import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook, ensureRecapCaptureHook } from './services/hookService';
+import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook, ensureRecapCaptureHook, migrateHooksToExecForm } from './services/hookService';
 import { runV04Migration, runV05Migration } from './services/migrationService';
 import { initErrorReporter, logError } from './utils/errorReporter';
 import { MainTabPanel } from './panels/mainTabPanel';
@@ -59,6 +59,11 @@ export function activate(context: vscode.ExtensionContext) {
 		// マイグレーション失敗は致命的ではない
 	});
 	runV05Migration(context, currentVersion, extensionOutputChannelEarly).catch(() => {
+		// マイグレーション失敗は致命的ではない
+	});
+
+	// 既存 hook を exec-form (args[]) に一括マイグレーション（Claude Code 2.1.139+）
+	migrateHooksToExecForm(extensionOutputChannelEarly).catch(() => {
 		// マイグレーション失敗は致命的ではない
 	});
 
