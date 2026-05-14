@@ -1,10 +1,12 @@
-# Claude Session Manager v0.4.1 仕様書
+# Claude Session Manager v0.4.2 仕様書
 
 ## 概要
 
 v0.4.0 でアーキテクチャを大幅刷新。エージェント定義を `~/.claude/agents/*.md`（CLI標準形式）に統一し、検知エンジンを簡素化、ソースファイルを機能別サブディレクトリに再配置した。
 
 v0.4.1 でセキュリティ強化（パストラバーサル・コマンドインジェクション・YAMLインジェクション・CSP・パス検証）とフロントマターパーサー統合、agents[]→agentSessionsマイグレーションを実施。
+
+v0.4.2 でエージェントプレビューパネル刷新（Webview・TODO/HISTORY表示・チェックボックス反映）、確認待ち横断ビュー、`/csm-ask-agent` スキル（旧 `/ask-agent` からリネーム）、Stop フック CSM_SUMMARY 連携、CHILDREN ブロック連携先自動生成、ステータスバー和名表示を追加。フォームから displayRole/displayDescription・Extended Thinking を削除し簡素化。
 
 ---
 
@@ -119,8 +121,6 @@ src/
 | 親エージェント | QuickPick | | 既存エージェントから選択 / なし |
 | 作業フォルダ | FolderPicker | | フォルダ選択ダイアログ / なし |
 | 推論努力（Effort） | カードラジオ | | Low / Medium / High / Max（v0.3.0追加） |
-| Extended Thinking | トグル | | ON/OFF（v0.3.0追加） |
-| Max Thinking Tokens | 数値入力 | | 1024〜128000（v0.3.0追加） |
 
 ### 共通フォーム関数
 `showAgentForm(existing?: AgentConfig): Promise<AgentConfig | undefined>`
@@ -237,7 +237,6 @@ export interface AgentConfig {
     status?: 'active' | 'idle' | 'archived';
     // v0.3.0 追加: モデル制御
     effort?: 'low' | 'medium' | 'high' | 'max'; // 推論努力レベル（max は Opus のみ）
-    thinkingEnabled?: boolean;   // Extended Thinking 有効/無効
 }
 ```
 
@@ -371,8 +370,6 @@ export interface AgentConfig {
 | 親エージェント | セレクトボックス | |
 | 作業フォルダ | テキスト + フォルダ選択ダイアログ | |
 | 推論努力（Effort） | カードラジオ（Low/Medium/High/Max） | |
-| Extended Thinking | トグルスイッチ | |
-| Max Thinking Tokens | 数値入力（1024〜128000） | |
 
 ### メッセージフロー
 - Webview → Extension: `save`, `cancel`, `browseFolder`
@@ -381,7 +378,7 @@ export interface AgentConfig {
 ### モデル別UI連動
 - **Opus**: 全項目有効
 - **Sonnet**: Effort Max がグレーアウト
-- **Haiku**: Effort Max + Thinking + MaxTokens がグレーアウト
+- **Haiku**: Effort Max がグレーアウト
 
 ### 新規ファイル
 `src/agentFormPanel.ts`
@@ -572,7 +569,8 @@ VS Code標準の設定UIからCSMの動作をカスタマイズ可能に。
 | `claudeManager.defaultGroupMode` | enum | date | デフォルトのグループ化 |
 | `claudeManager.maxSessionsShown` | number | 500 | 表示する最大セッション数 |
 | `claudeManager.sessionFilterMode` | enum | all | セッションフィルターモード |
-| `claudeManager.defaultRuleFolder` | string | "" | ルールフォルダパス |
+| `claudeManager.defaultHistoryEnabled` | boolean | false | エージェントプレビューで HISTORY.md を初期表示 |
+| `claudeManager.defaultTodoEnabled` | boolean | false | エージェントプレビューで TODO.md を初期表示 |
 | `claudeManager.preview.showThinkingBlocks` | boolean | false | プレビューにAIの思考過程を表示 |
 | `claudeManager.trash.folder` | string | "" | ゴミ箱フォルダパス |
 
@@ -1470,7 +1468,86 @@ description: |
 
 ---
 
+## 58. v0.4.2 — エージェントプレビュー刷新 + 確認待ち横断ビュー + /csm-ask-agent
+
+### エージェントプレビューパネル刷新
+
+エージェントクリック時の読み取り専用プレビューを Webview ベースに刷新:
+
+| 項目 | 内容 |
+|------|------|
+| ヘッダボタン | 設定編集・ルールファイル編集・セッション開く |
+| 配下ツリー | 子エージェント一覧をツリー表示 |
+| 連携先 | CHILDREN ブロック内の連携先エージェント情報を表示 |
+| TODO.md | プレビュー内に表示、チェックボックス操作→ファイル即時反映 |
+| HISTORY.md | 下追記方式で表示、最下部自動スクロール |
+| トグル | TODO/HISTORY の表示/非表示を ON/OFF 切替 |
+
+### 確認待ち横断ビュー
+
+| 項目 | 内容 |
+|------|------|
+| 起動方法 | エージェント管理タイトルバーのチェックリストボタン |
+| 表示形式 | Webview で全エージェントの未完了 TODO を一覧表示 |
+| チェック ON/OFF | 各 TODO.md に即時反映 |
+
+### `/csm-ask-agent` スキル（旧 `/ask-agent`）
+
+- **リネーム**: `/ask-agent` → `/csm-ask-agent` に名称変更
+- 旧名使用時に移行バナーを表示して新名称に案内
+- `csm-ask-agent.py` ヘルパースクリプトに `--list`（全エージェント一覧）・`--pending`（確認待ちタスク一覧）オプションを追加
+- `--resume` 時に `--append-system-prompt-file` を追加し、セッション再開時にルールファイルを自動注入
+
+### Stop フック CSM_SUMMARY 連携
+
+セッション終了時の `<!-- CSM_SUMMARY -->` マーカー内容を自動転記:
+- HISTORY.md に作業成果を下追記
+- TODO.md に残課題を追記
+- エージェントの作業成果が自動蓄積され、次セッションで引き継がれる
+
+### フォーム簡素化
+
+| 変更 | 内容 |
+|------|------|
+| displayRole / displayDescription 削除 | `role` / `description` に統一（CLI 標準準拠） |
+| Extended Thinking トグル完全削除 | CLI 側制御に完全委譲 |
+| 紐づけ変更確認ダイアログ | セッション紐づけ変更時に既存紐づけの確認を表示 |
+
+### CHILDREN ブロック連携先自動生成
+
+親ルールファイルの配下エージェントセクションに連携先エージェント情報を自動生成。子エージェント追加/変更時に自動更新。
+
+### ステータスバー和名表示
+
+動作中エージェントの日本語名（和名）をステータスバーに表示。
+
+### VS Code 設定変更
+
+| 操作 | キー | 説明 |
+|------|------|------|
+| 追加 | `defaultHistoryEnabled` | エージェントプレビューで HISTORY.md を初期表示（デフォルト OFF） |
+| 追加 | `defaultTodoEnabled` | エージェントプレビューで TODO.md を初期表示（デフォルト OFF） |
+| 削除 | `detectionMode` | 検知モード選択（fswatch 固定化により不要） |
+| 削除 | `defaultRuleFolder` | ルールフォルダパス（agents/*.md 統一により不要） |
+
+### 影響範囲
+
+| ファイル | 変更 |
+|---|---|
+| `agentPreviewPanel.ts` | Webview プレビュー刷新（TODO/HISTORY表示・チェックボックス反映・トグル） |
+| `extension.ts` | 確認待ち横断ビュー・紐づけ確認ダイアログ・Stop フック連携・和名表示 |
+| `parentChildSync.ts` | CHILDREN ブロック連携先自動生成 |
+| `agentFormPanel.ts` | displayRole/displayDescription 削除・Extended Thinking 削除 |
+| `agentTreeProvider.ts` | チェックリストボタン追加 |
+| `cliBuilder.ts` | `--append-system-prompt-file` 追加 |
+| `package.json` | v0.4.2、設定追加/削除 |
+
+---
+
 ## バージョン
+- **0.4.2** — エージェントプレビュー刷新 + 確認待ち横断ビュー + /csm-ask-agentリネーム + Stop フック連携 + ステータスバー和名
+- **0.4.1** — セキュリティ強化 + データマイグレーション + フォーム改善 + /ask-agentスキル
+- **0.4.0** — アーキテクチャリビルド（agents/*.md統一 + 検知簡素化 + ファイル分割）
 - **0.3.2** — 親子ルール自動同期 + セッション自動紐づけ + maxThinkingTokens削除 + Marketplace公開
 - **0.3.1** — YAML Frontmatter 移行 + SubagentStart/Stop フック + マイグレーションバナー + SignalWatcher
 - **0.3.0** — 監視アーキテクチャ刷新 + メモリ拡張 + フォーム拡張 + CLI Builder + タスク管理 + パフォーマンス改善
