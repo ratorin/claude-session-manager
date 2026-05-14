@@ -23,6 +23,7 @@ import {
 } from '../services/sessionService';
 import { prepareAgentRule } from '../services/agentService';
 import { ensureSessionAgentInjectHook } from '../services/hookService';
+import { addBookmark, removeBookmark } from '../services/bookmarkService';
 
 export interface AgentCommandsDeps {
 	sessionProvider: SessionTreeProvider;
@@ -951,6 +952,24 @@ cb.addEventListener('change', (e) => {
 });
 </script>
 </body></html>`;
+	})
+);
+
+// ⭐ エージェントお気に入り追加
+context.subscriptions.push(
+	vscode.commands.registerCommand('claudeManager.addAgentFavorite', (item: AgentItem) => {
+		if (!item?.agent?.name) { return; }
+		addBookmark(item.agent.name);
+		agentProvider.refresh();
+	})
+);
+
+// ⭐ エージェントお気に入り削除
+context.subscriptions.push(
+	vscode.commands.registerCommand('claudeManager.removeAgentFavorite', (item: AgentItem) => {
+		if (!item?.agent?.name) { return; }
+		removeBookmark(item.agent.name);
+		agentProvider.refresh();
 	})
 );
 

@@ -1,5 +1,24 @@
 # 更新履歴
 
+## v0.5.0 (2026-05-14)
+
+### ⭐ お気に入りエージェント UI 改善 — 会話風フラットリスト + ★追加ボタン
+
+前回の階層ツリー表示を廃止し、会話ブックマークと同じ見た目のフラットリスト形式に変更。
+全エージェント行にインラインの ★/☆ ボタンを追加。
+
+#### 変更内容
+- `FavoriteTreeSectionItem`: ラベルを「⭐ お気に入りエージェント (N)」に変更（件数バッジ付き）
+- `FavoriteAgentItem`: `neededSet`/`isIntermediateNode` を削除 → フラット専用シンプル実装
+- `_buildFavoriteList()`: ブックマーク済みエージェントをアルファベット順でフラット返却
+- `AgentItem.contextValue`: `isBookmarked()` 参照で `Bookmarked` フラグを追加
+  - `agentItem` / `agentItemLinked` / `agentItemBookmarked` / `agentItemLinkedBookmarked`
+- `claudeManager.addAgentFavorite` コマンド追加 — ☆ ボタン (inline@20)
+- `claudeManager.removeAgentFavorite` コマンド追加 — ★ ボタン (inline@20)
+- 右クリックメニュー `2_favorite` グループにも追加/削除を登録
+
+---
+
 ## v0.5.0 (2026-05-14) — claude agents 統合
 
 ### TASK-5 Phase 1+2+3: `claude agents` コマンド統合（ライブ状態セクション）

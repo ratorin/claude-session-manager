@@ -120,6 +120,18 @@
 				"category": "Claude Session Manager"
 			},
 			{
+				"command": "claudeManager.addAgentFavorite",
+				"title": "★ お気に入りに追加",
+				"icon": "$(star-empty)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.removeAgentFavorite",
+				"title": "★ お気に入りから削除",
+				"icon": "$(star-full)",
+				"category": "Claude Session Manager"
+			},
+			{
 				"command": "claudeManager.tagSession",
 				"title": "タグを追加",
 				"icon": "$(tag)",
@@ -620,6 +632,16 @@
 					"group": "inline"
 				},
 				{
+					"command": "claudeManager.addAgentFavorite",
+					"when": "view == claudeAgents && viewItem =~ /^agentItem/ && !(viewItem =~ /Bookmarked/)",
+					"group": "inline@20"
+				},
+				{
+					"command": "claudeManager.removeAgentFavorite",
+					"when": "view == claudeAgents && (viewItem =~ /^agentItem.*Bookmarked/ || viewItem =~ /^favoriteAgent/)",
+					"group": "inline@20"
+				},
+				{
 					"command": "claudeManager.previewAgent",
 					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
 					"group": "0_open@0"
@@ -658,6 +680,16 @@
 					"command": "claudeManager.editAgent",
 					"when": "view == claudeAgents && viewItem =~ /^agentItem/",
 					"group": "1_edit"
+				},
+				{
+					"command": "claudeManager.addAgentFavorite",
+					"when": "view == claudeAgents && viewItem =~ /^agentItem/ && !(viewItem =~ /Bookmarked/)",
+					"group": "2_favorite"
+				},
+				{
+					"command": "claudeManager.removeAgentFavorite",
+					"when": "view == claudeAgents && (viewItem =~ /^agentItem.*Bookmarked/ || viewItem =~ /^favoriteAgent/)",
+					"group": "2_favorite"
 				},
 				{
 					"command": "claudeManager.deleteAgent",
