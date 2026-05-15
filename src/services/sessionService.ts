@@ -383,6 +383,27 @@ export async function generateDetailedTestament(agent: AgentConfig, oldSession: 
 				: ['--agent', agent.name, '-p', prompt]),
 		];
 
+		// cwd を決定: agent.workDir (Linux 変換済) → JSONL 内 cwd → workspace folder → home
+		const { translateWorkDirPath } = await import('../utils/agentUtils');
+		let resumeCwd: string | undefined;
+		if (agent.workDir) {
+			resumeCwd = translateWorkDirPath(agent.workDir);
+		}
+		if (!resumeCwd && oldSession?.filePath) {
+			// JSONL 先頭行から cwd を読む (作成時 cwd と一致しないと --resume 失敗)
+			try {
+				const fs2 = await import('fs');
+				const head = (await fs2.promises.readFile(oldSession.filePath, 'utf-8')).split('\n', 1)[0];
+				const cwdMatch = head.match(/"cwd"\s*:\s*"([^"]+)"/);
+				if (cwdMatch) {
+					resumeCwd = translateWorkDirPath(cwdMatch[1]);
+				}
+			} catch { /* ignore */ }
+		}
+		if (!resumeCwd) {
+			resumeCwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
+		}
+
 		const result = await new Promise<string>((resolve, reject) => {
 			const { spawn } = require('child_process') as typeof import('child_process');
 			const env = { ...process.env };
@@ -390,6 +411,7 @@ export async function generateDetailedTestament(agent: AgentConfig, oldSession: 
 			delete env.CLAUDECODE;
 			const proc = spawn(exec.command, cliArgs, {
 				env,
+				cwd: resumeCwd,
 				shell: false,
 				windowsHide: true,
 				stdio: ['pipe', 'pipe', 'pipe'],
