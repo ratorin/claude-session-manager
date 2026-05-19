@@ -143,6 +143,7 @@ export async function createSessionForAgent(config: AgentConfig, deps: SessionSe
 			resolve(sessionId);
 		};
 
+		const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 		child.stdout?.on('data', (data: Buffer) => {
 			output += data.toString('utf-8');
 			// stream-json形式: 各行が独立したJSON
@@ -152,8 +153,11 @@ export async function createSessionForAgent(config: AgentConfig, deps: SessionSe
 				try {
 					const parsed = JSON.parse(line);
 					// セッションIDは init / system / result メッセージに含まれる
-					if (parsed.session_id) {
+					// UUID 形式のみ受理 (tool_use_id 等を誤って拾わないよう厳格化)
+					if (parsed.session_id && typeof parsed.session_id === 'string' && UUID_RE.test(parsed.session_id)) {
 						sessionId = parsed.session_id;
+					} else if (parsed.session_id) {
+						deps.outputChannel.appendLine(`[createSession] 非UUID形式の session_id を無視: ${JSON.stringify(parsed.session_id).substring(0, 80)} (type=${parsed.type ?? '?'})`);
 					}
 				} catch {
 					// 不完全な行は次回に持ち越し
