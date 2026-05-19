@@ -22,7 +22,7 @@ import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook
 import { runV04Migration, runV05Migration } from './services/migrationService';
 import { initErrorReporter, logError } from './utils/errorReporter';
 import { MainTabPanel } from './panels/mainTabPanel';
-import { TabBarPanel, StatusInfo } from './panels/tabBarPanel';
+import { TabBarTreeProvider, StatusInfo } from './panels/tabBarPanel';
 import { HelpFeedbackProvider } from './providers/helpFeedbackProvider';
 import { setLocale, setAutoTranslate } from './services/i18nService';
 // ClaudeAgentsService は TTY 必須のため現在未使用 (将来 JSON API 対応時に復活)
@@ -229,7 +229,7 @@ export function activate(context: vscode.ExtensionContext) {
 		taskTracker.evaluate().then(() => {
 			dataStore.getTaskLogs().then(logs => taskTracker.notify(logs)).catch(() => {/* ignore */});
 		}).catch(() => {/* ignore */});
-		// TH5: エージェント状態変化時にステータス行を即時更新
+		// TH5: エージェント状態変化時にステータス行を即時更新（TreeView アイテム再描画）
 		tabBarPanel.pushStatusInfo({
 			runningAgents: agentWatcher.getLiveSessionIds().size,
 			lastRefresh: Date.now(),
@@ -440,15 +440,31 @@ export function activate(context: vscode.ExtensionContext) {
 		: 'sessions';
 	void vscode.commands.executeCommand('setContext', 'claudeManager.activeTab', defaultTab);
 
-	// TH4: TabBarPanel（小さな WebView タブバー）を登録
-	const tabBarPanel = new TabBarPanel(defaultTab);
+	// TH4: TabBarTreeProvider（TreeView ベースのタブバー）を登録
+	// WebviewView から TreeView に変更 → 余白が生じない（コンテンツ行数分のみ高さを取る）
+	const tabBarPanel = new TabBarTreeProvider(defaultTab);
+	const tabBarTreeView = vscode.window.createTreeView('claudeTabBar', {
+		treeDataProvider: tabBarPanel,
+		showCollapseAll: false,
+	});
+	context.subscriptions.push(tabBarPanel, tabBarTreeView);
+
+	// タブ行クリック → アクティブタブ切替
 	context.subscriptions.push(
-		vscode.window.registerWebviewViewProvider(TabBarPanel.viewType, tabBarPanel, {
-			webviewOptions: { retainContextWhenHidden: true },
+		tabBarTreeView.onDidChangeSelection(e => {
+			const item = e.selection[0];
+			if (!item || item.nodeId === 'status') { return; }
+			const tab = item.nodeId as 'sessions' | 'agents' | 'memory' | 'projects';
+			tabBarPanel.setActiveTab(tab);
+			void vscode.commands.executeCommand('setContext', 'claudeManager.activeTab', tab);
+			void vscode.workspace
+				.getConfiguration('claudeManager')
+				.update('ui.lastActiveTab', tab, vscode.ConfigurationTarget.Global)
+				.then(undefined, () => {/* ignore */});
 		})
 	);
 
-	// TH5: TabBarPanel ステータス行 — プロバイダ登録 + 10秒定期プッシュ
+	// TH5: ステータス行 — プロバイダ登録 + 10秒定期プッシュ
 	const getTabBarStatus = (): StatusInfo => ({
 		runningAgents: agentWatcher.getLiveSessionIds().size,
 		lastRefresh: Date.now(),

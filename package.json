@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager - セッション履歴管理",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.5.0",
+	"version": "0.5.1",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -35,10 +35,8 @@
 		"views": {
 			"claude-manager": [
 				{
-					"type": "webview",
 					"id": "claudeTabBar",
 					"name": "",
-					"initialSize": 2,
 					"when": "config.claudeManager.useNewMainPanel != false && claudeManager.activeTab != 'projects'"
 				},
 				{
@@ -575,6 +573,51 @@
 					"command": "claudeManager.openOrgChart",
 					"when": "view == claudeAgents",
 					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.refreshSessions",
+					"when": "view == claudeTabBar && claudeManager.activeTab == 'sessions'",
+					"group": "navigation@1"
+				},
+				{
+					"command": "claudeManager.searchSessions",
+					"when": "view == claudeTabBar && claudeManager.activeTab == 'sessions'",
+					"group": "navigation@2"
+				},
+				{
+					"command": "claudeManager.refreshAgents",
+					"when": "view == claudeTabBar && claudeManager.activeTab == 'agents'",
+					"group": "navigation@1"
+				},
+				{
+					"command": "claudeManager.addAgent",
+					"when": "view == claudeTabBar && claudeManager.activeTab == 'agents'",
+					"group": "navigation@2"
+				},
+				{
+					"command": "claudeManager.openOrgChart",
+					"when": "view == claudeTabBar && claudeManager.activeTab == 'agents'",
+					"group": "navigation@3"
+				},
+				{
+					"command": "claudeManager.showPendingTasks",
+					"when": "view == claudeTabBar && claudeManager.activeTab == 'agents'",
+					"group": "navigation@4"
+				},
+				{
+					"command": "claudeManager.refreshMemory",
+					"when": "view == claudeTabBar && claudeManager.activeTab == 'memory'",
+					"group": "navigation@1"
+				},
+				{
+					"command": "claudeManager.mergeMemories",
+					"when": "view == claudeTabBar && claudeManager.activeTab == 'memory'",
+					"group": "navigation@2"
+				},
+				{
+					"command": "claudeManager.openSettings",
+					"when": "view == claudeTabBar",
+					"group": "navigation@999"
 				}
 			],
 			"view/item/context": [
