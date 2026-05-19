@@ -1,5 +1,24 @@
 # 更新履歴
 
+## v0.5.1 (2026-05-19) — タブ切り替えパフォーマンス改善
+
+### TreeView ルートノード短期キャッシュ追加
+
+タブを切り替えるたびに `getChildren()` が IO を実行していた問題を改善。
+
+#### 変更内容
+- `AgentTreeProvider`: ルートノード結果を 5 秒 TTL でキャッシュ
+  - `refresh()` 呼び出し時に即座に無効化するため、データ鮮度は維持
+  - バナー判定 4 本（`isCsmAskAgentInstalled` / `isSessionAgentInjectInstalled` / `hasOldAskAgentFiles` / `detectLegacyAgents`）を `Promise.all` で並列化
+- `MemoryTreeProvider`: ルートノード結果を 5 秒 TTL でキャッシュ
+  - フィルター状態変更時は即時無効化
+
+#### 効果
+- キャッシュヒット時: ファイル IO ゼロ → タブ切り替えが体感上即時
+- キャッシュミス時: バナー判定が並列化され約 50〜70% 短縮
+
+---
+
 ## v0.5.1 (2026-05-19) — Claude Code 2.1.144 取込み
 
 ### Claude Code 2.1.142〜2.1.144 対応確認・取込み

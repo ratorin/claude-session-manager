@@ -65,7 +65,12 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 	private migrationNeeded = false;
 	getMigrationNeeded(): boolean { return this.migrationNeeded; }
 
+	// ルートノードの短期キャッシュ（タブ切り替え時の IO 抑制）
+	private _rootChildrenCache: { nodes: AgentTreeNode[]; ts: number } | undefined;
+	private readonly ROOT_CACHE_TTL_MS = 5000;
+
 	refresh(): void {
+		this._rootChildrenCache = undefined;
 		this._onDidChangeTreeData.fire(undefined);
 	}
 
@@ -271,16 +276,28 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		const ruleStrMap = new Map<string, string>();
 
 		if (!element) {
+			// 短期キャッシュ: タブ切り替え時の IO 抑制
+			const now = Date.now();
+			if (this._rootChildrenCache && (now - this._rootChildrenCache.ts) < this.ROOT_CACHE_TTL_MS) {
+				return this._rootChildrenCache.nodes;
+			}
+
 			const result: AgentTreeNode[] = [];
 
+			// バナー判定を並列化して IO 待ちを最小化
+			const [csmAskAgentInstalled, sessionInjectInstalled, hasOldFiles, legacyAgents] = await Promise.all([
+				isCsmAskAgentInstalled(),
+				isSessionAgentInjectInstalled(),
+				hasOldAskAgentFiles(),
+				detectLegacyAgents(agents),
+			]);
+
 			// /csm-ask-agent グローバルインストールバナー: 未インストール時のみ表示
-			const csmAskAgentInstalled = await isCsmAskAgentInstalled();
 			if (!csmAskAgentInstalled) {
 				result.push(new CsmAskAgentInstallBannerItem());
 			}
 
 			// エージェント役割自動認識バナー: 未有効化かつエージェントが存在する時のみ
-			const sessionInjectInstalled = await isSessionAgentInjectInstalled();
 			if (!sessionInjectInstalled) {
 				const allAgentsForBanner = await dataStore.getAgents();
 				const hasLinkedAgent = allAgentsForBanner.some(a => !!a.sessionId);
@@ -290,13 +307,11 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			}
 
 			// 旧ask-agent移行バナー
-			const hasOldFiles = await hasOldAskAgentFiles();
 			if (hasOldFiles) {
 				result.push(new AskAgentMigrationBannerItem());
 			}
 
 			// マイグレーションバナー: 旧形式のルールファイルがあれば表示
-			const legacyAgents = await detectLegacyAgents(agents);
 			this.migrationNeeded = legacyAgents.length > 0;
 			if (this.migrationNeeded) {
 				result.push(new MigrationBannerItem(legacyAgents.length));
@@ -331,6 +346,8 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				result.push(globalAgentItem);
 			}
 
+			// ルートノードをキャッシュ（TTL 5s）
+			this._rootChildrenCache = { nodes: result, ts: Date.now() };
 			return result;
 		}
 

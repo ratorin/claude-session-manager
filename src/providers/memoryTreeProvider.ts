@@ -13,12 +13,17 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNod
 	// プロジェクトフィルター: true なら現在のプロジェクトメモリのみ表示（グローバル除外）
 	private projectFilterEnabled = true;
 
+	// ルートノードの短期キャッシュ（タブ切り替え時の IO 抑制）
+	private _rootChildrenCache: { nodes: MemoryTreeNode[]; ts: number; filterEnabled: boolean } | undefined;
+	private readonly ROOT_CACHE_TTL_MS = 5000;
+
 	dispose(): void {
 		this._onDidChangeTreeData.dispose();
 	}
 
 	setProjectFilter(enabled: boolean): void {
 		this.projectFilterEnabled = enabled;
+		this._rootChildrenCache = undefined;
 		this._onDidChangeTreeData.fire(undefined);
 	}
 
@@ -27,6 +32,7 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNod
 	}
 
 	refresh(): void {
+		this._rootChildrenCache = undefined;
 		this._onDidChangeTreeData.fire(undefined);
 	}
 
@@ -36,6 +42,16 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNod
 
 	async getChildren(element?: MemoryTreeNode): Promise<MemoryTreeNode[]> {
 		if (!element) {
+			// 短期キャッシュ: タブ切り替え時の IO 抑制（フィルター状態が変わったら無効化）
+			const now = Date.now();
+			if (
+				this._rootChildrenCache &&
+				this._rootChildrenCache.filterEnabled === this.projectFilterEnabled &&
+				(now - this._rootChildrenCache.ts) < this.ROOT_CACHE_TTL_MS
+			) {
+				return this._rootChildrenCache.nodes;
+			}
+
 			const topItems: MemoryTreeNode[] = [];
 
 			// 設定ファイルグループ（フィルター関係なく常に表示）
@@ -88,6 +104,8 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeNod
 				}
 			}
 
+			// ルートノードをキャッシュ（TTL 5s）
+			this._rootChildrenCache = { nodes: topItems, ts: Date.now(), filterEnabled: this.projectFilterEnabled };
 			return topItems;
 		}
 
