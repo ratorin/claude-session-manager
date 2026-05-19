@@ -55,10 +55,10 @@ class TabBarItem extends vscode.TreeItem {
 // -------------------------------------------------------------------
 
 const TAB_DEFS: ReadonlyArray<{ id: TabId; label: string; icon: string }> = [
-	{ id: 'sessions', label: 'セッション',    icon: 'comment-discussion' },
-	{ id: 'agents',   label: 'エージェント',  icon: 'organization' },
-	{ id: 'memory',   label: 'メモリ',         icon: 'database' },
-	{ id: 'projects', label: 'プロジェクト',   icon: 'folder' },
+	{ id: 'sessions', label: '💬 セッション',    icon: 'comment-discussion' },
+	{ id: 'agents',   label: '👤 エージェント',  icon: 'organization' },
+	{ id: 'memory',   label: '🧠 メモリ',         icon: 'database' },
+	{ id: 'projects', label: '📁 プロジェクト',   icon: 'folder' },
 ];
 
 export class TabBarTreeProvider
@@ -124,9 +124,10 @@ export class TabBarTreeProvider
 				id,
 				label,
 				icon,
+				// 全タブで有効なトークンを使い、icon 描画位置を揃える (インデント揃え)
 				isActive
 					? new vscode.ThemeColor('focusBorder')
-					: new vscode.ThemeColor('disabledForeground'),
+					: new vscode.ThemeColor('descriptionForeground'),
 				isActive ? '●' : undefined,
 				isActive ? `${label} (現在のタブ)` : label,
 			);
