@@ -480,55 +480,43 @@ context.subscriptions.push(
 			return;
 		}
 
-		// セッションファイルが格納されているプロジェクトキー（cwd由来）を特定
+		// 会話一覧の openInClaude と同じ挙動。
+		// 違いの可能性として、セッション作成時の cwd と現ワークスペースが異なる場合、
+		// Claude Code 拡張が新しいウィンドウを開く可能性がある旨を通知する。
 		const sid = item.agent.sessionId;
 		const projectsDir = path.join(os.homedir(), '.claude', 'projects');
-		let sessionProjectDir: string | undefined;
+		let sessionCwd: string | undefined;
 		try {
 			const entries = await fs.promises.readdir(projectsDir, { withFileTypes: true });
 			for (const e of entries) {
 				if (!e.isDirectory()) { continue; }
+				const jsonlPath = path.join(projectsDir, e.name, `${sid}.jsonl`);
 				try {
-					await fs.promises.access(path.join(projectsDir, e.name, `${sid}.jsonl`));
-					sessionProjectDir = e.name;
+					await fs.promises.access(jsonlPath);
+					const handle = await fs.promises.open(jsonlPath, 'r');
+					try {
+						const buf = Buffer.alloc(16 * 1024);
+						await handle.read(buf, 0, 16 * 1024, 0);
+						const lines = buf.toString('utf-8').split('\n');
+						for (const line of lines) {
+							if (!line.trim()) { continue; }
+							try {
+								const entry = JSON.parse(line);
+								if (entry.cwd) { sessionCwd = entry.cwd; break; }
+							} catch { /* skip */ }
+						}
+					} finally { await handle.close(); }
 					break;
 				} catch { /* next */ }
 			}
 		} catch { /* projects dir なし */ }
 
-		// セッションの cwd を JSONL 先頭から取得（Claude CLI が実際に使うプロジェクトキーの源）
-		let sessionCwd: string | undefined;
-		if (sessionProjectDir) {
-			try {
-				const jsonlPath = path.join(projectsDir, sessionProjectDir, `${sid}.jsonl`);
-				const handle = await fs.promises.open(jsonlPath, 'r');
-				try {
-					const buf = Buffer.alloc(16 * 1024);
-					await handle.read(buf, 0, 16 * 1024, 0);
-					const lines = buf.toString('utf-8').split('\n');
-					for (const line of lines) {
-						if (!line.trim()) { continue; }
-						try {
-							const entry = JSON.parse(line);
-							if (entry.cwd) { sessionCwd = entry.cwd; break; }
-						} catch { /* skip */ }
-					}
-				} finally { await handle.close(); }
-			} catch { /* noop */ }
-		}
-
-		// 現在のワークスペースとセッションの cwd を正規化比較
-		// Windowsは大文字小文字を無視、セパレータを統一
 		const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 		const normalize = (p: string): string => p.toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '');
-		const pathsMatch = sessionCwd && wsFolder
-			? normalize(sessionCwd) === normalize(wsFolder)
-			: false;
-
-		// 不一致なら新しいウィンドウで対象フォルダを開く (ダイアログ廃止)
-		if (sessionCwd && wsFolder && !pathsMatch) {
-			await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(sessionCwd), { forceNewWindow: true });
-			return;
+		if (sessionCwd && wsFolder && normalize(sessionCwd) !== normalize(wsFolder)) {
+			vscode.window.showInformationMessage(
+				`このセッションは別フォルダ (${sessionCwd}) で作成されています。Claude Code 拡張側で新しいウィンドウが開く場合があります。`
+			);
 		}
 
 		const scheme = vscode.env.uriScheme;
