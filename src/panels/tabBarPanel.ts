@@ -55,10 +55,10 @@ class TabBarItem extends vscode.TreeItem {
 // -------------------------------------------------------------------
 
 const TAB_DEFS: ReadonlyArray<{ id: TabId; label: string; icon: string }> = [
-	{ id: 'sessions', label: '💬 セッション',    icon: 'comment-discussion' },
-	{ id: 'agents',   label: '👤 エージェント',  icon: 'organization' },
-	{ id: 'memory',   label: '🧠 メモリ',         icon: 'database' },
-	{ id: 'projects', label: '📁 プロジェクト',   icon: 'folder' },
+	{ id: 'sessions', label: 'セッション',    icon: 'comment-discussion' },
+	{ id: 'agents',   label: 'エージェント',  icon: 'organization' },
+	{ id: 'memory',   label: 'メモリ',         icon: 'database' },
+	{ id: 'projects', label: 'プロジェクト',   icon: 'folder' },
 ];
 
 export class TabBarTreeProvider
