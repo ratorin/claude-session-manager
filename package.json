@@ -37,7 +37,7 @@
 				{
 					"id": "claudeTabBar",
 					"name": "",
-					"when": "config.claudeManager.useNewMainPanel != false && claudeManager.activeTab != 'projects'"
+					"when": "config.claudeManager.useNewMainPanel != false"
 				},
 				{
 					"type": "webview",
@@ -616,7 +616,12 @@
 				},
 				{
 					"command": "claudeManager.openSettings",
-					"when": "view == claudeTabBar",
+					"when": "view == claudeTabBar && claudeManager.activeTab == 'projects'",
+					"group": "navigation@3"
+				},
+				{
+					"command": "claudeManager.openSettings",
+					"when": "view == claudeTabBar && claudeManager.activeTab != 'projects'",
 					"group": "navigation@999"
 				}
 			],

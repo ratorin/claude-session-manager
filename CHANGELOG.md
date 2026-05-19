@@ -1,5 +1,26 @@
 # 更新履歴
 
+## v0.5.1 (2026-05-19) — プロジェクトタブ統一: claudeTabBar 常時表示化
+
+### プロジェクトタブ UI 統一
+
+全タブで `claudeTabBar` (TreeView) を常時表示するよう変更し、プロジェクトタブのみ異なる見た目になっていた問題を解消。
+
+#### 変更内容
+- `package.json`:
+  - `claudeTabBar` の `when` 句から `&& claudeManager.activeTab != 'projects'` を削除
+    → 全タブ選択時に `claudeTabBar` TreeView が常時上部に表示される
+  - `view/title` でプロジェクトタブ選択時の設定ボタンを追加
+- `mainTabPanel.ts` (claudeMain WebviewView):
+  - 内部タブバー (`<nav class="tab-bar">`) を完全削除
+  - アクション行 (`.tab-action-bar`) を削除
+  - セッション・エージェント・メモリのペイン HTML を削除 → **プロジェクト一覧のみ**に
+  - 対応するタブ切り替え JS・セッション/エージェント/メモリ JS を削除
+  - メッセージハンドラを `projects-data` / `project-tree-data` のみに絞り込み
+  - `_sendInitialData()` をプロジェクトデータのみ送信するよう簡略化
+
+---
+
 ## v0.5.1 (2026-05-19) — エージェント登録フォームに HISTORY / TODO トグル追加
 
 ### エージェント登録フォーム: HISTORY / TODO トグル
