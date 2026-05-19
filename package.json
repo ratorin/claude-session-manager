@@ -825,7 +825,7 @@
 				"properties": {
 					"claudeManager.enableAgentMonitor": {
 						"type": "boolean",
-						"default": false,
+						"default": true,
 						"order": 2,
 						"markdownDescription": "エージェント監視を有効にします。ONにするとステータスバーに稼働中エージェントをリアルタイム表示します。\n\n⚠️ **有効にするとPC負荷が若干上がります**（定期的なセッション状態チェックのため）"
 					},
@@ -877,7 +877,7 @@
 					},
 					"claudeManager.enableUsageMonitor": {
 						"type": "boolean",
-						"default": false,
+						"default": true,
 						"order": 7,
 						"markdownDescription": "Claude Code利用制限をステータスバーに表示します。\n\n⚠️ 有効にするとAnthropic APIへの軽量リクエストが定期的に発生します（更新間隔に応じてコスト発生、月額$0.01未満）"
 					},
