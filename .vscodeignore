@@ -4,3 +4,8 @@ src/**
 .gitignore
 tsconfig.json
 node_modules/**
+temp/**
+docs/feedback/**
+.trash/**
+*.vsix.old
+**/*.bak.*
