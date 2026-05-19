@@ -1,5 +1,52 @@
 # 更新履歴
 
+## v0.5.1 (2026-05-19) — エージェント登録フォームに HISTORY / TODO トグル追加
+
+### エージェント登録フォーム: HISTORY / TODO トグル
+
+エージェント新規登録・編集フォームに HISTORY と TODO の有効化トグルを追加。
+
+#### 変更内容
+- `agentFormPanel.ts`:
+  - **HISTORY 有効化トグル**: ON/OFF チェックボックス。保存時に HISTORY.md が無ければ自動作成。
+  - **HISTORY.md 保存先選択**: 自動（.md と同じスコープ）/ グローバル / プロジェクト。
+    HISTORY が OFF のときは非表示。
+  - **TODO 有効化トグル**: ON/OFF チェックボックス。保存時に TODO.md が無ければ自動作成。
+  - **設定デフォルト反映**: 新規登録時は VS Code 設定
+    `claudeManager.agent.defaultHistoryEnabled` / `defaultTodoEnabled` を読み込みデフォルト値に使用。
+    編集時は既存エージェントの値を使用。
+- `agentCommands.ts` (`claudeManager.addAgent`):
+  - `addAgent()` 後に `historyEnabled=true` なら `~/.claude/agents/<name>/HISTORY.md` を作成（未存在時）。
+  - `todoEnabled=true` なら `~/.claude/agents/<name>/TODO.md` を作成（未存在時）。
+  - テンプレート: HISTORY は「歴代セッション記録」ヘッダ、TODO は「確認待ち / タスク」セクション。
+
+---
+
+## v0.5.1 (2026-05-19) — タブバー WebView → TreeView 化（余白問題解消）
+
+### claudeTabBar: WebviewView → TreeView 置換
+
+**問題:** 他の TreeView（会話ブックマーク・会話タグ等）を折り畳むと、
+claudeTabBar の WebviewView 領域が余剰スペースを受け取り大きな空白が生じていた。
+
+**解決策:** WebviewView を TreeView に置換。TreeView はコンテンツ行数分しか高さを取らないため、
+他のビューを折り畳んでも余白ゼロを維持する。
+
+#### 変更内容
+- `tabBarPanel.ts`: `WebviewViewProvider` → `TabBarTreeProvider` (`TreeDataProvider<TabBarItem>`) に完全置換
+  - タブ4行（セッション / エージェント / メモリ / プロジェクト）
+  - アクティブタブ: アイコン青色 + `●` description で視覚的に識別
+  - ステータス1行（稼働数 / 最終更新 / プロジェクト名）
+  - `setActiveTab()` / `setStatusProvider()` / `pushStatusInfo()` API を維持
+- `extension.ts`:
+  - `registerWebviewViewProvider` → `createTreeView('claudeTabBar')` に変更
+  - `tabBarTreeView.onDidChangeSelection` でタブ行クリックを捕捉し `claudeManager.activeTab` を更新
+- `package.json`:
+  - `claudeTabBar` ビューの `type: "webview"` / `initialSize: 2` を削除（ネイティブ TreeView に）
+  - `view/title` にタブ別アクションボタンを追加（sessions/agents/memory/projects それぞれ `when` 句で切替）
+
+---
+
 ## v0.5.0 (2026-05-14) — エージェント管理ラベルに [Open]/[経過時間] プレフィックス追加
 
 ### エージェント管理ラベル改善

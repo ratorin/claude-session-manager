@@ -271,6 +271,33 @@ context.subscriptions.push(
 			// ルール生成 → ファイル書き込み（この時点ではセッション未紐づけ）
 			const [ruleConfig, ruleBody] = await prepareAgentRule(config, true);
 			await dataStore.addAgent(ruleConfig, ruleBody);
+
+			// HISTORY.md / TODO.md 自動作成（有効かつファイル未存在の場合）
+			if (ruleConfig.historyEnabled) {
+				const agentDir = path.join(os.homedir(), '.claude', 'agents', ruleConfig.name);
+				const historyPath = path.join(agentDir, 'HISTORY.md');
+				try { await fs.promises.access(historyPath); } catch {
+					await fs.promises.mkdir(agentDir, { recursive: true });
+					await fs.promises.writeFile(
+						historyPath,
+						`# ${ruleConfig.displayName || ruleConfig.name} — 歴代セッション記録\n`,
+						'utf-8'
+					);
+				}
+			}
+			if (ruleConfig.todoEnabled) {
+				const agentDir = path.join(os.homedir(), '.claude', 'agents', ruleConfig.name);
+				const todoPath = path.join(agentDir, 'TODO.md');
+				try { await fs.promises.access(todoPath); } catch {
+					await fs.promises.mkdir(agentDir, { recursive: true });
+					await fs.promises.writeFile(
+						todoPath,
+						`# ${ruleConfig.displayName || ruleConfig.name} — TODO\n\n## 確認待ち\n\n## タスク\n`,
+						'utf-8'
+					);
+				}
+			}
+
 			await syncParentRuleFile(ruleConfig.parentAgent, getExtensionOutputChannel());
 			refreshAll();
 			await promptSessionInjectIfFirstTime(context);

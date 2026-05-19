@@ -206,6 +206,15 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	const globalFolder = await dataStore.getRuleFolderForScope('global');
 	const projectFolder = await dataStore.getRuleFolderForScope('project');
 
+	// HISTORY / TODO デフォルト値: 編集時は既存値、新規時は設定値を使用
+	const agentCfg = vscode.workspace.getConfiguration('claudeManager.agent');
+	const historyChecked = existing
+		? (existing.historyEnabled === true)
+		: agentCfg.get<boolean>('defaultHistoryEnabled', false);
+	const todoChecked = existing
+		? (existing.todoEnabled === true)
+		: agentCfg.get<boolean>('defaultTodoEnabled', false);
+
 	// 親エージェント候補（自身 + 全子孫を除外 → 循環参照防止）
 	const agents = await dataStore.getAgents();
 	const excludeNames = existing?.name
@@ -661,13 +670,37 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 </div>
 
 <div class="form-group">
+	<label class="form-label">HISTORY 有効化</label>
+	<div class="form-desc">セッション履歴を HISTORY.md に自動記録します。ON で保存すると HISTORY.md を作成します。</div>
+	<div class="toggle-row">
+		<label class="toggle-switch">
+			<input type="checkbox" id="historyEnabled" ${historyChecked ? 'checked' : ''}>
+			<span class="toggle-slider"></span>
+		</label>
+		<span class="toggle-label" id="historyEnabledLabel">${historyChecked ? 'ON' : 'OFF'}</span>
+	</div>
+</div>
+
+<div class="form-group" id="historyScopeGroup" style="${historyChecked ? '' : 'display:none'}">
 	<label class="form-label">HISTORY.md 保存先</label>
-	<div class="form-desc">historyEnabled がONのときに記録する場所。デフォルトは定義ファイル（.md）と同じスコープ。</div>
+	<div class="form-desc">HISTORY.md を保存する場所。デフォルトは定義ファイル（.md）と同じスコープ。</div>
 	<select id="historyScope">
 		<option value="" ${!v.historyScope ? 'selected' : ''}>自動（.mdと同じスコープ）</option>
 		<option value="global" ${v.historyScope === 'global' ? 'selected' : ''}>グローバル（~/.claude/agents/&lt;name&gt;/HISTORY.md に集約）</option>
 		<option value="project" ${v.historyScope === 'project' ? 'selected' : ''}>プロジェクト（&lt;workspace&gt;/.claude/agents/&lt;name&gt;/HISTORY.md）</option>
 	</select>
+</div>
+
+<div class="form-group">
+	<label class="form-label">TODO 有効化</label>
+	<div class="form-desc">タスク管理用の TODO.md を使用します。ON で保存すると TODO.md を作成します。</div>
+	<div class="toggle-row">
+		<label class="toggle-switch">
+			<input type="checkbox" id="todoEnabled" ${todoChecked ? 'checked' : ''}>
+			<span class="toggle-slider"></span>
+		</label>
+		<span class="toggle-label" id="todoEnabledLabel">${todoChecked ? 'ON' : 'OFF'}</span>
+	</div>
 </div>
 
 <div class="form-group">
@@ -757,10 +790,12 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 			model: document.querySelector('input[name="model"]:checked')?.value || 'opus',
 			effort: document.querySelector('input[name="effort"]:checked')?.value || 'high',
 			permissionMode: document.getElementById('permissionMode').value || 'acceptEdits',
+			historyEnabled: document.getElementById('historyEnabled').checked,
 			historyScope: (() => {
 				const val = document.getElementById('historyScope').value;
 				return (val === 'global' || val === 'project') ? val : undefined;
 			})(),
+			todoEnabled: document.getElementById('todoEnabled').checked,
 			sessionMode: document.querySelector('input[name="sessionMode"]:checked')?.value || 'fixed',
 			scope: document.querySelector('input[name="scope"]:checked')?.value || 'project',
 			parentAgent: (() => {
@@ -932,6 +967,22 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	});
 	document.querySelectorAll('input[name="scope"]').forEach(el => {
 		el.addEventListener('change', updateRuleFilePath);
+	});
+
+	// HISTORY / TODO トグル: ラベル更新 + historyScope の表示切替
+	function onHistoryToggle(checked) {
+		document.getElementById('historyEnabledLabel').textContent = checked ? 'ON' : 'OFF';
+		const scopeGroup = document.getElementById('historyScopeGroup');
+		if (scopeGroup) { scopeGroup.style.display = checked ? '' : 'none'; }
+	}
+	function onTodoToggle(checked) {
+		document.getElementById('todoEnabledLabel').textContent = checked ? 'ON' : 'OFF';
+	}
+	document.getElementById('historyEnabled').addEventListener('change', function() {
+		onHistoryToggle(this.checked);
+	});
+	document.getElementById('todoEnabled').addEventListener('change', function() {
+		onTodoToggle(this.checked);
 	});
 
 	// 初期表示: モデルに応じたグレーアウト適用
