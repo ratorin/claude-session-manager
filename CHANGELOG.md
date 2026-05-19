@@ -1,5 +1,32 @@
 # 更新履歴
 
+## v0.5.1 (2026-05-19) — Claude Code 2.1.144 取込み
+
+### Claude Code 2.1.142〜2.1.144 対応確認・取込み
+
+#### 項目 1: Stop hook 連続ブロック (2.1.143 仕様追加)
+- **調査結果**: 影響なし
+- `csm-session-stop.js` は `{}` または `{terminalSequence:...}` のみ出力。`permissionDecision: block` は PreToolUse hook のみ使用であり Stop hook には一切なし。8 回ブロック強制終了の危険なし。
+
+#### 項目 2: 推奨バージョン更新 → 2.1.144+
+- README.md の「推奨 Claude Code」を **2.1.139+** から **2.1.144+** に更新
+- 旧推奨 (2.1.141+) は「旧推奨」として残置
+
+#### 項目 3: /extra-usage → /usage-credits リネーム (2.1.144)
+- **調査結果: 該当なし** — CSM 全体で `/extra-usage` 文字列の使用なし。対応不要。
+
+#### 項目 4: subagent 完了通知 経過時間記録 (2.1.144)
+- `csm-session-stop.js` に `input.elapsed_time` フィールドの取込みを追加
+- HISTORY.md の自動記録エントリに経過時間を付記: `(セッション終了時自動記録 3h 2m 5s)`
+- `input.elapsed_time` が未設定の場合はスキップ（後方互換）
+
+#### 項目 5: --resume bg セッション対応 (2.1.144)
+- **調査結果: 既存ロジックでカバー済**
+- `buildResumeArgs()` は `--resume <sessionId>` を組み立てるのみで、セッション種別（通常/bg）を問わない
+- 2.1.144 で bg セッションが `--resume` 対象に追加されても CSM 側変更不要
+
+---
+
 ## v0.5.1 (2026-05-19) — プロジェクトタブ統一: claudeTabBar 常時表示化
 
 ### プロジェクトタブ UI 統一

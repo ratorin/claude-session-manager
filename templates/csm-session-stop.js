@@ -133,8 +133,10 @@ function main() {
 	const now = new Date();
 	const dateStr = now.toISOString().substring(0, 10);
 	const timeStr = now.toTimeString().substring(0, 5);
+	// Claude Code 2.1.144+: input.elapsed_time に "3h 2m 5s" 形式の経過時間が付与される
+	const elapsedSuffix = input.elapsed_time ? ` ${input.elapsed_time}` : '';
 	const summary = parts.slice(-4).join('\n');
-	const entryText = `\n### ${dateStr} ${timeStr} (セッション終了時自動記録)\n${summary}\n`;
+	const entryText = `\n### ${dateStr} ${timeStr} (セッション終了時自動記録${elapsedSuffix})\n${summary}\n`;
 
 	try {
 		fs.appendFileSync(historyPath, entryText, 'utf-8');
