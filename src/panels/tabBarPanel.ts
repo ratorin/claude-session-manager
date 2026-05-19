@@ -35,13 +35,16 @@ class TabBarItem extends vscode.TreeItem {
 	constructor(
 		public readonly nodeId: NodeId,
 		label: string,
-		iconId: string,
+		iconId: string | undefined,
 		iconColor?: vscode.ThemeColor,
 		description?: string,
 		tooltip?: string,
 	) {
 		super(label, vscode.TreeItemCollapsibleState.None);
-		this.iconPath = new vscode.ThemeIcon(iconId, iconColor);
+		// iconId が指定された場合のみ ThemeIcon を設定 (タブは絵文字のみで揃え、status のみ icon)
+		if (iconId) {
+			this.iconPath = new vscode.ThemeIcon(iconId, iconColor);
+		}
 		this.description = description;
 		this.tooltip = tooltip;
 		this.contextValue = nodeId === 'status' ? 'tabBarStatus' : 'tabBarTab';
@@ -118,16 +121,14 @@ export class TabBarTreeProvider
 
 		const info = this._statusInfo ?? this._statusProvider?.();
 
-		const tabItems = TAB_DEFS.map(({ id, label, icon }) => {
+		const tabItems = TAB_DEFS.map(({ id, label }) => {
 			const isActive = id === this._activeTab;
+			// iconPath は設定しない (絵文字のみで揃える)。description ● でアクティブ表示。
 			return new TabBarItem(
 				id,
 				label,
-				icon,
-				// 全タブで有効なトークンを使い、icon 描画位置を揃える (インデント揃え)
-				isActive
-					? new vscode.ThemeColor('focusBorder')
-					: new vscode.ThemeColor('descriptionForeground'),
+				undefined,
+				undefined,
 				isActive ? '●' : undefined,
 				isActive ? `${label} (現在のタブ)` : label,
 			);
