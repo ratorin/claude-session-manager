@@ -2,6 +2,41 @@
 
 ## v0.5.1 (2026-05-28) — Claude Code 2.1.145〜2.1.153 取込み
 
+### claudeAgentsService 復活 — `claude agents --json` 公式 API 対応 (2.1.145+)
+
+Claude Code 2.1.145 で `claude agents --json` が追加されたことを受け、
+`ClaudeAgentsService` を JSON API ベースに全面切替えして再有効化。
+
+#### 実機確認済み JSON フォーマット
+```json
+[
+  { "pid": 535218, "cwd": "/path/to/project", "kind": "interactive",
+    "startedAt": 1779937055153, "sessionId": "9148962f-24f8-4b19-bed8-e3c0b3aa9947" }
+]
+```
+
+#### 変更点
+- `claudeAgentsService.ts`:
+  - 第1選択: `claude agents --json` (2.1.145+) を `execFile` で実行
+  - 第2選択: `claude agents` テキスト出力パース（旧バージョン後方互換）
+  - `ClaudeAgentEntry` に `pid`, `kind`, `startedAt`, `source` フィールドを追加
+  - `source: 'json-api' | 'text-parse'` で取得元を識別
+  - `elapsedSec` を `startedAt` から自動計算（JSON API 時）
+  - JSON API エントリは全件 `status: 'running'` とみなす（アクティブセッションのみ返す仕様）
+  - `ClaudeAgentRawJson` 型を追加（実機フォーマット定義）
+- `agentLiveTreeProvider.ts`:
+  - `setClaudeAgentsService()` を追加し JSON API を優先データソースに設定
+  - availability `unknown` 時はローディング表示
+  - `unavailable` / `disabled` 時は `agentWatcher`（PID/JSONL）に自動フォールバック
+  - `LiveAgentItem` のツールチップに `pid` / `kind` / 取得元バッジを追加
+  - `notifyTabVisible()` を `ClaudeAgentsService.setTabVisible()` に委譲（ポーリング制御）
+- `extension.ts`:
+  - `ClaudeAgentsService` のコメントアウトを解除して再有効化
+  - `agentLiveProvider.setClaudeAgentsService(claudeAgentsService)` で注入
+  - `claudeAgentsService.onDidChange` で running セッションを `agentWatcher` に補完（Phase 3）
+
+
+
 ### 調査・対応サマリー
 
 | 項目 | バージョン | 結果 |

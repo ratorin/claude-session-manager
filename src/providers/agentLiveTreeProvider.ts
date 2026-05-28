@@ -29,8 +29,13 @@ export class AgentLiveTreeProvider
 	private _agentWatcher: AgentWatcher | undefined;
 	private _watcherDisposable: vscode.Disposable | undefined;
 
+	/** ClaudeAgentsService — JSON API (2.1.145+) */
+	private _claudeAgentsService: ClaudeAgentsService | undefined;
+	private _serviceDisposable: vscode.Disposable | undefined;
+
 	dispose(): void {
 		this._watcherDisposable?.dispose();
+		this._serviceDisposable?.dispose();
 		this._onDidChangeTreeData.dispose();
 	}
 
@@ -40,9 +45,21 @@ export class AgentLiveTreeProvider
 		this._watcherDisposable = watcher.onDidChange(() => this.refresh());
 	}
 
-	/** 後方互換: タブ可視性通知（agentWatcher は常時監視なので no-op） */
-	notifyTabVisible(_visible: boolean): void {
-		// agentWatcher はタブ可視性に依存しないため何もしない
+	/**
+	 * ClaudeAgentsService を注入する（優先データソース）。
+	 * availability が 'available' のとき JSON API データを表示。
+	 * 'unavailable' / 'disabled' のとき agentWatcher にフォールバック。
+	 */
+	setClaudeAgentsService(service: ClaudeAgentsService): void {
+		this._serviceDisposable?.dispose();
+		this._claudeAgentsService = service;
+		this._serviceDisposable = service.onDidChange(() => this.refresh());
+	}
+
+	/** タブ可視性を ClaudeAgentsService に通知（ポーリング制御） */
+	notifyTabVisible(visible: boolean): void {
+		this._claudeAgentsService?.setTabVisible(visible);
+		// agentWatcher はタブ可視性に依存しないため通知不要
 	}
 
 	refresh(): void {
@@ -57,10 +74,52 @@ export class AgentLiveTreeProvider
 		// フラットリスト — 子ノードなし
 		if (element) { return []; }
 
+		const config = vscode.workspace.getConfiguration('claudeManager.claudeAgentsIntegration');
+		const showUnregistered = config.get<boolean>('showUnregistered', true);
+
+		// --- 優先: ClaudeAgentsService (claude agents --json, 2.1.145+) ---
+		const service = this._claudeAgentsService;
+		if (service && service.isEnabled()) {
+			const availability = service.getAvailability();
+
+			if (availability === 'unknown') {
+				return [new LiveStatusMessageItem(
+					'確認中...',
+					'claude agents --json を実行中',
+					'loading',
+				)];
+			}
+
+			if (availability === 'available') {
+				// JSON API データを使用
+				const entries = service.getEntries();
+				if (entries.length === 0) {
+					return [new LiveStatusMessageItem(
+						'ライブ状態のエージェントなし',
+						'現在稼働中のバックグラウンドエージェントはありません',
+						'info',
+					)];
+				}
+				const allAgents = await dataStore.getAgents();
+				const views = buildLiveAgentViews(entries, allAgents);
+				const filtered = showUnregistered ? views : views.filter(v => v.matchLevel !== 'none');
+				if (filtered.length === 0) {
+					return [new LiveStatusMessageItem(
+						'ライブ状態のエージェントなし',
+						'現在稼働中のバックグラウンドエージェントはありません',
+						'info',
+					)];
+				}
+				return filtered.map(v => new LiveAgentItem(v));
+			}
+
+			// 'unavailable' または 'disabled' → agentWatcher にフォールバック
+		}
+
+		// --- フォールバック: AgentWatcher (PID/JSONL 監視) ---
 		const watcher = this._agentWatcher;
 		if (!watcher) { return []; }
 
-		// エージェント監視が無効の場合
 		if (!watcher.isEnabled()) {
 			return [new LiveStatusMessageItem(
 				'エージェント監視が無効です',
@@ -68,9 +127,6 @@ export class AgentLiveTreeProvider
 				'info',
 			)];
 		}
-
-		const config = vscode.workspace.getConfiguration('claudeManager.claudeAgentsIntegration');
-		const showUnregistered = config.get<boolean>('showUnregistered', true);
 
 		const states = watcher.getStates();
 		const liveSessionIds = watcher.getLiveSessionIds();
@@ -88,7 +144,6 @@ export class AgentLiveTreeProvider
 					agentName: state.agentName,
 					status: 'running',
 					cwd: cwdMap.get(state.sessionId) || '',
-					source: 'json-api',
 					rawLine: '',
 				});
 			}
@@ -103,7 +158,6 @@ export class AgentLiveTreeProvider
 						agentName: undefined,
 						status: 'running',
 						cwd: cwdMap.get(sessionId) || '',
-						source: 'json-api',
 						rawLine: '',
 					});
 				}
@@ -230,6 +284,15 @@ export class LiveAgentItem extends vscode.TreeItem {
 		}
 
 		const elapsedStr = entry.elapsedSec !== undefined ? formatElapsed(entry.elapsedSec) : '不明';
+		// JSON API 由来のフィールド（pid, kind）を表示
+		const pidLine = entry.pid !== undefined ? `| PID | \`${entry.pid}\` |\n` : '';
+		const kindLine = entry.kind ? `| 種別 | \`${entry.kind}\` |\n` : '';
+		const sourceLine = entry.source === 'json-api'
+			? '\n*claude agents --json (公式 API)* 🟢\n'
+			: entry.source === 'text-parse'
+			? '\n*claude agents テキスト解析*\n'
+			: '';
+
 		this.tooltip = new vscode.MarkdownString(
 			`**${name}**\n\n` +
 			`| | |\n|---|---|\n` +
@@ -237,7 +300,10 @@ export class LiveAgentItem extends vscode.TreeItem {
 			`| 作業ディレクトリ | \`${entry.cwd || '—'}\` |\n` +
 			`| 経過時間 | ${elapsedStr} |\n` +
 			(entry.sessionId ? `| セッション ID | \`${entry.sessionId}\` |\n` : '') +
+			pidLine +
+			kindLine +
 			(view.linkedAgentName ? `| CSM エージェント | ${view.linkedAgentName} |\n` : '') +
+			sourceLine +
 			(view.matchLevel === 'cwd' ? '\n*cwd によるマッチング（推定）*' : '') +
 			(view.matchLevel === 'none' ? '\n*CSM に未登録のセッションです*' : ''),
 		);

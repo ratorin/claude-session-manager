@@ -25,8 +25,8 @@ import { MainTabPanel } from './panels/mainTabPanel';
 import { TabBarTreeProvider, StatusInfo } from './panels/tabBarPanel';
 import { HelpFeedbackProvider } from './providers/helpFeedbackProvider';
 import { setLocale, setAutoTranslate } from './services/i18nService';
-// ClaudeAgentsService は TTY 必須のため現在未使用 (将来 JSON API 対応時に復活)
-// import { ClaudeAgentsService } from './services/claudeAgentsService';
+// ClaudeAgentsService — claude agents --json 公式 API (2.1.145+) 対応
+import { ClaudeAgentsService } from './services/claudeAgentsService';
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -248,9 +248,25 @@ export function activate(context: vscode.ExtensionContext) {
 	sessionProvider.setSortMode(initialSortMode as 'updated-desc' | 'updated-asc' | 'created-desc' | 'created-asc' | 'name' | 'count' | 'model');
 	sessionProvider.setGroupMode(initialGroupMode as 'date' | 'tag' | 'agent' | 'flat');
 
-	// ライブ状態プロバイダに agentWatcher を注入（PID/JSONL 監視ベース）
-	// 旧: ClaudeAgentsService (claude agents コマンド / TTY 必須のため廃止)
+	// ライブ状態プロバイダに agentWatcher を注入（PID/JSONL 監視、フォールバック用）
 	agentLiveProvider.setAgentWatcher(agentWatcher);
+
+	// ClaudeAgentsService — claude agents --json 公式 API (2.1.145+) を優先データソースとして注入
+	const claudeAgentsService = new ClaudeAgentsService();
+	context.subscriptions.push(claudeAgentsService);
+	agentLiveProvider.setClaudeAgentsService(claudeAgentsService);
+
+	// Phase 3: claude agents --json の running セッションを agentWatcher PID セットに補完
+	claudeAgentsService.onDidChange(() => {
+		const runningSessions = new Set(
+			claudeAgentsService.getEntries()
+				.filter(e => e.status === 'running' && e.sessionId)
+				.map(e => e.sessionId!)
+		);
+		if (runningSessions.size > 0) {
+			agentWatcher.supplementLiveFromClaudeAgents(runningSessions);
+		}
+	});
 
 	// AgentWatcher を起動
 	agentWatcher.start();

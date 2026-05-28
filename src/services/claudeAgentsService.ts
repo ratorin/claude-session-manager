@@ -1,12 +1,17 @@
 /**
- * claudeAgentsService.ts — v0.5.0 TASK-5
+ * claudeAgentsService.ts — v0.5.0 TASK-5 (rev. 2.1.145)
  * `claude agents` コマンドを呼び出してライブエージェント状態を取得するサービス。
  *
  * 設計方針:
- *   - `claude agents [--cwd <path>]` をテキスト出力でパース（--json は存在しない）
+ *   - Claude Code 2.1.145+ では `claude agents --json` を使用（公式 JSON API）
+ *   - 旧バージョン（--json 未対応）では `claude agents` テキスト出力をパース
  *   - タブ可視時のみポーリング（デフォルト 5 秒）
  *   - 非対応環境は可用性フラグを false にしてセクション非表示
  *   - 連続失敗時にバックオフ（5s → 30s → 5min）
+ *
+ * claude agents --json の出力形式（2.1.145 実機確認済み）:
+ *   [{ "pid": 535218, "cwd": "/path/to/dir", "kind": "interactive",
+ *      "startedAt": 1779937055153, "sessionId": "9148962f-..." }]
  *
  * 設定キー:
  *   claudeManager.claudeAgentsIntegration.enabled          (boolean, default: true)
@@ -25,18 +30,35 @@ const execFilep = promisify(execFile);
 // 型定義
 // -------------------------------------------------------------------
 
+/** claude agents --json の 1 エントリ（2.1.145 実機確認済みフォーマット） */
+export interface ClaudeAgentRawJson {
+	pid: number;
+	cwd: string;
+	kind: string;          // 例: "interactive", "noninteractive", etc.
+	startedAt: number;     // Unix timestamp (ms)
+	sessionId: string;
+}
+
 export interface ClaudeAgentEntry {
-	/** claude agents 出力から得られる識別子（session ID 等。取得できれば）*/
+	/** claude agents 出力から得られるセッション ID */
 	sessionId?: string;
-	/** エージェント名（出力から得られれば） */
+	/** エージェント名（CSM との照合後に設定）*/
 	agentName?: string;
-	/** ステータス */
+	/** ステータス（JSON 取得時は全件 running、テキスト出力からパース時は可変）*/
 	status: 'running' | 'blocked' | 'done' | 'unknown';
 	/** 作業ディレクトリ */
 	cwd: string;
-	/** 経過秒数（パースできれば） */
+	/** 経過秒数（startedAt から計算、またはテキスト出力からパース） */
 	elapsedSec?: number;
-	/** 元のテキスト行（デバッグ・将来のフォーマット変化対策） */
+	/** プロセス ID（JSON 取得時のみ） */
+	pid?: number;
+	/** エージェントの種別（"interactive" 等、JSON 取得時のみ） */
+	kind?: string;
+	/** セッション開始時刻（Unix ms、JSON 取得時のみ） */
+	startedAt?: number;
+	/** 取得元: 'json-api' | 'text-parse' | undefined（agentWatcher 由来など） */
+	source?: 'json-api' | 'text-parse';
+	/** 元のテキスト行（テキストパース時のデバッグ用） */
 	rawLine: string;
 }
 
@@ -119,6 +141,7 @@ function parseLine(line: string): ClaudeAgentEntry | undefined {
 			status: normalizeStatus(iconMatch[2]),
 			cwd: iconMatch[3],
 			elapsedSec: iconMatch[4] ? parseElapsed(iconMatch[4]) : undefined,
+			source: 'text-parse',
 			rawLine: line,
 		};
 	}
@@ -133,6 +156,7 @@ function parseLine(line: string): ClaudeAgentEntry | undefined {
 			status: normalizeStatus(tableMatch[2]),
 			cwd: tableMatch[3],
 			elapsedSec: tableMatch[4] ? parseElapsed(tableMatch[4]) : undefined,
+			source: 'text-parse',
 			rawLine: line,
 		};
 	}
@@ -145,6 +169,7 @@ function parseLine(line: string): ClaudeAgentEntry | undefined {
 		return {
 			status: normalizeStatus(simpleMatch[1]),
 			cwd: simpleMatch[2],
+			source: 'text-parse',
 			rawLine: line,
 		};
 	}
@@ -161,6 +186,7 @@ function parseLine(line: string): ClaudeAgentEntry | undefined {
 			sessionId: uuidMatch?.[1],
 			status: normalizeStatus(statusInLine[1]),
 			cwd: cwdInLine[1],
+			source: 'text-parse',
 			rawLine: line,
 		};
 	}
@@ -365,19 +391,26 @@ export class ClaudeAgentsService implements vscode.Disposable {
 // -------------------------------------------------------------------
 
 /**
- * `claude agents [--cwd <path>]` を実行して ClaudeAgentEntry[] を返す。
- * 非対応環境では ClaudeAgentsUnavailableError を throw する。
+ * `claude agents --json [--cwd <path>]` を実行して ClaudeAgentEntry[] を返す。
+ *
+ * - Claude Code 2.1.145+ では --json フラグを使用して確実な JSON を取得
+ * - --json が未対応（exit code 非 0 または非 JSON 出力）の場合は
+ *   テキスト形式にフォールバック（< 2.1.145 の後方互換）
+ * - 非対応環境（"not available in this environment"）では ClaudeAgentsUnavailableError を throw
  */
 export async function fetchClaudeAgents(cwd?: string): Promise<ClaudeAgentEntry[]> {
-	const args = ['agents', ...(cwd ? ['--cwd', cwd] : [])];
+	const cwdArgs = cwd ? ['--cwd', cwd] : [];
+	const execOpts = {
+		timeout: 8000,
+		maxBuffer: 1024 * 1024,
+		...(process.platform === 'win32' ? { shell: true } : {}),
+	};
 
+	// --- 1st try: claude agents --json （2.1.145+） ---
 	try {
-		const { stdout, stderr } = await execFilep('claude', args, {
-			timeout: 8000,
-			maxBuffer: 1024 * 1024,
-			// Windows では .cmd シムのため shell が必要
-			...(process.platform === 'win32' ? { shell: true } : {}),
-		});
+		const { stdout, stderr } = await execFilep(
+			'claude', ['agents', '--json', ...cwdArgs], execOpts
+		);
 		const combined = stdout + stderr;
 
 		// 非対応環境の検出
@@ -385,53 +418,97 @@ export async function fetchClaudeAgents(cwd?: string): Promise<ClaudeAgentEntry[
 			throw new ClaudeAgentsUnavailableError(combined.trim());
 		}
 
-		// JSON 出力対応（将来バージョンで --json が追加された場合に自動採用）
 		const trimmed = stdout.trim();
-		if (trimmed.startsWith('[')) {
-			try {
-				const arr = JSON.parse(trimmed) as unknown[];
-				return arr.map(item => jsonEntryToClaudeAgentEntry(item));
-			} catch {
-				// JSON パース失敗 → テキストパースにフォールバック
+		if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+			const arr = JSON.parse(trimmed) as unknown[];
+			return (Array.isArray(arr) ? arr : [arr]).map(item => jsonApiEntryToClaudeAgentEntry(item));
+		}
+
+		// stdout が JSON でない → --json 未サポートのバージョン、テキストパースへ
+		return parseClaudeAgentsOutput(stdout || stderr);
+
+	} catch (err: unknown) {
+		if (err instanceof ClaudeAgentsUnavailableError) { throw err; }
+		if (err instanceof SyntaxError) {
+			// JSON.parse 失敗 → テキストパースにフォールバック
+		} else {
+			const nodeErr = err as NodeJS.ErrnoException;
+			if (nodeErr.code === 'ENOENT') {
+				throw new ClaudeAgentsUnavailableError('claude command not found');
 			}
+			if ((nodeErr as { killed?: boolean }).killed) {
+				throw new Error('claude agents timed out');
+			}
+			const msg = String(nodeErr.message ?? '');
+			if (/not available in this environment/i.test(msg)) {
+				throw new ClaudeAgentsUnavailableError(msg);
+			}
+			// --json フラグ自体が不明オプションで exit 1 になった場合 → テキストにフォールバック
+			if (nodeErr.code !== undefined) {
+				// exit code あり = CLI エラー → フォールバックを試みる
+			} else {
+				throw err; // それ以外のエラーは再 throw
+			}
+		}
+	}
+
+	// --- 2nd try: claude agents （テキスト出力、< 2.1.145 フォールバック） ---
+	try {
+		const { stdout, stderr } = await execFilep('claude', ['agents', ...cwdArgs], execOpts);
+		const combined = stdout + stderr;
+
+		if (/not available in this environment/i.test(combined)) {
+			throw new ClaudeAgentsUnavailableError(combined.trim());
 		}
 
 		return parseClaudeAgentsOutput(stdout);
 	} catch (err: unknown) {
 		if (err instanceof ClaudeAgentsUnavailableError) { throw err; }
-
 		const nodeErr = err as NodeJS.ErrnoException;
-		// コマンド不在
 		if (nodeErr.code === 'ENOENT') {
 			throw new ClaudeAgentsUnavailableError('claude command not found');
 		}
-		// タイムアウト
 		if ((nodeErr as { killed?: boolean }).killed) {
 			throw new Error('claude agents timed out');
 		}
-		// 出力に "not available" が含まれる場合
 		const msg = String(nodeErr.message ?? '');
 		if (/not available in this environment/i.test(msg)) {
 			throw new ClaudeAgentsUnavailableError(msg);
 		}
-
 		throw err;
 	}
 }
 
-/** JSON 形式エントリを ClaudeAgentEntry に変換（将来の --json 対応） */
-function jsonEntryToClaudeAgentEntry(item: unknown): ClaudeAgentEntry {
+/**
+ * `claude agents --json` の 1 エントリ（2.1.145 形式）を ClaudeAgentEntry に変換。
+ *
+ * 入力例:
+ *   { "pid": 535218, "cwd": "/path", "kind": "interactive",
+ *     "startedAt": 1779937055153, "sessionId": "9148962f-..." }
+ *
+ * - status は JSON に含まれないため、返ってくる全件を "running" とみなす
+ *   （`claude agents --json` はアクティブなセッションのみ返す仕様）
+ * - elapsedSec は startedAt と現在時刻の差分から計算
+ */
+function jsonApiEntryToClaudeAgentEntry(item: unknown): ClaudeAgentEntry {
 	if (!item || typeof item !== 'object') {
-		return { status: 'unknown', cwd: '', rawLine: JSON.stringify(item) };
+		return { status: 'unknown', cwd: '', source: 'json-api', rawLine: JSON.stringify(item) };
 	}
 	const obj = item as Record<string, unknown>;
+	const startedAt = typeof obj['startedAt'] === 'number' ? obj['startedAt'] : undefined;
+	const elapsedSec = startedAt !== undefined
+		? Math.floor((Date.now() - startedAt) / 1000)
+		: undefined;
+
 	return {
 		sessionId: typeof obj['sessionId'] === 'string' ? obj['sessionId'] : undefined,
-		agentName: typeof obj['name'] === 'string' ? obj['name']
-			: typeof obj['agentName'] === 'string' ? obj['agentName'] : undefined,
-		status: normalizeStatus(String(obj['status'] ?? 'unknown')),
+		status: 'running', // JSON API はアクティブセッションのみ返す
 		cwd: typeof obj['cwd'] === 'string' ? obj['cwd'] : '',
-		elapsedSec: typeof obj['elapsedSec'] === 'number' ? obj['elapsedSec'] : undefined,
+		elapsedSec,
+		pid: typeof obj['pid'] === 'number' ? obj['pid'] : undefined,
+		kind: typeof obj['kind'] === 'string' ? obj['kind'] : undefined,
+		startedAt,
+		source: 'json-api',
 		rawLine: JSON.stringify(item),
 	};
 }
