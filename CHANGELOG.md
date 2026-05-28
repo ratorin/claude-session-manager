@@ -1,5 +1,39 @@
 # 更新履歴
 
+## v0.5.1 (2026-05-28) — Claude Code 2.1.145〜2.1.153 取込み
+
+### 調査・対応サマリー
+
+| 項目 | バージョン | 結果 |
+|------|-----------|------|
+| /simplify → /code-review リネーム | 2.1.147 | **該当なし** (CSM 内で未使用) |
+| MessageDisplay hook | 2.1.152 | hookService.ts に骨組み追加 |
+| SessionStart: sessionTitle 出力 | 2.1.152 | csm-session-agent-inject.js に追加 |
+| Stop hook: background_tasks / session_crons | 2.1.145 | csm-session-stop.js に追加 |
+| 推奨版を 2.1.153+ に更新 | 2.1.153 | README.md 更新 |
+| auto mode デフォルト ON | 2.1.152 | **該当なし** (ユーザー向け説明文なし) |
+
+### 変更詳細
+
+#### csm-session-agent-inject.js (SessionStart hook)
+- `hookSpecificOutput.sessionTitle` に `[agentName]` を設定
+- Claude Code 2.1.152+ でセッションタブのタイトルがエージェント名で自動設定される
+
+#### csm-session-stop.js (Stop hook)
+- `input.background_tasks` / `input.session_crons` を読み取り
+- 継続中タスクがある場合、HISTORY.md の記録に `(background tasks N 件継続中)` を付記
+- Claude Code 2.1.145+ で提供される情報
+
+#### hookService.ts
+- `isMessageDisplayHookEnabled()` スタブ関数を追加
+- MessageDisplay hook (2.1.152+) の設定キー・input/output 形式をドキュメントコメントで記載
+- 実装テンプレートは将来のユーザー拡張向けに予約
+
+#### README.md
+- 推奨バージョン: **2.1.144+** → **2.1.153+**
+
+---
+
 ## v0.5.1 (2026-05-19) — タブ切り替えパフォーマンス改善
 
 ### TreeView ルートノード短期キャッシュ追加

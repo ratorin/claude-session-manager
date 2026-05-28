@@ -583,6 +583,30 @@ export async function ensureSessionStopHook(extensionPath: string, outputChannel
 	}
 }
 
+// ─── MessageDisplay hook (Claude Code 2.1.152+) ──────────────────────────────
+//
+// MessageDisplay hook はモデル応答をユーザーに表示する前に発火する。
+// stdout の JSON で表示内容を上書き・フィルタリングできる（将来のユーザー拡張用）。
+//
+// 設定キー: claudeManager.hooks.messageDisplay.enabled (boolean, default: false)
+//
+// 実装テンプレートは将来のユーザー拡張向けに予約。現時点では settings への自動登録は行わない。
+// 有効化した場合、settings.json の MessageDisplay セクションにユーザーが手動で hook を追加する。
+//
+// 参考 input 形式 (CC 2.1.152+):
+//   { session_id, hook_event_name: "MessageDisplay", message: { role, content }, cwd }
+// 参考 output 形式:
+//   {} (通過) | { hookSpecificOutput: { replacementText: "..." } } (内容差し替え)
+
+/**
+ * MessageDisplay hook の設定キーが有効か確認する（将来の自動登録用スタブ）
+ * @returns true if the user has opted in via settings
+ */
+export function isMessageDisplayHookEnabled(): boolean {
+	const config = vscode.workspace.getConfiguration('claudeManager');
+	return config.get<boolean>('hooks.messageDisplay.enabled', false);
+}
+
 // CSM Governance Capture hookを settings.json に登録（PreToolUse/PostToolUse）
 export async function ensureGovernanceHook(extensionPath: string, outputChannel: vscode.OutputChannel): Promise<void> {
 	const homeDir = os.homedir();

@@ -1,6 +1,7 @@
 // agentLiveTreeProvider.ts — ライブ状態エージェント専用 TreeDataProvider
-// データソース: agentWatcher (PID/JSONL 監視) — claude agents コマンド不使用
-// TTY 必須の claude agents コマンドの代わりに既存の PID/JSONL 監視データを利用する
+// データソース:
+//   優先: ClaudeAgentsService (claude agents --json, 2.1.145+)
+//   フォールバック: AgentWatcher (PID/JSONL 監視、claude agents 未対応環境)
 
 import * as vscode from 'vscode';
 import * as path from 'path';
@@ -8,6 +9,7 @@ import * as dataStore from '../models/dataStore';
 import {
 	LiveAgentView,
 	ClaudeAgentEntry,
+	ClaudeAgentsService,
 	formatElapsed,
 } from '../services/claudeAgentsService';
 import { AgentWatcher } from '../watchers/agentWatcher';
@@ -86,6 +88,7 @@ export class AgentLiveTreeProvider
 					agentName: state.agentName,
 					status: 'running',
 					cwd: cwdMap.get(state.sessionId) || '',
+					source: 'json-api',
 					rawLine: '',
 				});
 			}
@@ -100,6 +103,7 @@ export class AgentLiveTreeProvider
 						agentName: undefined,
 						status: 'running',
 						cwd: cwdMap.get(sessionId) || '',
+						source: 'json-api',
 						rawLine: '',
 					});
 				}

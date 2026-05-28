@@ -99,10 +99,14 @@ function main() {
 		content + '\n' +
 		'---\n';
 
+	// Claude Code 2.1.152+: sessionTitle でセッションタブのタイトルを設定
+	const sessionTitle = `[${agentName}]`;
+
 	const output = {
 		hookSpecificOutput: {
 			hookEventName: 'SessionStart',
 			additionalContext: context,
+			sessionTitle,
 		},
 	};
 

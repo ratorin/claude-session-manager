@@ -10,8 +10,8 @@
 |-------------|------------|-----------|
 | 必須 | VS Code | 1.85.0+ |
 | 必須 | Claude Code | 2.1.113+ |
-| 推奨 | Claude Code | **2.1.144+** — 最新機能フル対応（Stop hook 8回ブロック保護・bg session resume・subagent 経過時間） |
-| 旧推奨 | Claude Code | 2.1.141+ — `terminalSequence` 通知、`continueOnBlock` フィードバック |
+| 推奨 | Claude Code | **2.1.153+** — 最新機能フル対応（MessageDisplay hook・sessionTitle・bg tasks 継続表示・auto mode デフォルト ON） |
+| 旧推奨 | Claude Code | 2.1.144+ — Stop hook 8回ブロック保護・bg session resume・subagent 経過時間 |
 
 > Claude Code のバージョン確認: `claude --version`
 > アップデート: `npm install -g @anthropic-ai/claude-code`
