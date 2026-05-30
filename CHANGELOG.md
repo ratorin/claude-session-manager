@@ -1,5 +1,30 @@
 # 更新履歴
 
+## v0.5.1 (2026-05-31) — 右クリックメニュー再編 v2（重複排除・グループ統一）
+
+### 右クリックメニュー再設計 v2 実装
+
+`docs/v0.5.x-menu-redesign-2.md` に基づき `package.json` の `view/item/context` を再整理。
+登録行数: **39 → 32**（エージェント系 18 → 11、重複7件削除）
+
+#### 変更内容
+
+**エージェント系の重複排除（主目的）**
+- `previewAgent` / `openAgentInClaude` / `openAgentSession`: `claudeAgents` と `claudeAgentsFavorites` の2行登録を when 句の OR 結合で **1行に統合**
+  ```json
+  "when": "(view == claudeAgents || view == claudeAgentsFavorites) && viewItem =~ /(agentItemLinked|favoriteAgentLinked)/"
+  ```
+- `removeAgentFavorite` inline: `claudeAgents` / `claudeAgentsFavorites` 2行を OR 結合で1行に
+- `addAgentFavorite` / `removeAgentFavorite` の `2_favorite` グループ登録を完全削除
+  → inline の ★ トグルのみ残し、コンテキストメニュー本体への二重表示を解消
+
+**グループ名・順序統一**
+- セッション系: `2_agent` → `2_link`（設計書 v2 の命名規約に準拠）
+- エージェント系: `0_link` → `2_link`、`2_copy` → `0_open@5/@6`（コピー操作を 0_open に統合）
+- 全コマンドに `@N` インデックスを付与（同 group 内の順序を保証）
+
+---
+
 ## v0.5.1 (2026-05-30) — modelCliMap エイリアス方式へ移行 (重大バグ修正)
 
 ### 重大バグ修正: フロントマターに古いモデルIDが固定される問題

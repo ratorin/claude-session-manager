@@ -626,6 +626,7 @@
 				}
 			],
 			"view/item/context": [
+				
 				{
 					"command": "claudeManager.previewSession",
 					"when": "view == claudeSessions && viewItem =~ /^session/",
@@ -639,47 +640,47 @@
 				{
 					"command": "claudeManager.openInClaude",
 					"when": "viewItem =~ /^session/",
-					"group": "0_open"
+					"group": "0_open@1"
 				},
 				{
 					"command": "claudeManager.copySessionId",
 					"when": "viewItem =~ /^session/",
-					"group": "0_open"
+					"group": "0_open@3"
 				},
 				{
 					"command": "claudeManager.copySessionPath",
 					"when": "viewItem =~ /^session/",
-					"group": "0_open"
+					"group": "0_open@4"
 				},
 				{
 					"command": "claudeManager.renameSession",
 					"when": "viewItem =~ /^session/",
-					"group": "1_edit"
+					"group": "1_edit@1"
 				},
 				{
 					"command": "claudeManager.tagSession",
 					"when": "viewItem =~ /^session/",
-					"group": "1_edit"
+					"group": "1_edit@2"
 				},
 				{
 					"command": "claudeManager.registerAgent",
 					"when": "viewItem == session || viewItem == sessionBookmarked",
-					"group": "2_agent"
+					"group": "2_link@1"
 				},
 				{
 					"command": "claudeManager.editAgent",
 					"when": "viewItem == sessionRegistered || viewItem == sessionRegisteredBookmarked",
-					"group": "2_agent"
+					"group": "2_link@2"
 				},
 				{
 					"command": "claudeManager.editRuleFile",
 					"when": "viewItem == sessionRegistered || viewItem == sessionRegisteredBookmarked",
-					"group": "2_agent"
+					"group": "2_link@3"
 				},
 				{
 					"command": "claudeManager.deleteSession",
 					"when": "viewItem =~ /^session/",
-					"group": "3_danger"
+					"group": "3_danger@1"
 				},
 				{
 					"command": "claudeManager.unbookmarkSession",
@@ -696,96 +697,65 @@
 					"when": "view == claudeTags && viewItem == taggedSession",
 					"group": "inline"
 				},
+				
 				{
 					"command": "claudeManager.addAgentFavorite",
 					"when": "view == claudeAgents && viewItem =~ /^agentItem/ && !(viewItem =~ /Bookmarked/)",
-					"group": "inline@20"
+					"group": "inline"
 				},
 				{
 					"command": "claudeManager.removeAgentFavorite",
-					"when": "view == claudeAgents && (viewItem =~ /^agentItem.*Bookmarked/ || viewItem =~ /^favoriteAgent/)",
-					"group": "inline@20"
+					"when": "(view == claudeAgents || view == claudeAgentsFavorites) && (viewItem =~ /^agentItem.*Bookmarked/ || viewItem =~ /^favoriteAgent/)",
+					"group": "inline"
 				},
-				{
-					"command": "claudeManager.removeAgentFavorite",
-					"when": "view == claudeAgentsFavorites && viewItem =~ /^favoriteAgent/",
-					"group": "inline@20"
-				},
+				
 				{
 					"command": "claudeManager.previewAgent",
-					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
-					"group": "0_open@0"
-				},
-				{
-					"command": "claudeManager.openAgentInClaude",
-					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
+					"when": "(view == claudeAgents || view == claudeAgentsFavorites) && viewItem =~ /(agentItemLinked|favoriteAgentLinked)/",
 					"group": "0_open@1"
 				},
 				{
-					"command": "claudeManager.openAgentSession",
-					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
+					"command": "claudeManager.openAgentInClaude",
+					"when": "(view == claudeAgents || view == claudeAgentsFavorites) && viewItem =~ /(agentItemLinked|favoriteAgentLinked)/",
 					"group": "0_open@2"
+				},
+				{
+					"command": "claudeManager.openAgentSession",
+					"when": "(view == claudeAgents || view == claudeAgentsFavorites) && viewItem =~ /(agentItemLinked|favoriteAgentLinked)/",
+					"group": "0_open@3"
 				},
 				{
 					"command": "claudeManager.renewAgentSession",
 					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
-					"group": "0_open"
+					"group": "0_open@4"
 				},
 				{
 					"command": "claudeManager.copyAgentSessionId",
 					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
-					"group": "2_copy@1"
+					"group": "0_open@5"
 				},
 				{
 					"command": "claudeManager.copyAgentSessionPath",
 					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
-					"group": "2_copy@2"
+					"group": "0_open@6"
+				},
+				
+				{
+					"command": "claudeManager.editAgent",
+					"when": "view == claudeAgents && viewItem =~ /^agentItem/",
+					"group": "1_edit@1"
 				},
 				{
 					"command": "claudeManager.linkSession",
 					"when": "view == claudeAgents && viewItem =~ /^agentItem/",
-					"group": "0_link"
-				},
-				{
-					"command": "claudeManager.editAgent",
-					"when": "view == claudeAgents && viewItem =~ /^agentItem/",
-					"group": "1_edit"
-				},
-				{
-					"command": "claudeManager.addAgentFavorite",
-					"when": "view == claudeAgents && viewItem =~ /^agentItem/ && !(viewItem =~ /Bookmarked/)",
-					"group": "2_favorite"
-				},
-				{
-					"command": "claudeManager.removeAgentFavorite",
-					"when": "view == claudeAgents && (viewItem =~ /^agentItem.*Bookmarked/ || viewItem =~ /^favoriteAgent/)",
-					"group": "2_favorite"
-				},
-				{
-					"command": "claudeManager.removeAgentFavorite",
-					"when": "view == claudeAgentsFavorites && viewItem =~ /^favoriteAgent/",
-					"group": "2_favorite"
-				},
-				{
-					"command": "claudeManager.previewAgent",
-					"when": "view == claudeAgentsFavorites && viewItem =~ /favoriteAgentLinked/",
-					"group": "0_open@0"
-				},
-				{
-					"command": "claudeManager.openAgentInClaude",
-					"when": "view == claudeAgentsFavorites && viewItem =~ /favoriteAgentLinked/",
-					"group": "0_open@1"
-				},
-				{
-					"command": "claudeManager.openAgentSession",
-					"when": "view == claudeAgentsFavorites && viewItem =~ /favoriteAgentLinked/",
-					"group": "0_open@2"
+					"group": "2_link@1"
 				},
 				{
 					"command": "claudeManager.deleteAgent",
 					"when": "view == claudeAgents && viewItem =~ /^agentItem/",
-					"group": "3_danger"
+					"group": "3_danger@1"
 				},
+				
 				{
 					"command": "claudeManager.previewMemory",
 					"when": "view == claudeMemory && viewItem == memoryFile",
