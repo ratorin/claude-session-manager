@@ -607,7 +607,7 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	<div class="radio-group">
 		<div class="radio-option">
 			<input type="radio" name="model" id="model-opus" value="opus" ${v.model === 'opus' || !v.model ? 'checked' : ''}>
-			<label for="model-opus">Opus<div class="radio-sub">高度な判断・複雑な開発</div></label>
+			<label for="model-opus">Opus<div class="radio-sub">Opus 4.8 — 最高度の判断・複雑な開発（デフォルト high effort）</div></label>
 		</div>
 		<div class="radio-option">
 			<input type="radio" name="model" id="model-sonnet" value="sonnet" ${v.model === 'sonnet' ? 'checked' : ''}>
@@ -643,11 +643,11 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 		</div>
 		<div class="radio-option" id="effort-option-high">
 			<input type="radio" name="effort" id="effort-high" value="high" ${!v.effort || v.effort === 'high' ? 'checked' : ''}>
-			<label for="effort-high">High<div class="radio-sub">深い推論（推奨）</div></label>
+			<label for="effort-high">High<div class="radio-sub">深い推論（Opus 4.8 デフォルト・推奨）</div></label>
 		</div>
 		<div class="radio-option" id="effort-option-xhigh">
 			<input type="radio" name="effort" id="effort-xhigh" value="xhigh" ${v.effort === 'xhigh' ? 'checked' : ''}>
-			<label for="effort-xhigh">XHigh<div class="radio-sub">超高深度（v2.1.111+）</div></label>
+			<label for="effort-xhigh">XHigh<div class="radio-sub">超高深度（最難タスク向け）</div></label>
 		</div>
 		<div class="radio-option" id="effort-option-max">
 			<input type="radio" name="effort" id="effort-max" value="max" ${v.effort === 'max' ? 'checked' : ''}>

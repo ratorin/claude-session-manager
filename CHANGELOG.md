@@ -1,5 +1,23 @@
 # 更新履歴
 
+## v0.5.1 (2026-05-30) — Opus 4.8 対応・effort ラベル更新 (CC 2.1.154〜2.1.158)
+
+### Claude Code 2.1.154〜2.1.158 対応
+
+#### モデル選択 UI (agentFormPanel.ts)
+- **Opus ラジオのサブテキスト** を「Opus 4.8 — 最高度の判断・複雑な開発（デフォルト high effort）」に更新
+  - `value="opus"` はそのまま維持（Claude Code 側で opus-4-8 へ解決される）
+  - `normalizeModel()` は `includes('opus')` で広くマッチするため変更不要
+
+#### effort ラベル (agentFormPanel.ts)
+- **High**: 「深い推論（Opus 4.8 デフォルト・推奨）」
+- **XHigh**: 「超高深度（最難タスク向け）」 — バージョン縛り表記 (v2.1.111+) を汎用化
+
+#### README.md
+- 推奨 Claude Code バージョン: **2.1.153+** → **2.1.158+**
+
+---
+
 ## v0.5.1 (2026-05-28) — Claude Code 2.1.145〜2.1.153 取込み
 
 ### claudeAgentsService 復活 — `claude agents --json` 公式 API 対応 (2.1.145+)
