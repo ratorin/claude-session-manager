@@ -54,13 +54,13 @@ export async function showOrgChart(
 	}
 
 	const nonce = crypto.randomBytes(16).toString('hex');
-	const html = buildOrgChartHtml(enriched, liveIds, nonce, extensionUri);
-
 	const title = 'エージェント組織図';
-	if (orgPanel) {
-		orgPanel.webview.html = html;
-		orgPanel.reveal(vscode.ViewColumn.One);
-	} else {
+
+	// パネルを先に生成/取得してから HTML を組む
+	// (HTML 生成は webview.asWebviewUri を使うため、パネルが存在している必要がある。
+	//  以前は buildOrgChartHtml を生成前に呼んでいたため、初回のみ Cytoscape URI が空になり
+	//  一覧フォールバックに落ちるバグがあった)
+	if (!orgPanel) {
 		orgPanel = vscode.window.createWebviewPanel(
 			'claudeOrgChart',
 			title,
@@ -70,13 +70,16 @@ export async function showOrgChart(
 				localResourceRoots: extensionUri ? [extensionUri] : [],
 			}
 		);
-		orgPanel.webview.html = html;
 		orgPanel.onDidDispose(() => { orgPanel = undefined; });
 
 		orgPanel.webview.onDidReceiveMessage((message) => {
 			handleOrgChartMessage(message);
 		});
 	}
+
+	const html = buildOrgChartHtml(enriched, liveIds, nonce, extensionUri);
+	orgPanel.webview.html = html;
+	orgPanel.reveal(vscode.ViewColumn.One);
 }
 
 /** ミニ組織図データを WebviewView へ送る（T2.21 用） */
