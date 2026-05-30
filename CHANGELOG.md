@@ -1,5 +1,29 @@
 # 更新履歴
 
+## v0.5.1 (2026-05-30) — modelCliMap エイリアス方式へ移行 (重大バグ修正)
+
+### 重大バグ修正: フロントマターに古いモデルIDが固定される問題
+
+#### 問題
+`src/utils/cliBuilder.ts` の `modelCliMap` が具体的なモデルID を保持していたため、
+エージェント新規作成・保存時に `model: claude-opus-4-6` 等が frontmatter に書き込まれ、
+Opus 4.8 が存在しても古い 4-6 で起動していた。
+
+#### 修正内容 (src/utils/cliBuilder.ts)
+- `modelCliMap` をエイリアス方式に変更（案A）:
+  - `'opus'` → `'opus'` (旧: `claude-opus-4-6`)
+  - `'sonnet'` → `'sonnet'` (旧: `claude-sonnet-4-6`)
+  - `'sonnet-1m'` → `'sonnet[1m]'` (旧: `claude-sonnet-4-6[1m]`)
+  - `'haiku'` → `'haiku'` (旧: `claude-haiku-4-5`)
+- Claude Code 起動時にエイリアスを最新モデルへ解決するため、リリース毎の更新不要
+
+#### modelMismatch 誤検知について
+- `agentWatcher.ts` は `agent.model` を `normalizeModel()` 経由で正規化してから比較するため
+  `'opus'` vs `'claude-opus-4-8'` のような比較が正しく一致と判定される（修正不要）
+- 既存エージェントの `.md` ファイルは変更しない（次回保存時から新方式が適用）
+
+---
+
 ## v0.5.1 (2026-05-30) — Opus 4.8 対応・effort ラベル更新 (CC 2.1.154〜2.1.158)
 
 ### Claude Code 2.1.154〜2.1.158 対応

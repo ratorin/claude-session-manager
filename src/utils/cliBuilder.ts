@@ -9,12 +9,15 @@ export interface CliCommand {
 	env: Record<string, string>; // 環境変数
 }
 
-// モデル名から CLI に渡す正式モデルIDへのマッピング
+// モデル名からフロントマターに書き込むエイリアスへのマッピング
+// 案A: 具体的なモデルIDではなくエイリアスを書き込む。
+// Claude Code が起動時に最新モデルへ解決するため、リリース毎の更新が不要。
+// 例: 'opus' → フロントマターに 'opus' → CC が claude-opus-4-8 等へ解決
 export const modelCliMap: Record<string, string> = {
-	'opus': 'claude-opus-4-6',
-	'sonnet': 'claude-sonnet-4-6',
-	'sonnet-1m': 'claude-sonnet-4-6[1m]',
-	'haiku': 'claude-haiku-4-5',
+	'opus': 'opus',
+	'sonnet': 'sonnet',
+	'sonnet-1m': 'sonnet[1m]',
+	'haiku': 'haiku',
 };
 
 // AgentConfig から CLI コマンドを組み立てる
