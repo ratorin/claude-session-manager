@@ -6,6 +6,7 @@ import { MemoryTreeProvider } from './providers/memoryTreeProvider';
 import { AgentTreeProvider, AgentDecorationProvider } from './providers/agentTreeProvider';
 import { AgentLiveTreeProvider } from './providers/agentLiveTreeProvider';
 import { AgentFavoritesTreeProvider } from './providers/agentFavoritesTreeProvider';
+import { OrchestrationTreeProvider } from './providers/orchestrationTreeProvider';
 import { shouldShowInOrgChart } from './utils/agentUtils';
 import { AgentWatcher } from './watchers/agentWatcher';
 import { TaskTracker } from './watchers/taskTracker';
@@ -135,8 +136,11 @@ export function activate(context: vscode.ExtensionContext) {
 		() => agentWatcher.getActiveAgentNames()
 	);
 
+	// オーケストレーション可視化ビュープロバイダ
+	const orchestrationProvider = new OrchestrationTreeProvider();
+
 	// TreeDataProviderのEventEmitter解放を追跡
-	context.subscriptions.push(sessionProvider, bookmarkProvider, tagProvider, memoryProvider, agentProvider, agentLiveProvider, agentFavoritesProvider);
+	context.subscriptions.push(sessionProvider, bookmarkProvider, tagProvider, memoryProvider, agentProvider, agentLiveProvider, agentFavoritesProvider, orchestrationProvider);
 
 	// デコレーションプロバイダーを登録
 	context.subscriptions.push(vscode.window.registerFileDecorationProvider(sessionDecoProvider));
@@ -260,6 +264,10 @@ export function activate(context: vscode.ExtensionContext) {
 			agentWatcher.supplementLiveFromClaudeAgents(runningSessions);
 		}
 	});
+
+	// オーケストレーションプロバイダに依存サービスを注入
+	orchestrationProvider.setClaudeAgentsService(claudeAgentsService);
+	orchestrationProvider.setAgentWatcher(agentWatcher);
 
 	// AgentWatcher を起動
 	agentWatcher.start();
@@ -430,6 +438,9 @@ export function activate(context: vscode.ExtensionContext) {
 	const claudeAgentsLiveTreeView = vscode.window.createTreeView('claudeAgentsLive', {
 		treeDataProvider: agentLiveProvider,
 	});
+	const claudeOrchestrationTreeView = vscode.window.createTreeView('claudeOrchestration', {
+		treeDataProvider: orchestrationProvider,
+	});
 	context.subscriptions.push(
 		vscode.window.createTreeView('claudeSessions', { treeDataProvider: sessionProvider }),
 		vscode.window.createTreeView('claudeBookmarks', { treeDataProvider: bookmarkProvider }),
@@ -438,6 +449,7 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.createTreeView('claudeAgentsFavorites', { treeDataProvider: agentFavoritesProvider }),
 		claudeAgentsTreeView,
 		claudeAgentsLiveTreeView,
+		claudeOrchestrationTreeView,
 	);
 
 	// T1.10: claudeMain WebviewView Container（プロジェクト用 WebView）を登録
@@ -501,6 +513,46 @@ export function activate(context: vscode.ExtensionContext) {
 	if (claudeAgentsLiveTreeView.visible) {
 		agentLiveProvider.notifyTabVisible(true);
 	}
+
+	// T7 オーケストレーション: ビューの可視性変化でポーリング制御
+	context.subscriptions.push(
+		claudeOrchestrationTreeView.onDidChangeVisibility(e => {
+			orchestrationProvider.setVisible(e.visible);
+		})
+	);
+	if (claudeOrchestrationTreeView.visible) {
+		orchestrationProvider.setVisible(true);
+	}
+
+	// T7.6: オーケストレーション専用コマンド
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.refreshOrchestration', () => {
+			orchestrationProvider.refresh();
+			vscode.window.showInformationMessage('オーケストレーション状態を更新しました');
+		}),
+		vscode.commands.registerCommand('claudeManager.openSessionInOrchestration', async (session: import('./services/orchestrationViewModel').OrchestrationSession) => {
+			if (session.sessionId) {
+				const scheme = vscode.env.uriScheme;
+				const uri = vscode.Uri.parse(`${scheme}://anthropic.claude-code/open?session=${encodeURIComponent(session.sessionId)}`);
+				await vscode.env.openExternal(uri);
+			}
+		}),
+		vscode.commands.registerCommand('claudeManager.copyOrchestrationSessionId', async (item: import('./providers/orchestrationTreeProvider').SessionItem) => {
+			const sid = item.session.sessionId;
+			if (sid) {
+				await vscode.env.clipboard.writeText(sid);
+				vscode.window.showInformationMessage(`セッション ID をコピーしました: ${sid.substring(0, 8)}…`);
+			}
+		}),
+		vscode.commands.registerCommand('claudeManager.openOrchestrationSessionInClaude', async (item: import('./providers/orchestrationTreeProvider').SessionItem) => {
+			const sid = item.session.sessionId;
+			if (sid) {
+				const scheme = vscode.env.uriScheme;
+				const uri = vscode.Uri.parse(`${scheme}://anthropic.claude-code/open?session=${encodeURIComponent(sid)}`);
+				await vscode.env.openExternal(uri);
+			}
+		}),
+	);
 
 	// TASK-7: /goal コマンド連動 PoC — CSM タスクログを目標として表示
 	context.subscriptions.push(

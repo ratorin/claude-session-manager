@@ -1,5 +1,28 @@
 # 更新履歴
 
+## v0.5.1 (2026-05-31) — オーケストレーション可視化タブ + Activity Bar 4アイコン化
+
+### 🎼 オーケストレーション可視化 — 5番目の Activity Bar アイコン (T7.1〜T7.6)
+
+Claude Code /workflows・バックグラウンドエージェントのライブ稼働状況を可視化する
+専用ビューを Activity Bar に追加。
+
+#### 機能
+- **サマリーバー**: `🎼 N セッション / M サブエージェント` を常時表示
+- **グループ化**: `🟢 インタラクティブ` / `⚙️ バックグラウンド/ワークフロー` に自動分類
+  - ワークフロー判定: `kind=background` OR サブエージェント数 ≥ 3 (ヒューリスティック)
+- **セッションノード**: 名前 / cwd / 経過時間 / サブエージェント数 を表示
+- **サブエージェントノード**: JSONL 末尾解析で稼働中 Task/Agent を検出・表示
+- **5秒ポーリング**: タブ可視時のみ更新 (非可視時停止)
+- **データソース優先順**: `claude agents --json` (2.1.145+) → agentWatcher PID/JSONL
+- **右クリックメニュー**: Claude で開く / セッション ID コピー
+
+#### 実装ファイル
+- `src/services/orchestrationViewModel.ts` (新規): データ収集・ビューモデル構築
+- `src/providers/orchestrationTreeProvider.ts` (新規): TreeDataProvider + TreeItem 定義
+- `package.json`: `claude-orchestration` Activity Bar コンテナ + `claudeOrchestration` ビュー
+- `src/extension.ts`: OrchestrationTreeProvider の初期化・依存注入・コマンド登録
+
 ## v0.5.1 (2026-05-31) — Activity Bar 4アイコン化（タブバー廃止）
 
 ### UI 刷新: 1アイコン → 4独立アイコン

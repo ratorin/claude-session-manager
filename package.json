@@ -37,6 +37,11 @@
 					"id": "claude-projects",
 					"title": "📁 プロジェクト",
 					"icon": "$(folder-opened)"
+				},
+				{
+					"id": "claude-orchestration",
+					"title": "🎼 オーケストレーション",
+					"icon": "$(circuit-board)"
 				}
 			],
 			"panel": [
@@ -95,6 +100,13 @@
 					"id": "claudeMain",
 					"name": "プロジェクト",
 					"icon": "$(folder-opened)"
+				}
+			],
+			"claude-orchestration": [
+				{
+					"id": "claudeOrchestration",
+					"name": "🎼 オーケストレーション",
+					"icon": "$(circuit-board)"
 				}
 			],
 			"claude-help": [
@@ -242,6 +254,30 @@
 				"command": "claudeManager.showGoals",
 				"title": "目標一覧をコピー（/goal PoC）",
 				"icon": "$(target)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.refreshOrchestration",
+				"title": "オーケストレーション更新",
+				"icon": "$(refresh)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.openSessionInOrchestration",
+				"title": "セッション操作",
+				"icon": "$(play)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.copyOrchestrationSessionId",
+				"title": "セッション ID をコピー",
+				"icon": "$(copy)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.openOrchestrationSessionInClaude",
+				"title": "Claude で開く",
+				"icon": "$(play)",
 				"category": "Claude Session Manager"
 			},
 			{
@@ -586,6 +622,11 @@
 					"command": "claudeManager.openSettings",
 					"when": "view == claudeMain",
 					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.refreshOrchestration",
+					"when": "view == claudeOrchestration",
+					"group": "navigation"
 				}
 			],
 			"view/item/context": [
@@ -752,6 +793,21 @@
 				{
 					"command": "claudeManager.openProjectInVSC",
 					"when": "view == claudeMemory && viewItem == memoryProject",
+					"group": "0_open"
+				},
+				{
+					"command": "claudeManager.openOrchestrationSessionInClaude",
+					"when": "view == claudeOrchestration && viewItem =~ /^orchestrationSession/",
+					"group": "inline"
+				},
+				{
+					"command": "claudeManager.copyOrchestrationSessionId",
+					"when": "view == claudeOrchestration && viewItem =~ /^orchestrationSession/",
+					"group": "1_copy"
+				},
+				{
+					"command": "claudeManager.openOrchestrationSessionInClaude",
+					"when": "view == claudeOrchestration && viewItem =~ /^orchestrationSession/",
 					"group": "0_open"
 				}
 			]
