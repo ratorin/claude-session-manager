@@ -1,5 +1,23 @@
 # 更新履歴
 
+## v0.5.4 (2026-05-31) — エージェントフォームに現行 CC の subagent 項目を追加
+
+エージェント設定フォームに、現行 Claude Code の subagent frontmatter 項目のうち未対応だった
+3 項目を追加。`/workflows`・並列/バックグラウンド運用世代の設定をフォームから編集可能にした。
+
+### ➕ フォーム新項目
+- **許可ツール（allowedTools）** — チェックボックスで選択（Read/Write/Edit/Bash/Grep/Glob/Agent/WebFetch/WebSearch/Skill 等）。全部オフ = 全ツール継承（無制限）。従来は既存値の素通しのみで編集不可だった
+- **worktree 隔離（`isolation: worktree`）** — 専用ワークツリーで実行するトグル
+- **バックグラウンド実行（`background: true`）** — トグル
+
+### 設計
+- 3 項目を `AgentConfig` / `AgentDefinition` に追加し、frontmatter の読み書き（parse / buildFrontmatter）・`toAgentConfig` 変換を整備
+- **フォーム権威セマンティクス**: フォーム由来の値は「指定があればそれを採用」。空配列（ツール全オフ）や OFF を尊重して**解除も反映**（`config.X !== undefined ? config.X : existing` 方式）。`background: false` / `isolation` なしは frontmatter に書き出さない
+- `effort` は low/medium/high/xhigh/max の全段階が既に揃っており現行どおり（`ultracode` は per-agent effort ではなくセッション専用設定のため非対象）
+
+### テスト
+- `test/unit/agent-hooks-qa.test.js` に E1〜E3 を追加（isolation/background 往復・AgentConfig 往復・フォーム権威での解除）。全 26 テスト合格
+
 ## v0.5.3 (2026-05-31) — Agent作成・紐づけ・Hook の QA + frontmatter クォートバグ修正
 
 エージェント新規作成・セッション紐づけ・hook 周りを QA し、ユニットテストを整備。

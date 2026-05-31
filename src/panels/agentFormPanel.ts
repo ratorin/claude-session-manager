@@ -658,6 +658,21 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 
 
 <div class="form-group">
+	<label class="form-label">許可ツール（allowedTools）</label>
+	<div class="form-desc">チェックしたツールのみ許可。全部オフ = 全ツール継承（無制限）</div>
+	<div style="display:flex;flex-wrap:wrap;">
+		${['Read','Write','Edit','MultiEdit','Bash','Grep','Glob','Agent','WebFetch','WebSearch','Skill','TodoWrite'].map(function(t){return '<label style="display:inline-flex;align-items:center;gap:5px;margin:3px 14px 3px 0;font-size:13px;"><input type="checkbox" name="tool" value="' + t + '" ' + (((v.allowedTools || []).indexOf(t) >= 0) ? 'checked' : '') + '>' + t + '</label>';}).join('')}
+	</div>
+</div>
+
+<div class="form-group">
+	<label class="form-label">実行オプション（Claude Code 2.1.15x+）</label>
+	<div class="form-desc">並列・バックグラウンド運用向け。サブエージェント定義の frontmatter に書き出されます。</div>
+	<label style="display:flex;align-items:center;gap:6px;margin:4px 0;font-size:13px;"><input type="checkbox" id="isolation" ${v.isolation === 'worktree' ? 'checked' : ''}>worktree 隔離（isolation: worktree — 専用ワークツリーで実行）</label>
+	<label style="display:flex;align-items:center;gap:6px;margin:4px 0;font-size:13px;"><input type="checkbox" id="background" ${v.background ? 'checked' : ''}>バックグラウンド実行（background: true）</label>
+</div>
+
+<div class="form-group">
 	<label class="form-label">権限モード（Permission Mode）</label>
 	<div class="form-desc">/ask-agent で呼び出す時の権限レベル。-p モードでは acceptEdits か auto を推奨</div>
 	<select id="permissionMode">
@@ -811,7 +826,9 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 			})(),
 			workDir: document.getElementById('workDir').value.trim() || undefined,
 			ruleFile: existingRuleFile || undefined,
-			allowedTools: ${JSON.stringify(v.allowedTools || undefined)},
+			allowedTools: Array.from(document.querySelectorAll('input[name="tool"]:checked')).map(el => el.value),
+			isolation: document.getElementById('isolation').checked ? 'worktree' : '',
+			background: document.getElementById('background').checked,
 			status: ${JSON.stringify(v.status || 'idle')},
 		};
 	}

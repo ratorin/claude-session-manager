@@ -315,3 +315,61 @@ test('D2 filterCsmHooks: 旧 bash マーカー(check-csm-ask-agent)も除去', (
 	cleanup.filterCsmHooks(settings, count);
 	assert.equal(count.removed, 1, '旧 bash マーカーも CSM として除去');
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// E. フォーム新項目 (isolation / background / allowedTools) の frontmatter 往復
+// ════════════════════════════════════════════════════════════════════════════
+
+test('E1 isolation/background 往復: worktree / true が保存・復元、未指定は false/undefined', async () => {
+	const home = setupTmpHome();
+	const { afm } = loadFresh(home);
+	await afm.writeAgentFile({ name: 'iso', model: 'opus', role: 'r', isolation: 'worktree', background: true });
+	afm.invalidateCache();
+	const def = await afm.getAgentByName('iso');
+	assert.equal(def.isolation, 'worktree', 'isolation 復元');
+	assert.equal(def.background, true, 'background 復元');
+	const md = fs.readFileSync(path.join(home, '.claude', 'agents', 'iso.md'), 'utf-8');
+	assert.match(md, /isolation: worktree/, 'frontmatter に isolation 出力');
+	assert.match(md, /background: true/, 'frontmatter に background 出力');
+
+	await afm.writeAgentFile({ name: 'plain', model: 'opus', role: 'r' });
+	afm.invalidateCache();
+	const def2 = await afm.getAgentByName('plain');
+	assert.equal(def2.background, false, '未指定 background は false');
+	assert.equal(def2.isolation, undefined, '未指定 isolation は undefined');
+	const md2 = fs.readFileSync(path.join(home, '.claude', 'agents', 'plain.md'), 'utf-8');
+	assert.doesNotMatch(md2, /background:/, 'false は frontmatter に書かない');
+});
+
+test('E2 addAgent⇄getAgents: isolation/background/allowedTools が AgentConfig として往復', async () => {
+	const home = setupTmpHome();
+	const { dataStore } = loadFresh(home);
+	await dataStore.addAgent({
+		name: 'wf', sessionId: '', role: 'r', model: 'opus',
+		allowedTools: ['Read', 'Bash'], isolation: 'worktree', background: true,
+	}, 'body');
+	const wf = (await dataStore.getAgents()).find(a => a.name === 'wf');
+	assert.deepEqual(wf.allowedTools, ['Read', 'Bash'], 'allowedTools 往復');
+	assert.equal(wf.isolation, 'worktree', 'isolation 往復');
+	assert.equal(wf.background, true, 'background 往復');
+});
+
+test('E3 フォーム権威: 空配列/解除で再保存すると isolation/background/tools がクリアされる', async () => {
+	const home = setupTmpHome();
+	const { afm } = loadFresh(home);
+	await afm.saveAgentConfig({
+		name: 'wf', sessionId: '', role: 'r', model: 'opus',
+		allowedTools: ['Read'], isolation: 'worktree', background: true,
+	});
+	afm.invalidateCache();
+	// フォームで「全オフ / OFF」にして再保存 → 解除されること
+	await afm.saveAgentConfig({
+		name: 'wf', sessionId: '', role: 'r', model: 'opus',
+		allowedTools: [], isolation: '', background: false,
+	});
+	afm.invalidateCache();
+	const def = await afm.getAgentByName('wf');
+	assert.equal(def.isolation, undefined, 'isolation 解除');
+	assert.equal(def.background, false, 'background 解除');
+	assert.ok(!def.tools || def.tools.length === 0, 'allowedTools クリア（全継承）');
+});

@@ -29,8 +29,10 @@ export interface AgentDefinition {
 	tools?: string[];
 	/** CLI標準: 権限モード */
 	permissionMode?: string;
-	/** CLI標準: 隔離モード */
+	/** CLI標準: 隔離モード（worktree） */
 	isolation?: string;
+	/** CLI標準: バックグラウンド実行 */
+	background?: boolean;
 	/** CSM独自: HISTORY自動追記 */
 	historyEnabled?: boolean;
 	/** CSM独自: HISTORY.md 保存先スコープ上書き（未指定=.md実在スコープ） */
@@ -119,6 +121,7 @@ async function parseAgentFile(filePath: string, scope: 'global' | 'project'): Pr
 			tools: Array.isArray(d.tools) ? d.tools : undefined,
 			permissionMode: d.permissionMode ? String(d.permissionMode) : undefined,
 			isolation: d.isolation ? String(d.isolation) : undefined,
+			background: d.background === true || d.background === 'true',
 			historyEnabled: d.historyEnabled === true || d.historyEnabled === 'true',
 			historyScope: (d.historyScope === 'global' || d.historyScope === 'project') ? d.historyScope : undefined,
 			todoEnabled: d.todoEnabled === true || d.todoEnabled === 'true',
@@ -300,6 +303,8 @@ export function toAgentConfig(def: AgentDefinition): AgentConfig {
 		historyScope: def.historyScope,
 		todoEnabled: def.todoEnabled,
 		showInOrgChart: def.showInOrgChart,
+		isolation: def.isolation,
+		background: def.background,
 	};
 }
 
@@ -438,6 +443,7 @@ function buildFrontmatter(def: Partial<AgentDefinition> & { name: string }): str
 	if (def.historyScope) { lines.push(`historyScope: "${def.historyScope}"`); }
 	if (def.todoEnabled !== undefined) { lines.push(`todoEnabled: ${def.todoEnabled}`); }
 	if (def.isolation) { lines.push(`isolation: ${def.isolation}`); }
+	if (def.background) { lines.push(`background: true`); }
 	if (def.parentAgent) { lines.push(`parentAgent: ${quoteYamlValue(def.parentAgent)}`); }
 	if (def.status) { lines.push(`status: ${def.status}`); }
 	if (def.workDir) { lines.push(`workDir: ${quoteYamlValue(def.workDir)}`); }
@@ -469,12 +475,14 @@ export async function saveAgentConfig(config: AgentConfig, body?: string): Promi
 		displayDescription: config.displayDescription || existing?.displayDescription,
 		model: config.model,
 		memory: existing?.memory || 'project',
-		tools: config.allowedTools || existing?.tools,
+		// フォーム由来フィールドは「指定があればそれを権威」とする（空配列=制限なし/解除を尊重）
+		tools: config.allowedTools !== undefined ? config.allowedTools : existing?.tools,
+		isolation: config.isolation !== undefined ? (config.isolation || undefined) : existing?.isolation,
+		background: config.background !== undefined ? config.background : existing?.background,
 		permissionMode: config.permissionMode || existing?.permissionMode,
 		historyEnabled: config.historyEnabled !== undefined ? config.historyEnabled : existing?.historyEnabled,
 		historyScope: config.historyScope !== undefined ? config.historyScope : existing?.historyScope,
 		todoEnabled: config.todoEnabled !== undefined ? config.todoEnabled : existing?.todoEnabled,
-		isolation: existing?.isolation,
 		parentAgent: config.parentAgent,
 		status: config.status,
 		workDir: config.workDir,

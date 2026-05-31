@@ -94,6 +94,9 @@ export interface AgentConfig {
 	effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; // 推論努力レベル（xhigh: v2.1.111追加, max は Opus 4.6 のみ）
 	thinkingEnabled?: boolean;   // Extended Thinking 有効/無効
 	permissionMode?: string;     // 権限モード（acceptEdits, auto, plan, default, bypassPermissions）
+	// CC subagent frontmatter (2.1.15x+)
+	isolation?: string;          // worktree 隔離（現行は 'worktree' のみ。'' / 未指定 = 隔離なし）
+	background?: boolean;        // バックグラウンド実行
 	// 記録機能
 	historyEnabled?: boolean;    // HISTORY自動追記（デフォルト: false）
 	historyScope?: 'global' | 'project';  // HISTORY保存先スコープ上書き（未指定=.md実在スコープ）
