@@ -19,7 +19,7 @@ import { registerMigrationCommands } from './commands/migrationCommands';
 import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
 import { getConfig, getLocaleConfig, getAutoTranslateConfig } from './utils/config';
-import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook, ensureRecapCaptureHook, migrateHooksToExecForm } from './services/hookService';
+import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook, ensureRecapCaptureHook, ensureInjectionDetectHook, migrateHooksToExecForm, healForeignOsHookPaths, removeAllCsmHooks } from './services/hookService';
 import { runV04Migration, runV05Migration } from './services/migrationService';
 import { initErrorReporter, logError } from './utils/errorReporter';
 import { MainTabPanel } from './panels/mainTabPanel';
@@ -66,6 +66,13 @@ export function activate(context: vscode.ExtensionContext) {
 		// マイグレーション失敗は致命的ではない
 	});
 
+	// クロス OS パス self-heal: Windows ホストで書かれた C:/... の CSM hook を
+	// 現在 OS の ~/.claude 配下へ修復する（VMware 共有 settings.json 対策）。
+	// migrate/ensure より先に enqueue することで、後続の冪等判定が正しいパスを見る。
+	healForeignOsHookPaths(extensionOutputChannelEarly).catch(() => {
+		// パス修復失敗は致命的ではない
+	});
+
 	// 既存 hook を exec-form (args[]) に一括マイグレーション（Claude Code 2.1.139+）
 	migrateHooksToExecForm(extensionOutputChannelEarly).catch(() => {
 		// マイグレーション失敗は致命的ではない
@@ -89,6 +96,10 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 	// Governance Capture hookの自動デプロイ（JSONL記録）
 	ensureGovernanceHook(context.extensionPath, extensionOutputChannelEarly).catch(() => {
+		// hook登録失敗は致命的ではない
+	});
+	// Injection Detect hookの自動デプロイ（WebFetch/WebSearch のプロンプトインジェクション検知）
+	ensureInjectionDetectHook(context.extensionPath, extensionOutputChannelEarly).catch(() => {
 		// hook登録失敗は致命的ではない
 	});
 
@@ -292,6 +303,29 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}
 	startUsageMonitorIfEnabled();
+
+	// CSM hook 全除去コマンド（アンインストール前の手動クリーンアップ・B案）
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.removeAllHooks', async () => {
+			const choice = await vscode.window.showWarningMessage(
+				'CSM が登録したすべての hook を ~/.claude/settings.json から削除し、'
+				+ '~/.claude/hooks/csm-*.js を .trash/ へ退避します。\n\n'
+				+ '※ CSM を有効なまま実行すると次回起動時に再登録されます。'
+				+ 'アンインストール直前の最終クリーンアップとしてお使いください。',
+				{ modal: true },
+				'削除する'
+			);
+			if (choice !== '削除する') { return; }
+			try {
+				const { removed, trashed } = await removeAllCsmHooks(extensionOutputChannelEarly);
+				vscode.window.showInformationMessage(
+					`CSM hook を削除しました（settings: ${removed} 件 / スクリプト ${trashed} 件を .trash/ へ退避）。`
+				);
+			} catch (err) {
+				vscode.window.showErrorMessage(`CSM hook の削除に失敗しました: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		})
+	);
 
 	// 利用率手動更新コマンド
 	context.subscriptions.push(

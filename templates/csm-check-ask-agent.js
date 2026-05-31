@@ -49,8 +49,9 @@ function main() {
 		return;
 	}
 
-	// block + continueOnBlock: Claude Code 2.1.139+ ではブロック理由をフィードバックして turn を継続
-	// 旧バージョンは continueOnBlock を無視して通常の block 動作になる（後方互換）
+	// PreToolUse でツールをブロックする現行の正しい値は permissionDecision: 'deny'。
+	// （'block' は無効値でブロックされない。'deny' の理由は permissionDecisionReason で
+	//   Claude にフィードバックされ、ターンは継続する。）
 	const reason =
 		'claude -p を --agent/--resume なしで実行しようとしています。' +
 		'正しい形式: claude --agent <name> -p または claude --resume <sessionId> -p。' +
@@ -58,9 +59,8 @@ function main() {
 	const response = {
 		hookSpecificOutput: {
 			hookEventName: 'PreToolUse',
-			permissionDecision: 'block',
+			permissionDecision: 'deny',
 			permissionDecisionReason: reason,
-			continueOnBlock: true,  // 2.1.139+: ブロック後もターンを継続してフィードバック
 		},
 	};
 	process.stdout.write(JSON.stringify(response));

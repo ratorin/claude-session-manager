@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager - セッション履歴管理",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.5.1",
+	"version": "0.5.2",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -130,6 +130,12 @@
 			}
 		],
 		"commands": [
+			{
+				"command": "claudeManager.removeAllHooks",
+				"title": "すべての CSM フックを削除（アンインストール準備）",
+				"icon": "$(trash)",
+				"category": "Claude Session Manager"
+			},
 			{
 				"command": "claudeManager.refreshSessions",
 				"title": "会話一覧を更新",
@@ -1079,6 +1085,7 @@
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
+		"vscode:uninstall": "node ./out/uninstall.js",
 		"compile": "tsc -p ./",
 		"watch": "tsc -watch -p ./",
 		"test": "npm run compile && node test/unit/setAgentSession.test.js"

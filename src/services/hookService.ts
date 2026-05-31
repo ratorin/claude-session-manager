@@ -8,6 +8,7 @@ import * as os from 'os';
 import { spawnSync } from 'child_process';
 import { AgentConfig } from '../models/types';
 import { addToIndex } from '../utils/memoryManager';
+import { filterCsmHooks, trashCsmHookScripts, RemovalCount, CSM_HOOK_MARKERS } from '../utils/csmHookCleanup';
 
 // ─── settings.json 排他書き込みキュー ────────────────────────────────────────
 // 複数の ensure*Hook が並行起動しても、read→modify→write が直列に実行されるよう
@@ -133,6 +134,112 @@ function signalHookMatches(hh: Record<string, unknown>, marker: string, action: 
 	return false;
 }
 
+// ─── クロス OS パス self-heal (VMware Windows host ⇄ Linux VM 共有 settings.json) ──
+//
+// settings.json が Windows ホストと Linux VM で共有されると、Windows 側で書かれた
+// 絶対パス (例: C:/Users/taro/.claude/hooks/csm-*.js) が Linux 側にそのまま残り、
+// node/bash が「ファイルが見つからない」で失敗する（SessionStart startup hook error 等）。
+// CSM の冪等判定はマーカー名だけを見るため、この壊れたパスを「登録済み」と誤認し放置する。
+// → 起動時に、CSM 自身の hook に限り、別 OS パスを現在 OS の ~/.claude 配下へ書き換える。
+
+// CSM が管理する hook のマーカー一覧は csmHookCleanup の CSM_HOOK_MARKERS に一元化。
+// （self-heal / migration / prune / removeAll で共通利用。旧 bash 版マーカーも含む）
+const CSM_SCRIPT_MARKERS = CSM_HOOK_MARKERS;
+
+/**
+ * 現在 OS では解決不能な「別 OS の絶対パス」か判定する（移植可能形式は除外）。
+ * POSIX 上の Windows ドライブレターパス（C:/...）/ Windows 上の POSIX 絶対パスを検出。
+ */
+function isForeignOsPath(rawPath: string): boolean {
+	if (typeof rawPath !== 'string' || rawPath.length === 0) { return false; }
+	if (rawPath.includes('$') || rawPath.startsWith('~')) { return false; } // 移植可能
+	const n = rawPath.replace(/\\/g, '/');
+	if (path.sep === '/') {
+		return /^[A-Za-z]:\//.test(n);          // POSIX 実行中の Windows パス
+	}
+	return /^\/[A-Za-z]/.test(n);               // Windows 実行中の POSIX 絶対パス（best-effort）
+}
+
+/**
+ * CSM hook が「別 OS の死んだパス」を含むか判定する。
+ * heal 試行後に呼び、heal（rehome）できなかった foreign パスが残っていれば true。
+ * （exec-form args[] / shell-form command の両方を検査）
+ */
+function csmHookHasDeadForeignPath(hh: Record<string, unknown>, homeDir: string): boolean {
+	const candidates: string[] = [];
+	if (Array.isArray(hh.args)) {
+		for (const a of hh.args as unknown[]) { if (typeof a === 'string') { candidates.push(a); } }
+	}
+	if (typeof hh.command === 'string' && hh.command !== 'node' && hh.command !== 'bash') {
+		const m = (hh.command as string).match(/"[^"]*\/\.claude\/[^"]*"|[^\s"]+\/\.claude\/[^\s"]*/gi);
+		if (m) { for (const t of m) { candidates.push(t.replace(/^"|"$/g, '')); } }
+	}
+	for (const c of candidates) {
+		if (!/\/\.claude\//.test(c.replace(/\\/g, '/'))) { continue; }
+		if (isForeignOsPath(c) && rehomeClaudePath(c, homeDir) === null) { return true; }
+	}
+	return false;
+}
+
+/**
+ * 別 OS で書かれた絶対パス（例: Windows ホストの C:/Users/taro/.claude/...）を、
+ * 現在 OS の ~/.claude 配下パスへ組み直す。
+ *
+ * - パス中の `/.claude/` 以降のサブパスを抽出し、現在の homeDir で再構築する
+ * - 再構築したパスが実在する場合のみ採用する（誤爆・無効化を防止）
+ *
+ * @returns 書き換え後パス（'/' 区切り）。変更不要 / 修復不能なら null
+ */
+function rehomeClaudePath(rawPath: string, homeDir: string): string | null {
+	if (typeof rawPath !== 'string' || rawPath.length === 0) { return null; }
+	// $HOME / ${HOME} / ~ 形式は既に移植可能（シェルが現在 OS の home に展開する）→ 触らない
+	if (rawPath.includes('$') || rawPath.startsWith('~')) { return null; }
+	const normalized = rawPath.replace(/\\/g, '/');
+	const marker = '/.claude/';
+	const idx = normalized.toLowerCase().indexOf(marker);
+	if (idx < 0) { return null; }
+	const tail = normalized.slice(idx + marker.length); // 例: hooks/csm-session-stop.js
+	if (!tail) { return null; }
+	const rebuilt = path.join(homeDir, '.claude', tail).replace(/\\/g, '/');
+	if (rebuilt === normalized) { return null; } // 既に現在 OS の正しいパス
+	try {
+		if (!fs.existsSync(rebuilt)) { return null; } // 実在しない先には書き換えない
+	} catch {
+		return null;
+	}
+	return rebuilt;
+}
+
+/**
+ * 単一 hook 定義内の CSM スクリプトパスが別 OS のものなら現在 OS のパスへ修復する。
+ * exec-form (args[]) / shell-form (command 文字列) 両対応。書き換えたら true。
+ */
+function healHookForeignPaths(hh: Record<string, unknown>, homeDir: string): boolean {
+	let changed = false;
+	// exec-form: { command: 'node'|'bash', args: ['<path>', ...] }
+	if (Array.isArray(hh.args)) {
+		const args = hh.args as string[];
+		for (let i = 0; i < args.length; i++) {
+			const healed = rehomeClaudePath(args[i], homeDir);
+			if (healed) { args[i] = healed; changed = true; }
+		}
+	}
+	// shell-form: command 文字列内の `.claude` パストークンを個別修復
+	if (typeof hh.command === 'string' && hh.command !== 'node' && hh.command !== 'bash') {
+		const cmd = hh.command;
+		// 「"..."で囲まれた .claude パス」または「空白区切りの .claude パス」を抽出
+		const newCmd = cmd.replace(/"[^"]*\/\.claude\/[^"]*"|[^\s"]+\/\.claude\/[^\s"]*/gi, (token) => {
+			const quoted = token.startsWith('"') && token.endsWith('"');
+			const stripped = quoted ? token.slice(1, -1) : token;
+			const healed = rehomeClaudePath(stripped, homeDir);
+			if (!healed) { return token; }
+			return quoted ? `"${healed}"` : healed;
+		});
+		if (newCmd !== cmd) { hh.command = newCmd; changed = true; }
+	}
+	return changed;
+}
+
 /**
  * shell-form の CSM hook を exec-form に in-place 変換する。
  * 変換した場合は true を返す。
@@ -242,27 +349,31 @@ export async function ensureSessionAgentInjectHook(extensionPath: string, output
 	const hookScript = path.join(hooksDir, 'csm-session-agent-inject.js');
 	const CSM_MARKER = 'csm-session-agent-inject';
 
-	// 1. テンプレートからスクリプトをデプロイ（存在しなければ、または古いsh版なら置き換え）
+	// 1. テンプレートからスクリプトをデプロイ（差分があれば常に上書き → デプロイ済み版の
+	//    ドリフト防止。例: sessionTitle 対応などテンプレ更新を確実に反映する）
 	const oldShScript = path.join(hooksDir, 'csm-session-agent-inject.sh');
+	const templatePath = path.join(extensionPath, 'templates', 'csm-session-agent-inject.js');
 	try {
-		await fs.promises.access(hookScript);
-	} catch {
-		const templatePath = path.join(extensionPath, 'templates', 'csm-session-agent-inject.js');
+		const content = await fs.promises.readFile(templatePath, 'utf-8');
+		await fs.promises.mkdir(hooksDir, { recursive: true });
+		let needsWrite = true;
 		try {
-			const content = await fs.promises.readFile(templatePath, 'utf-8');
-			await fs.promises.mkdir(hooksDir, { recursive: true });
+			const existing = await fs.promises.readFile(hookScript, 'utf-8');
+			if (existing === content) { needsWrite = false; }
+		} catch { /* not exists */ }
+		if (needsWrite) {
 			await fs.promises.writeFile(hookScript, content, 'utf-8');
-			// 古いsh版は.trashに退避
-			try {
-				await fs.promises.access(oldShScript);
-				const trashDir = path.join(hooksDir, '.trash');
-				await fs.promises.mkdir(trashDir, { recursive: true });
-				await fs.promises.rename(oldShScript, path.join(trashDir, `csm-session-agent-inject.sh.${Date.now()}`));
-			} catch { /* shファイルが存在しない場合は無視 */ }
 			outputChannel.appendLine(`[${new Date().toISOString()}] csm-session-agent-inject.js をデプロイしました`);
-		} catch {
-			return;
 		}
+		// 古いsh版は.trashに退避
+		try {
+			await fs.promises.access(oldShScript);
+			const trashDir = path.join(hooksDir, '.trash');
+			await fs.promises.mkdir(trashDir, { recursive: true });
+			await fs.promises.rename(oldShScript, path.join(trashDir, `csm-session-agent-inject.sh.${Date.now()}`));
+		} catch { /* shファイルが存在しない場合は無視 */ }
+	} catch {
+		return;
 	}
 
 	// 2. settings.json にSessionStart hookを登録
@@ -615,19 +726,22 @@ export async function ensureGovernanceHook(extensionPath: string, outputChannel:
 	const hookScript = path.join(hooksDir, 'csm-governance-capture.js');
 	const CSM_MARKER = 'csm-governance-capture';
 
-	// 1. テンプレートからスクリプトをデプロイ
+	// 1. テンプレートからスクリプトをデプロイ（差分があれば常に上書き → ドリフト防止）
+	const templatePath = path.join(extensionPath, 'templates', 'csm-governance-capture.js');
 	try {
-		await fs.promises.access(hookScript);
-	} catch {
-		const templatePath = path.join(extensionPath, 'templates', 'csm-governance-capture.js');
+		const content = await fs.promises.readFile(templatePath, 'utf-8');
+		await fs.promises.mkdir(hooksDir, { recursive: true });
+		let needsWrite = true;
 		try {
-			const content = await fs.promises.readFile(templatePath, 'utf-8');
-			await fs.promises.mkdir(hooksDir, { recursive: true });
+			const existing = await fs.promises.readFile(hookScript, 'utf-8');
+			if (existing === content) { needsWrite = false; }
+		} catch { /* not exists */ }
+		if (needsWrite) {
 			await fs.promises.writeFile(hookScript, content, 'utf-8');
 			outputChannel.appendLine(`[${new Date().toISOString()}] csm-governance-capture.js をデプロイしました`);
-		} catch {
-			return;
 		}
+	} catch {
+		return;
 	}
 
 	// 2. settings.json にPreToolUse/PostToolUse hookを登録
@@ -793,6 +907,71 @@ export async function ensureRecapCaptureHook(extensionPath: string, outputChanne
 	}
 }
 
+// CSM Injection Detect hook — WebFetch/WebSearch 結果のプロンプトインジェクション検知（PostToolUse）
+export async function ensureInjectionDetectHook(extensionPath: string, outputChannel: vscode.OutputChannel): Promise<void> {
+	const homeDir = os.homedir();
+	const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+	const hooksDir = path.join(homeDir, '.claude', 'hooks');
+	const hookScript = path.join(hooksDir, 'csm-injection-detect.js');
+	const CSM_MARKER = 'csm-injection-detect';
+
+	// 1. テンプレートからスクリプトをデプロイ（差分があれば常に上書き）
+	const templatePath = path.join(extensionPath, 'templates', 'csm-injection-detect.js');
+	try {
+		const content = await fs.promises.readFile(templatePath, 'utf-8');
+		await fs.promises.mkdir(hooksDir, { recursive: true });
+		let needsWrite = true;
+		try {
+			const existing = await fs.promises.readFile(hookScript, 'utf-8');
+			if (existing === content) { needsWrite = false; }
+		} catch { /* not exists */ }
+		if (needsWrite) {
+			await fs.promises.writeFile(hookScript, content, 'utf-8');
+			outputChannel.appendLine(`[${new Date().toISOString()}] csm-injection-detect.js をデプロイしました`);
+		}
+	} catch {
+		return;
+	}
+
+	// 2. settings.json に PostToolUse hook を登録（WebFetch|WebSearch のみ）
+	try {
+		await modifySettingsJson(settingsPath, (settings) => {
+			if (!settings.hooks || typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) {
+				settings.hooks = {};
+			}
+			const hooksObj = settings.hooks as Record<string, unknown>;
+			const postToolUse = hooksObj['PostToolUse'];
+			if (Array.isArray(postToolUse)) {
+				let changed = false;
+				for (const entry of postToolUse as Array<Record<string, unknown>>) {
+					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+					if (!Array.isArray(innerHooks)) { continue; }
+					for (const hh of innerHooks) {
+						if (!hookMatchesMarker(hh, CSM_MARKER)) { continue; }
+						if (migrateHookToExecForm(hh)) { changed = true; }
+					}
+				}
+				if ((postToolUse as Array<Record<string, unknown>>).some((entry) => {
+					const ih = entry.hooks as Array<Record<string, unknown>> | undefined;
+					return Array.isArray(ih) && ih.some((hh) => hookMatchesMarker(hh, CSM_MARKER));
+				})) { return changed; }
+			}
+			if (!Array.isArray(hooksObj['PostToolUse'])) {
+				hooksObj['PostToolUse'] = [];
+			}
+			(hooksObj['PostToolUse'] as Array<Record<string, unknown>>).push({
+				matcher: 'WebFetch|WebSearch',
+				hooks: [buildHookDef(hookScript, 10)]
+			});
+			return true;
+		}, (msg) => outputChannel.appendLine(msg));
+
+		outputChannel.appendLine(`[${new Date().toISOString()}] Injection Detect hookを settings.json に登録しました`);
+	} catch (err) {
+		outputChannel.appendLine(`[${new Date().toISOString()}] Injection Detect hook登録エラー: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
 // ─── 既存 hook の exec-form 一括マイグレーション ────────────────────────────────
 /**
  * settings.json 内に残っている CSM の旧 shell-form hook を exec-form に一括変換する。
@@ -802,16 +981,6 @@ export async function migrateHooksToExecForm(outputChannel: vscode.OutputChannel
 	if (!supportsExecForm()) { return; }
 	const homeDir = os.homedir();
 	const settingsPath = path.join(homeDir, '.claude', 'settings.json');
-	const CSM_SCRIPT_MARKERS = [
-		'csm-precompact',
-		'csm-recap-capture',
-		'csm-session-stop',
-		'csm-check-ask-agent',
-		'csm-precompact-summary',
-		'csm-session-agent-inject',
-		'csm-governance-capture',
-		'csm/subagent-signal',
-	];
 
 	try {
 		await modifySettingsJson(settingsPath, (settings) => {
@@ -838,6 +1007,111 @@ export async function migrateHooksToExecForm(outputChannel: vscode.OutputChannel
 	} catch (err) {
 		outputChannel.appendLine(`[${new Date().toISOString()}] CSM hook マイグレーションエラー: ${err instanceof Error ? err.message : String(err)}`);
 	}
+}
+
+// ─── クロス OS パス self-heal の一括適用 ────────────────────────────────────────
+/**
+ * settings.json 内の CSM hook のうち、別 OS で書かれた絶対パス
+ * （例: Windows ホストの C:/Users/taro/.claude/...）を持つものを、
+ * 現在 OS の ~/.claude 配下パスへ修復する。VMware 共有 settings.json が
+ * Windows ⇄ Linux を跨いだ際に「Linux で見えない hook」が残る問題への自己修復。
+ *
+ * 拡張機能起動時、他の ensure 系 / migrate より先に 1 回呼び出すこと
+ * （以降の冪等判定がマーカー一致のみのため、先にパスを正してから判定させる）。
+ *
+ * 動作:
+ *   1. heal — 別 OS パスでも現在 OS に実体があれば ~/.claude 配下へ書き換える
+ *   2. prune — heal できない「別 OS の死んだパス」(例: 旧 c:/xampp/.../*.sh) の CSM hook を除去
+ *      （現在 OS で永久に解決不能なため、残すと毎回エラーになる）
+ */
+export async function healForeignOsHookPaths(outputChannel: vscode.OutputChannel): Promise<void> {
+	const homeDir = os.homedir();
+	const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+	let healedCount = 0;
+	let prunedCount = 0;
+
+	try {
+		await modifySettingsJson(settingsPath, (settings) => {
+			const hooksObj = settings.hooks as Record<string, unknown> | undefined;
+			if (!hooksObj || typeof hooksObj !== 'object' || Array.isArray(hooksObj)) { return false; }
+			let changed = false;
+
+			for (const eventKey of Object.keys(hooksObj)) {
+				const entries = hooksObj[eventKey];
+				if (!Array.isArray(entries)) { continue; }
+
+				const newEntries: unknown[] = [];
+				for (const entry of entries as Array<Record<string, unknown>>) {
+					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
+					if (!Array.isArray(innerHooks)) { newEntries.push(entry); continue; }
+
+					const keptHooks: Array<Record<string, unknown>> = [];
+					for (const hh of innerHooks) {
+						// CSM 自身の hook に限定（他ツールの hook は触らない）
+						if (!CSM_SCRIPT_MARKERS.some((m) => hookMatchesMarker(hh, m))) {
+							keptHooks.push(hh);
+							continue;
+						}
+						// 1. heal（実体があれば現在 OS パスへ書き換え）
+						if (healHookForeignPaths(hh, homeDir)) { changed = true; healedCount++; }
+						// 2. prune（heal 後もなお別 OS の死んだパスが残るなら除去）
+						if (csmHookHasDeadForeignPath(hh, homeDir)) {
+							changed = true; prunedCount++;
+							continue; // keptHooks に入れない＝除去
+						}
+						keptHooks.push(hh);
+					}
+
+					if (keptHooks.length === 0) {
+						changed = true; // グループが空 → グループごと削除
+					} else if (keptHooks.length !== innerHooks.length) {
+						newEntries.push({ ...entry, hooks: keptHooks });
+					} else {
+						newEntries.push(entry);
+					}
+				}
+
+				if (newEntries.length === 0) {
+					delete hooksObj[eventKey]; // イベントが空 → キーごと削除
+					changed = true;
+				} else {
+					hooksObj[eventKey] = newEntries;
+				}
+			}
+			return changed;
+		}, (msg) => outputChannel.appendLine(msg));
+
+		if (healedCount > 0 || prunedCount > 0) {
+			outputChannel.appendLine(`[${new Date().toISOString()}] CSM hook 別OSパス処理: 修復 ${healedCount} 件 / 死んだパスを除去 ${prunedCount} 件 (homeDir=${homeDir})`);
+		}
+	} catch (err) {
+		outputChannel.appendLine(`[${new Date().toISOString()}] CSM hook パス修復エラー: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
+// ─── CSM hook の全除去（手動クリーンアップコマンド B 用） ─────────────────────────
+/**
+ * settings.json から CSM の hook 登録を全除去し、~/.claude/hooks/csm-*.js を .trash/ へ退避する。
+ * コマンドパレットからの手動クリーンアップ（アンインストール前の最終処理）用。
+ * 書き込みは settingsWriteQueue で直列化して安全に行う。
+ *
+ * @returns { removed: 除去した hook 件数, trashed: 退避したスクリプト数 }
+ */
+export async function removeAllCsmHooks(outputChannel: vscode.OutputChannel): Promise<{ removed: number; trashed: number }> {
+	const homeDir = os.homedir();
+	const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+	const count: RemovalCount = { removed: 0 };
+
+	try {
+		await modifySettingsJson(settingsPath, (settings) => filterCsmHooks(settings, count),
+			(msg) => outputChannel.appendLine(msg));
+	} catch (err) {
+		outputChannel.appendLine(`[${new Date().toISOString()}] CSM hook 除去エラー: ${err instanceof Error ? err.message : String(err)}`);
+	}
+
+	const { moved } = trashCsmHookScripts(homeDir);
+	outputChannel.appendLine(`[${new Date().toISOString()}] CSM hook を除去しました (settings: ${count.removed} 件, scripts: ${moved} 件を .trash/ へ退避)`);
+	return { removed: count.removed, trashed: moved };
 }
 
 // cwd を Claude Code のプロジェクトフォルダ名形式にエンコード

@@ -1,5 +1,42 @@
 # 更新履歴
 
+## v0.5.2 (2026-05-31) — Hook ライフサイクル堅牢化（クロスOS自己修復・アンインストール清掃・内容是正）
+
+VMware（Windows ホスト ⇄ Linux VM）で `~/.claude/settings.json` を共有する環境で、
+hook の絶対パスがクロス OS で壊れて「SessionStart startup hook error」等が発生する問題を
+中心に、hook の自己修復・内容是正・ライフサイクル整備を行った。
+
+### 🩹 クロスOSパス self-heal + dead-hook prune
+- **heal**: Windows ホストで書かれた `C:/Users/.../.claude/...` の CSM hook を、Linux VM 起動時に
+  `~/.claude/...` へ自動修復（`healForeignOsHookPaths`）。再構築先が**実在する場合のみ**書き換え。
+  `$HOME`/`~` の移植可能形式は温存。CSM 自身の hook 限定。
+- **prune**: heal 不能な「別 OS の死んだパス」（現在 OS に実体が無く永久に解決不能な CSM hook、
+  例: 旧 `c:/xampp/.../*.sh`）は settings.json から除去。空になった matcher グループ／イベントキーも削除。
+- 原因: 従来の冪等判定がマーカー名のみで、登録パスが現在 OS で解決可能か検証していなかった。
+- マーカー定義を `csmHookCleanup.CSM_HOOK_MARKERS` に一元化（heal / prune / migrate / removeAll 共通、旧 bash 版含む）。
+
+### 🐛 hook 内容の是正（現行 Claude Code 2.1.158 契約に整合）
+- `csm-check-ask-agent.js`: PreToolUse の `permissionDecision: "block"`（無効値でブロック不発）を
+  正しい `"deny"` に修正。存在しない `continueOnBlock` フィールドを削除。
+- デプロイ方式を統一: `csm-session-agent-inject.js` / `csm-governance-capture.js` を
+  「無ければ作る」から「差分があれば上書き」へ（`sessionTitle` 対応などのドリフト解消）。
+
+### 🧹 アンインストール／無効化時のクリーンアップ
+- `vscode:uninstall`（`out/uninstall.js`）でアンインストール時に CSM hook を settings.json から
+  全除去 + `~/.claude/hooks/csm-*.js` を `.trash/` へ退避。
+- 手動コマンド **「すべての CSM フックを削除（アンインストール準備）」**（`claudeManager.removeAllHooks`）を追加。
+- 共通コア `src/utils/csmHookCleanup.ts`（vscode 非依存）。ECC 所有の `scripts/csm/` 配下は除去しない。
+
+### 🛡️ csm-injection-detect を CSM 正式所有化
+- WebFetch/WebSearch のプロンプトインジェクション検知 hook をテンプレ化 + `ensureInjectionDetectHook`
+  で配備・登録（PostToolUse, matcher `WebFetch|WebSearch`）。従来はオーファン（更新・再配備不能）だった。
+
+### 実装ファイル
+- `src/services/hookService.ts`（self-heal / removeAllCsmHooks / ensureInjectionDetectHook / デプロイ上書き）
+- `src/utils/csmHookCleanup.ts`（新規・vscode 非依存）, `src/uninstall.ts`（新規）
+- `templates/csm-check-ask-agent.js`（block→deny）, `templates/csm-injection-detect.js`（新規）
+- `src/extension.ts`（配線 + コマンド登録）, `package.json`（`vscode:uninstall` + コマンド）
+
 ## v0.5.1 (2026-05-31) — オーケストレーション可視化タブ + Activity Bar 4アイコン化
 
 ### 🎼 オーケストレーション可視化 — 5番目の Activity Bar アイコン (T7.1〜T7.6)
