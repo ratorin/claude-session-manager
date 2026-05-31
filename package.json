@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager - セッション履歴管理",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.5.2",
+	"version": "0.5.3",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -1088,7 +1088,7 @@
 		"vscode:uninstall": "node ./out/uninstall.js",
 		"compile": "tsc -p ./",
 		"watch": "tsc -watch -p ./",
-		"test": "npm run compile && node test/unit/setAgentSession.test.js"
+		"test": "npm run compile && node --test test/unit/*.test.js"
 	},
 	"repository": {
 		"type": "git",

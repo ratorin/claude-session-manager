@@ -1,5 +1,24 @@
 # 更新履歴
 
+## v0.5.3 (2026-05-31) — Agent作成・紐づけ・Hook の QA + frontmatter クォートバグ修正
+
+エージェント新規作成・セッション紐づけ・hook 周りを QA し、ユニットテストを整備。
+QA でフロントマターのクォート不具合を検出し修正した。
+
+### 🐛 frontmatter クォートバグ修正（QA 検出）
+- `role` / `displayName` 等のフロントマター値に **`"` と改行**が同時に含まれると、二重引用符
+  スカラーに生の改行が入り **YAML が複数行に割れて値が破損**していた（例: `say "hi"\n...` → `say "hi\`）。
+- `quoteYamlValue`（agentFileManager）が改行/復帰/タブを `\n`/`\r`/`\t` にエスケープするよう修正。
+- パーサ（frontmatterUtils）のダブルクォート復号を**単一パス**化し、`\\` `\"` `\n` `\r` `\t` を
+  左→右に原子的に復号（旧 `\\"` 取り違えの潜在バグも解消）。
+
+### ✅ QA テストスイート追加（`test/unit/agent-hooks-qa.test.js`, 20 ケース）
+- **binding**: setAgentSession（empty→new / existing→skip / force / `unlinked` 扱い / previousSessionIds・mode 保持）、addAgent⇄getAgents 往復、removeAgent、cleanupSessionData 解除、migrateAgentsToAgentSessions
+- **agentFileManager**: パストラバーサル名の拒否、日本語名許可、YAML クォート、モデル往復
+- **hook スクリプト（templates 実機実行）**: session-agent-inject の紐づけ解決＋sessionTitle、check-ask-agent の deny/pass、injection-detect の検知、session-stop の historyEnabled ゲート
+- **hook クリーンアップ**: filterCsmHooks の CSM 除去・非CSM 温存・旧 bash マーカー除去
+- `npm test` を `node --test test/unit/*.test.js` に変更し全テスト（既存3 + 新規20 = 23）を実行。
+
 ## v0.5.2 (2026-05-31) — Hook ライフサイクル堅牢化（クロスOS自己修復・アンインストール清掃・内容是正）
 
 VMware（Windows ホスト ⇄ Linux VM）で `~/.claude/settings.json` を共有する環境で、

@@ -408,8 +408,15 @@ export async function deleteAgentFile(name: string): Promise<boolean> {
 // H-4: YAMLインジェクション対策 — 文字列値をダブルクォートで安全にラップ
 function quoteYamlValue(value: string): string {
 	const sanitized = sanitizeForYaml(value);
-	// ダブルクォート内の " と \ をエスケープ
-	const escaped = sanitized.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+	// ダブルクォート内を 1 行に収まる形でエスケープ:
+	//   \ → \\ (最初に), " → \", 改行/復帰/タブ → \n/\r/\t
+	// （生の改行が入ると frontmatter が複数行に割れてパースが壊れるため必須）
+	const escaped = sanitized
+		.replace(/\\/g, '\\\\')
+		.replace(/"/g, '\\"')
+		.replace(/\n/g, '\\n')
+		.replace(/\r/g, '\\r')
+		.replace(/\t/g, '\\t');
 	return `"${escaped}"`;
 }
 

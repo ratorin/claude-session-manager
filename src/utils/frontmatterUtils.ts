@@ -275,8 +275,14 @@ export function parseFrontmatterExtended(content: string): ParsedFrontmatterExte
 				// クォート除去 + エスケープ解除
 				const quoteMatch = rawValue.match(/^(["'])(.*)\1$/);
 				if (quoteMatch && quoteMatch[1] === '"') {
-					// ダブルクォート: \\ → \, \" → " をデコード
-					data[key] = quoteMatch[2].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+					// ダブルクォート: \\ \" \n \r \t を単一パスで安全にデコード
+					// （左→右に backslash+次の1文字を原子的に消費するため \\n 等の取り違えが起きない）
+					data[key] = quoteMatch[2].replace(/\\(["\\nrt])/g, (_m, c) => {
+						if (c === 'n') { return '\n'; }
+						if (c === 'r') { return '\r'; }
+						if (c === 't') { return '\t'; }
+						return c; // " または \
+					});
 				} else if (quoteMatch) {
 					// シングルクォート: エスケープなし
 					data[key] = quoteMatch[2];
