@@ -1,5 +1,36 @@
 # 更新履歴
 
+## v0.5.1 (2026-05-31) — Activity Bar 4アイコン化（タブバー廃止）
+
+### UI 刷新: 1アイコン → 4独立アイコン
+
+VS Code 標準の Activity Bar アイコン切替方式に変更。タブバー (TreeView) を廃止し、
+Explorer/Git のように左縦アイコンでセクションを切り替える形になった。
+
+#### 変更内容
+- `package.json`:
+  - `viewsContainers.activitybar`: `claude-manager` 1個 → 4個に分割
+    - 💬 `claude-sessions` (comment-discussion)
+    - 👤 `claude-agents` (organization)
+    - 🧠 `claude-memory` (database)
+    - 📁 `claude-projects` (folder-opened)
+  - `views`: 旧 `claude-manager` セクションを廃止。4コンテナに分散配置
+    - `claudeTabBar` view を削除
+    - `when` 句 (`activeTab`/`useNewMainPanel` 条件) を全廃 — コンテナ分離で不要
+  - `menus.view/title`: `claudeTabBar && activeTab` 依存の action entries を削除
+    → プロジェクトタブ用に `claudeMain` view/title 設定ボタンを追加
+- `extension.ts`:
+  - `TabBarTreeProvider` インポート・登録・タブ切替ロジックを削除
+  - `setContext('claudeManager.activeTab', ...)` 関連コードを削除
+  - `tabBarStatusTimer` 削除（不要に）
+
+#### 効果
+- タブバー下の余白問題が構造レベルで解消
+- 会話タグ (`claudeTags`) の非表示バグが `when` 句廃止で解消
+- VS Code 標準ナビゲーション UX に準拠
+
+---
+
 ## v0.5.1 (2026-05-31) — 右クリックメニュー再編 v2（重複排除・グループ統一）
 
 ### 右クリックメニュー再設計 v2 実装

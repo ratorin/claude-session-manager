@@ -19,9 +19,24 @@
 		"viewsContainers": {
 			"activitybar": [
 				{
-					"id": "claude-manager",
-					"title": "Claude Session Manager",
+					"id": "claude-sessions",
+					"title": "💬 セッション",
 					"icon": "$(comment-discussion)"
+				},
+				{
+					"id": "claude-agents",
+					"title": "👤 エージェント",
+					"icon": "$(organization)"
+				},
+				{
+					"id": "claude-memory",
+					"title": "🧠 メモリ",
+					"icon": "$(database)"
+				},
+				{
+					"id": "claude-projects",
+					"title": "📁 プロジェクト",
+					"icon": "$(folder-opened)"
 				}
 			],
 			"panel": [
@@ -33,60 +48,53 @@
 			]
 		},
 		"views": {
-			"claude-manager": [
-				{
-					"id": "claudeTabBar",
-					"name": "",
-					"when": "config.claudeManager.useNewMainPanel != false"
-				},
-				{
-					"type": "webview",
-					"id": "claudeMain",
-					"name": "Claude Session Manager",
-					"icon": "$(comment-discussion)",
-					"when": "config.claudeManager.useNewMainPanel != false && claudeManager.activeTab == 'projects'"
-				},
+			"claude-sessions": [
 				{
 					"id": "claudeBookmarks",
 					"name": "会話ブックマーク",
-					"icon": "$(star-full)",
-					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'sessions'"
+					"icon": "$(star-full)"
 				},
 				{
 					"id": "claudeTags",
 					"name": "会話タグ",
-					"icon": "$(tag)",
-					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'sessions'"
+					"icon": "$(tag)"
 				},
 				{
 					"id": "claudeSessions",
-					"name": "会話一覧（セッション）",
-					"icon": "$(comment-discussion)",
-					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'sessions'"
-				},
+					"name": "会話一覧",
+					"icon": "$(comment-discussion)"
+				}
+			],
+			"claude-agents": [
 				{
 					"id": "claudeAgentsLive",
 					"name": "ライブ状態",
-					"icon": "$(pulse)",
-					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'agents'"
+					"icon": "$(pulse)"
 				},
 				{
 					"id": "claudeAgentsFavorites",
-					"name": "お気に入りエージェント",
-					"icon": "$(star-full)",
-					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'agents'"
+					"name": "お気に入り",
+					"icon": "$(star-full)"
 				},
 				{
 					"id": "claudeAgents",
 					"name": "エージェント管理",
-					"icon": "$(person)",
-					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'agents'"
-				},
+					"icon": "$(person)"
+				}
+			],
+			"claude-memory": [
 				{
 					"id": "claudeMemory",
 					"name": "メモリ管理",
-					"icon": "$(database)",
-					"when": "config.claudeManager.useNewMainPanel == false || claudeManager.activeTab == 'memory'"
+					"icon": "$(database)"
+				}
+			],
+			"claude-projects": [
+				{
+					"type": "webview",
+					"id": "claudeMain",
+					"name": "プロジェクト",
+					"icon": "$(folder-opened)"
 				}
 			],
 			"claude-help": [
@@ -575,54 +583,9 @@
 					"group": "navigation"
 				},
 				{
-					"command": "claudeManager.refreshSessions",
-					"when": "view == claudeTabBar && claudeManager.activeTab == 'sessions'",
-					"group": "navigation@1"
-				},
-				{
-					"command": "claudeManager.searchSessions",
-					"when": "view == claudeTabBar && claudeManager.activeTab == 'sessions'",
-					"group": "navigation@2"
-				},
-				{
-					"command": "claudeManager.refreshAgents",
-					"when": "view == claudeTabBar && claudeManager.activeTab == 'agents'",
-					"group": "navigation@1"
-				},
-				{
-					"command": "claudeManager.addAgent",
-					"when": "view == claudeTabBar && claudeManager.activeTab == 'agents'",
-					"group": "navigation@2"
-				},
-				{
-					"command": "claudeManager.openOrgChart",
-					"when": "view == claudeTabBar && claudeManager.activeTab == 'agents'",
-					"group": "navigation@3"
-				},
-				{
-					"command": "claudeManager.showPendingTasks",
-					"when": "view == claudeTabBar && claudeManager.activeTab == 'agents'",
-					"group": "navigation@4"
-				},
-				{
-					"command": "claudeManager.refreshMemory",
-					"when": "view == claudeTabBar && claudeManager.activeTab == 'memory'",
-					"group": "navigation@1"
-				},
-				{
-					"command": "claudeManager.mergeMemories",
-					"when": "view == claudeTabBar && claudeManager.activeTab == 'memory'",
-					"group": "navigation@2"
-				},
-				{
 					"command": "claudeManager.openSettings",
-					"when": "view == claudeTabBar && claudeManager.activeTab == 'projects'",
-					"group": "navigation@3"
-				},
-				{
-					"command": "claudeManager.openSettings",
-					"when": "view == claudeTabBar && claudeManager.activeTab != 'projects'",
-					"group": "navigation@999"
+					"when": "view == claudeMain",
+					"group": "navigation"
 				}
 			],
 			"view/item/context": [
