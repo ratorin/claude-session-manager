@@ -11,3 +11,7 @@ docs/agent_*.txt
 docs/feedback/
 .claude/agent-memory/
 .vscode/
+
+# 診断レポート・エージェントランタイム生成物 (2026-05-31)
+reports/
+.claude/agents/*/

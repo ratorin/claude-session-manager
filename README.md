@@ -80,6 +80,26 @@ python c:/xampp/.agent-rules/temp/migrate_agents.py
 
 ## 主な機能
 
+### v0.5.3 新機能（QA・安定性）
+
+- **frontmatter クォートバグ修正** — エージェントの `role` / `displayName` 等に `"` と改行が同時に含まれると YAML が複数行に割れて値が破損していた不具合を修正（`\n`/`\r`/`\t` エスケープ + パーサのダブルクォート復号を単一パス化）
+- **QA テストスイート** — エージェント作成・セッション紐づけ・hook 周りのユニットテストを `test/unit/agent-hooks-qa.test.js` に整備（20 ケース）。`npm test` で全テスト（23 件）実行
+
+### v0.5.2 新機能（Hook ライフサイクル堅牢化）
+
+- **クロスOSパス self-heal** — Windows ホスト ⇄ Linux VM で `settings.json` を共有した際、`C:/Users/.../.claude/...` の CSM hook パスを起動時に現在 OS の `~/.claude/...` へ自動修復。実体が存在する場合のみ書き換え、`$HOME`/`~` の移植可能形式は温存
+- **dead-hook prune** — 現在 OS で解決不能な死んだ CSM hook（旧 `c:/xampp/.../*.sh` 等）を起動時に settings.json から自動除去
+- **アンインストール時クリーンアップ** — `vscode:uninstall` でアンインストール時に CSM hook を settings.json から全除去 + `~/.claude/hooks/csm-*.js` を `.trash/` へ退避
+- **「すべての CSM フックを削除」コマンド** — `claudeManager.removeAllHooks`（コマンドパレット）でアンインストール前の手動クリーンアップ
+- **WebFetch/WebSearch インジェクション検知 hook** — `csm-injection-detect` を CSM 正式管理化（プロンプトインジェクション疑いを additionalContext で警告）
+- **hook 内容の現行契約整合** — PreToolUse の `permissionDecision` を `deny`（現行有効値）に是正、hook スクリプトのデプロイを「差分あれば上書き」に統一
+
+### v0.5.1 新機能（オーケストレーション可視化）
+
+- **🎼 オーケストレーション可視化タブ** — Activity Bar に 5 番目のアイコンを追加。ライブセッション / バックグラウンドエージェント / サブエージェントの稼働状況をツリー表示（5秒ポーリング・可視時のみ）
+- **Activity Bar 4アイコン構成** — セッション / エージェント / メモリ / プロジェクト を独立コンテナ化
+- **モデルエイリアス化** — `modelCliMap` をエイリアス（opus/sonnet/haiku）方式にし、Claude Code が常に最新モデルへ解決
+
 ### v0.5.0 新機能
 
 - **メインタブパネル** — セッション / エージェント / プロジェクト の3タブを統合した WebviewView (`claudeMain`) を新設
