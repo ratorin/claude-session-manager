@@ -1,5 +1,14 @@
 # 更新履歴
 
+## v0.5.5 (2026-06-01) — 新規セッション作成のクロスOS cwd バグ修正
+
+### 🐛 紐づけ「新規セッション作成」失敗を修正
+- **症状**: エージェント紐づけで「新規セッションを作成」すると「新規セッション作成に失敗しました」エラー。
+- **原因**: `createSessionForAgent` が `claude --agent` を spawn する際、cwd に **エージェント定義の `workDir` を生のまま**使っていた。Windows ホストで設定された `workDir`（例 `c:/xampp/Project/claude-session-manager`）は Linux VM に実体が無く、spawn が ENOENT で即失敗していた（クロス OS で共有された設定の典型）。resume 系は既に `translateWorkDirPath` で変換していたが、新規セッション作成パスだけ未対応だった。
+- **修正**: `resolveSpawnCwd()` を新設し、`workDir` を `translateWorkDirPath`（`c:/xampp/Project/… → /mnt/hgfs/Project/…` 等の HGFS マッピング）で変換 + 実在チェック。解決できなければ workspace フォルダ → home にフォールバック。
+- agent 定義の `workDir` は Windows パスのまま温存（runtime 変換で両 OS で動作するため、書き換えると Windows ホスト側が壊れる）。
+- test: `translateWorkDirPath` の変換マッピングテスト（F1）を追加。全 27 テスト合格。
+
 ## v0.5.4 (2026-05-31) — エージェントフォームに現行 CC の subagent 項目を追加
 
 エージェント設定フォームに、現行 Claude Code の subagent frontmatter 項目のうち未対応だった

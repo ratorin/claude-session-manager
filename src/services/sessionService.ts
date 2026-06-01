@@ -7,6 +7,23 @@ import * as os from 'os';
 import * as path from 'path';
 import { AgentConfig } from '../models/types';
 import { parseFrontmatter } from '../utils/frontmatterUtils';
+import { translateWorkDirPath } from '../utils/agentUtils';
+
+/**
+ * spawn 用の cwd を解決する。
+ * agent.workDir をクロス OS 変換（Windows c:/... → Linux /mnt/hgfs/...）し、
+ * 実在しなければ workspace フォルダ → home にフォールバックする。
+ * （Windows ホストで設定された workDir が Linux VM で存在せず spawn が ENOENT で失敗する問題への対策）
+ */
+function resolveSpawnCwd(workDir?: string): string {
+	const fallback = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
+	if (!workDir) { return fallback; }
+	const translated = translateWorkDirPath(workDir);
+	try {
+		if (translated && fs.existsSync(translated)) { return translated; }
+	} catch { /* fall through */ }
+	return fallback;
+}
 
 // claude CLI 実行情報をキャッシュ
 // Windows: .cmd は Node.js CVE-2024-27980 以降 shell:false で spawn 不可 → cli.js を node で直接実行
@@ -116,7 +133,7 @@ export async function createSessionForAgent(config: AgentConfig, deps: SessionSe
 		// C-2: shell:false でコマンドインジェクションを防止（node 直起動なので .cmd EINVAL 無し）
 		const child = spawn(exec.command, args, {
 			env,
-			cwd: config.workDir || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir(),
+			cwd: resolveSpawnCwd(config.workDir),
 			stdio: ['ignore', 'pipe', 'pipe'],
 			shell: false,
 			windowsHide: true,

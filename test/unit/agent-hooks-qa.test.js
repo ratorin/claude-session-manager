@@ -56,6 +56,7 @@ function loadFresh(tmpHome) {
 		dataStore: require(path.join(REPO, 'out', 'models', 'dataStore')),
 		afm: require(path.join(REPO, 'out', 'agents', 'agentFileManager')),
 		cleanup: require(path.join(REPO, 'out', 'utils', 'csmHookCleanup')),
+		agentUtils: require(path.join(REPO, 'out', 'utils', 'agentUtils')),
 	};
 }
 
@@ -372,4 +373,20 @@ test('E3 フォーム権威: 空配列/解除で再保存すると isolation/bac
 	assert.equal(def.isolation, undefined, 'isolation 解除');
 	assert.equal(def.background, false, 'background 解除');
 	assert.ok(!def.tools || def.tools.length === 0, 'allowedTools クリア（全継承）');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// F. クロス OS workDir 変換（新規セッション作成の cwd 解決）
+// ════════════════════════════════════════════════════════════════════════════
+
+test('F1 translateWorkDirPath: Windows workDir を Linux HGFS パスへ変換（spawn cwd 用）', function () {
+	if (process.platform === 'win32') { return; } // Linux/mac 環境でのみ検証
+	const { agentUtils } = loadFresh(setupTmpHome());
+	const t = agentUtils.translateWorkDirPath;
+	assert.equal(t('c:/xampp/Project/claude-session-manager'), '/mnt/hgfs/Project/claude-session-manager', 'xampp/Project マッピング');
+	assert.equal(t('c:\\workspace\\CMS\\CurtainNext'), '/mnt/hgfs/workspace/CMS/CurtainNext', 'workspace マッピング + バックスラッシュ正規化');
+	assert.equal(t('C:/GDrive/daros'), '/mnt/hgfs/GDrive/daros', 'GDrive マッピング（大文字C）');
+	// 既に Linux パスならそのまま
+	assert.equal(t('/home/u/proj'), '/home/u/proj', 'Linux パスは不変');
+	assert.equal(t(''), '', '空は空');
 });
