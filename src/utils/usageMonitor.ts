@@ -312,7 +312,7 @@ export class UsageMonitor implements vscode.Disposable {
 			// T2.23: show5dColumns 設定を読んで表示フォーマットを切り替え
 			const usageCfg = vscode.workspace.getConfiguration('claudeManager');
 			const show5d = usageCfg.get<boolean>('usage.show5dColumns', true);
-			const showRemaining = usageCfg.get<boolean>('usage.showRemaining', false);
+			const showRemaining = usageCfg.get<boolean>('usage.showRemaining', true);
 			this.statusBarItem.text = `$(dashboard) ${formatUsageText(data, show5d, showRemaining)}`;
 
 			// 警告色の判定（5h / Sonnet5d / Opus5d の最大値で判定）

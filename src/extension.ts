@@ -20,7 +20,7 @@ import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
 import { getConfig, getLocaleConfig, getAutoTranslateConfig } from './utils/config';
 import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook, ensureRecapCaptureHook, ensureInjectionDetectHook, migrateHooksToExecForm, healForeignOsHookPaths, removeAllCsmHooks } from './services/hookService';
-import { runV04Migration, runV05Migration } from './services/migrationService';
+import { runV04Migration, runV05Migration, runUsageShowRemainingMigration } from './services/migrationService';
 import { initErrorReporter, logError } from './utils/errorReporter';
 import { MainTabPanel } from './panels/mainTabPanel';
 import { HelpFeedbackProvider } from './providers/helpFeedbackProvider';
@@ -63,6 +63,10 @@ export function activate(context: vscode.ExtensionContext) {
 		// マイグレーション失敗は致命的ではない
 	});
 	runV05Migration(context, currentVersion, extensionOutputChannelEarly).catch(() => {
+		// マイグレーション失敗は致命的ではない
+	});
+	// usage.showRemaining を既定 ON 化（更新者も ON にする・一度きり）
+	runUsageShowRemainingMigration(context, extensionOutputChannelEarly).catch(() => {
 		// マイグレーション失敗は致命的ではない
 	});
 
@@ -343,7 +347,7 @@ export function activate(context: vscode.ExtensionContext) {
 	// 利用率メニュー（StatusBarクリック時）
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.openUsageMenu', async () => {
-			const showRemainingNow = vscode.workspace.getConfiguration('claudeManager').get<boolean>('usage.showRemaining', false);
+			const showRemainingNow = vscode.workspace.getConfiguration('claudeManager').get<boolean>('usage.showRemaining', true);
 			const items: vscode.QuickPickItem[] = [
 				{
 					label: '$(browser) Claude Code を開く',

@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager - セッション履歴管理",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.5.9",
+	"version": "0.5.10",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -897,9 +897,9 @@
 					},
 					"claudeManager.usage.showRemaining": {
 						"type": "boolean",
-						"default": false,
+						"default": true,
 						"order": 9,
-						"description": "ステータスバーを残量（残り%＝100%−利用率）表示にする（例: 残95%）。OFF は利用率（使用%）表示。ステータスバークリックメニューからも切替可能"
+						"description": "ステータスバーを残量（残り%＝100%−利用率）表示にする（例: 残95%）。既定 ON。OFF は利用率（使用%）表示。ステータスバークリックメニューからも切替可能"
 					},
 					"claudeManager.hooks.desktopNotification.enabled": {
 						"type": "boolean",
