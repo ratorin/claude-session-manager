@@ -8,7 +8,7 @@ import * as os from 'os';
 import { spawnSync } from 'child_process';
 import { AgentConfig } from '../models/types';
 import { addToIndex } from '../utils/memoryManager';
-import { filterCsmHooks, trashCsmHookScripts, RemovalCount, CSM_HOOK_MARKERS } from '../utils/csmHookCleanup';
+import { filterCsmHooks, trashCsmHookScripts, RemovalCount, CSM_HOOK_MARKERS, pruneOldSettingsBackups } from '../utils/csmHookCleanup';
 
 // ─── settings.json 排他書き込みキュー ────────────────────────────────────────
 // 複数の ensure*Hook が並行起動しても、read→modify→write が直列に実行されるよう
@@ -42,9 +42,10 @@ async function modifySettingsJson(
 		const changed = modifier(settings);
 		if (!changed) { return; }
 
-		// 3. バックアップ（書き込み前）
+		// 3. バックアップ（書き込み前）+ 古いバックアップの世代管理（最新5件のみ保持）
 		const backupPath = `${settingsPath}.bak.${Date.now()}`;
 		try { await fs.promises.copyFile(settingsPath, backupPath); } catch { /* */ }
+		pruneOldSettingsBackups(settingsPath);
 
 		// 4. 書き込み
 		const serialized = JSON.stringify(settings, null, '\t');
@@ -155,9 +156,11 @@ function isForeignOsPath(rawPath: string): boolean {
 	if (rawPath.includes('$') || rawPath.startsWith('~')) { return false; } // 移植可能
 	const n = rawPath.replace(/\\/g, '/');
 	if (path.sep === '/') {
-		return /^[A-Za-z]:\//.test(n);          // POSIX 実行中の Windows パス
+		return /^[A-Za-z]:\//.test(n);          // POSIX 実行中の Windows パス（C:/...）= 外来
 	}
-	return /^\/[A-Za-z]/.test(n);               // Windows 実行中の POSIX 絶対パス（best-effort）
+	// Windows 実行中: POSIX 絶対パス（/home/... 等）は Windows では解決不能なので外来扱い（意図的）。
+	// 通常の POSIX パスも foreign と判定するが、共有 settings.json シナリオでは正しい挙動。UNC(//srv) は対象外。
+	return /^\/[A-Za-z]/.test(n);
 }
 
 /**
@@ -389,6 +392,7 @@ export async function ensureSessionAgentInjectHook(extensionPath: string, output
 			if (Array.isArray(sessionStart)) {
 				let needsMigration = false;
 				let alreadyNodeInstalled = false;
+				let migratedToExecForm = false;
 
 				for (const entry of sessionStart as Array<Record<string, unknown>>) {
 					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
@@ -401,13 +405,14 @@ export async function ensureSessionAgentInjectHook(extensionPath: string, output
 						} else {
 							// .js shell-form または exec-form → インストール済み
 							alreadyNodeInstalled = true;
-							// exec-form へのマイグレーション試行
-							migrateHookToExecForm(hh);
+							// exec-form へのマイグレーション試行（変更があれば永続化する）
+							if (migrateHookToExecForm(hh)) { migratedToExecForm = true; }
 						}
 					}
 				}
 
-				if (alreadyNodeInstalled && !needsMigration) { return false; } // 既に最新版
+				// 既に最新版。ただし exec-form マイグレーションした場合は変更を保存させる
+				if (alreadyNodeInstalled && !needsMigration) { return migratedToExecForm; }
 
 				if (needsMigration) {
 					hooksObj['SessionStart'] = (sessionStart as Array<Record<string, unknown>>).map((entry) => {
@@ -458,8 +463,9 @@ export async function removeSessionAgentInjectHook(outputChannel: vscode.OutputC
 			const filtered = sessionStart.filter((entry: Record<string, unknown>) => {
 				const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
 				if (!Array.isArray(innerHooks)) { return true; }
+				// exec-form (command:'node', args:[...]) も拾えるよう hookMatchesMarker を使用
 				return !innerHooks.some((hh: Record<string, unknown>) =>
-					typeof hh.command === 'string' && hh.command.includes(CSM_MARKER)
+					hookMatchesMarker(hh, CSM_MARKER)
 				);
 			});
 

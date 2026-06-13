@@ -426,3 +426,26 @@ test('G3 opus-1m 往復: frontmatter に opus[1m] と書かれ opus-1m で復元
 	const md = fs.readFileSync(path.join(home, '.claude', 'agents', 'big.md'), 'utf-8');
 	assert.match(md, /model: opus\[1m\]/, 'frontmatter は CLI 値 opus[1m]');
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// H. バックアップ世代管理（QA: .bak 無制限蓄積の対策）
+// ════════════════════════════════════════════════════════════════════════════
+
+test('H1 pruneOldSettingsBackups: 最新 N 件だけ残して古い .bak を削除', () => {
+	const home = setupTmpHome();
+	const { cleanup } = loadFresh(home);
+	const sp = path.join(home, '.claude', 'settings.json');
+	fs.writeFileSync(sp, '{}');
+	for (let i = 0; i < 8; i++) {
+		const f = `${sp}.bak.${1000 + i}`;
+		fs.writeFileSync(f, '{}');
+		const t = new Date(Date.now() - (8 - i) * 60000); // 古い→新しい
+		fs.utimesSync(f, t, t);
+	}
+	cleanup.pruneOldSettingsBackups(sp, 3);
+	const remaining = fs.readdirSync(path.join(home, '.claude')).filter((f) => f.includes('settings.json.bak.'));
+	assert.equal(remaining.length, 3, '最新3件だけ残る');
+	// 残ったのは新しい方（1005,1006,1007）
+	assert.ok(remaining.includes('settings.json.bak.1007'), '最新を保持');
+	assert.ok(!remaining.includes('settings.json.bak.1000'), '最古を削除');
+});

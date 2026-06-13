@@ -113,7 +113,32 @@ export function removeCsmHooksFromSettings(settingsPath: string): SettingsRemova
 	const backupPath = `${settingsPath}.bak.${Date.now()}`;
 	try { fs.copyFileSync(settingsPath, backupPath); } catch { /* バックアップ失敗は続行 */ }
 	fs.writeFileSync(settingsPath, serialized, 'utf-8');
+	pruneOldSettingsBackups(settingsPath);
 	return { changed: true, removed: count.removed, backupPath };
+}
+
+/**
+ * `<settings.json>.bak.*` バックアップを新しい順に keep 件だけ残し、古いものを削除する。
+ * （ensure 系 / クリーンアップで毎回バックアップを作るため、無制限な蓄積を防ぐ）
+ * vscode 非依存。失敗しても無視。
+ */
+export function pruneOldSettingsBackups(settingsPath: string, keep = 5): void {
+	try {
+		const dir = path.dirname(settingsPath);
+		const prefix = `${path.basename(settingsPath)}.bak.`;
+		const backups = fs.readdirSync(dir)
+			.filter((f) => f.startsWith(prefix))
+			.map((f) => {
+				const full = path.join(dir, f);
+				let mtime = 0;
+				try { mtime = fs.statSync(full).mtimeMs; } catch { /* */ }
+				return { full, mtime };
+			})
+			.sort((a, b) => b.mtime - a.mtime); // 新しい順
+		for (const { full } of backups.slice(Math.max(0, keep))) {
+			try { fs.unlinkSync(full); } catch { /* 個別削除失敗は無視 */ }
+		}
+	} catch { /* readdir 失敗等は無視 */ }
 }
 
 export interface ScriptTrashResult { moved: number; }

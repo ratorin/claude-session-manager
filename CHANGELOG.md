@@ -1,5 +1,20 @@
 # 更新履歴
 
+## v0.5.8 (2026-06-01) — QA 修正（hook 除去/マイグレーションの取りこぼし・バックアップ世代管理）
+
+v0.5.2〜v0.5.7 を QA（自動ヘルス + コードレビュー + 横断点検）。CRITICAL 0、HIGH 2 + MEDIUM 1 + LOW 1 を修正。
+詳細は [docs/v0.5.x-qa-report.md](docs/v0.5.x-qa-report.md)。
+
+### 🐛 修正
+- **HIGH**: `removeSessionAgentInjectHook` が `command.includes` 判定で **exec-form hook を除去できなかった** → `hookMatchesMarker` に変更（exec-form 対応）。
+- **HIGH**: `ensureSessionAgentInjectHook` が exec-form マイグレーション後に無条件 `return false` で**変更が保存されなかった** → 変更を追跡して `return` に反映。
+- **MEDIUM**: settings.json の `.bak.*` が**無制限に蓄積** → `pruneOldSettingsBackups()`（最新 5 件保持）を新設し、`modifySettingsJson` / `removeCsmHooksFromSettings` の書き込み後に世代管理。
+- **LOW**: `isForeignOsPath` の Windows 分岐の意図をコメント明記。
+
+### 検証
+- `tsc` クリーン・全 **31 テスト**合格（バックアップ世代管理テスト H1 追加）。
+- 非バグ/設計許容と判定した指摘（description UI・allowedTools=[]・エラー伝播設計 等）は QA レポートに根拠を記載。
+
 ## v0.5.7 (2026-06-01) — 更新内容の整合性修正（opus-1m の取りこぼし解消・ドキュメント追従）
 
 v0.5.2〜v0.5.6 の更新を横断監査し、`opus-1m` 追加で取りこぼしていた箇所を整合させた。
