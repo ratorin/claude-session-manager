@@ -451,24 +451,3 @@ test('H1 pruneOldSettingsBackups: 最新 N 件だけ残して古い .bak を削�
 	assert.ok(!remaining.includes('settings.json.bak.1000'), '最古を削除');
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// I. 利用率モニターの残量表示
-// ════════════════════════════════════════════════════════════════════════════
-
-test('I1 formatUsageText: 残量モードは (100-利用率) を「残N%」で表示', () => {
-	const { usageMonitor } = loadFresh(setupTmpHome());
-	const future = Math.floor(Date.now() / 1000) + 3600;
-	const data = {
-		usage5h: 5, usage7d: 10, reset5h: future, reset7d: future,
-		usageSonnet5d: 3, resetSonnet5d: future, usageOpus5d: 20, resetOpus5d: future, fetchedAt: 0,
-	};
-	const used = usageMonitor.formatUsageText(data, true, false);
-	const remaining = usageMonitor.formatUsageText(data, true, true);
-	assert.match(used, /^5% /, '利用率モード: 5%');
-	assert.match(remaining, /^残95% /, '残量モード: 残95%');
-	assert.match(remaining, /S 残97%/, 'Sonnet 残97%');
-	assert.match(remaining, /O 残80%/, 'Opus 残80%');
-	// 利用率 100% → 残量 0%（負にならない）
-	const full = usageMonitor.formatUsageText({ ...data, usage5h: 100 }, false, true);
-	assert.match(full, /^残0% /, '100%使用 → 残0%');
-});

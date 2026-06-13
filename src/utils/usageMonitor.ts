@@ -192,37 +192,29 @@ function fmtPct(v: number): string {
 	return v % 1 === 0 ? `${v}` : v.toFixed(1);
 }
 
-/** 利用率(0-100)を残量(100-利用率)に変換。0未満にはしない。 */
-function toRemaining(util: number): number {
-	return Math.max(0, Math.round((100 - util) * 10) / 10);
-}
-
 /**
  * 利用率の表示テキストを生成（T2.23）
- * showRemaining=false: 利用率   "5% 4.5h / S 3% 5d20h / O 20% 5d10h"
- * showRemaining=true:  残量     "残95% 4.5h / S 残97% 5d20h / O 残80% 5d10h"
- * show5d=false: 5h と 7d のみ
+ * show5d=true:  "5% 4.5h / S 3% 5d20h / O 20% 5d10h"
+ * show5d=false: "5% 4.5h / 7% 7d"
  */
-export function formatUsageText(data: UsageData, show5d = true, showRemaining = false): string {
-	// 利用率 or 残量 を「%付き文字列」で返す
-	const pct = (util: number) => showRemaining ? `残${fmtPct(toRemaining(util))}%` : `${fmtPct(util)}%`;
+export function formatUsageText(data: UsageData, show5d = true): string {
 	const r5h = formatTimeRemaining(data.reset5h);
-	const base = `${pct(data.usage5h)} ${r5h}`;
+	const base = `${fmtPct(data.usage5h)}% ${r5h}`;
 
 	if (!show5d || (data.usageSonnet5d < 0 && data.usageOpus5d < 0)) {
 		// Sonnet/Opus 5dデータなし → 従来フォーマット
 		const r7d = formatTimeRemaining(data.reset7d);
-		return `${base} / ${pct(data.usage7d)} ${r7d}`;
+		return `${base} / ${fmtPct(data.usage7d)}% ${r7d}`;
 	}
 
 	const parts: string[] = [base];
 	if (data.usageSonnet5d >= 0) {
 		const rs = formatTimeRemaining(data.resetSonnet5d);
-		parts.push(`S ${pct(data.usageSonnet5d)} ${rs}`);
+		parts.push(`S ${fmtPct(data.usageSonnet5d)}% ${rs}`);
 	}
 	if (data.usageOpus5d >= 0) {
 		const ro = formatTimeRemaining(data.resetOpus5d);
-		parts.push(`O ${pct(data.usageOpus5d)} ${ro}`);
+		parts.push(`O ${fmtPct(data.usageOpus5d)}% ${ro}`);
 	}
 	return parts.join(' / ');
 }
@@ -310,10 +302,8 @@ export class UsageMonitor implements vscode.Disposable {
 			const data = result.data;
 			this.lastData = data;
 			// T2.23: show5dColumns 設定を読んで表示フォーマットを切り替え
-			const usageCfg = vscode.workspace.getConfiguration('claudeManager');
-			const show5d = usageCfg.get<boolean>('usage.show5dColumns', true);
-			const showRemaining = usageCfg.get<boolean>('usage.showRemaining', true);
-			this.statusBarItem.text = `$(dashboard) ${formatUsageText(data, show5d, showRemaining)}`;
+			const show5d = vscode.workspace.getConfiguration('claudeManager').get<boolean>('usage.show5dColumns', true);
+			this.statusBarItem.text = `$(dashboard) ${formatUsageText(data, show5d)}`;
 
 			// 警告色の判定（5h / Sonnet5d / Opus5d の最大値で判定）
 			const candidates = [data.usage5h, data.usage7d];
@@ -330,19 +320,17 @@ export class UsageMonitor implements vscode.Disposable {
 
 			const r5h = formatTimeRemaining(data.reset5h);
 			const r7d = formatTimeRemaining(data.reset7d);
-			// tooltip は常に「使用% / 残% / リセット」を併記
-			const ub = (util: number) => `使用 ${fmtPct(util)}% / 残 ${fmtPct(toRemaining(util))}%`;
 			const tooltipLines = [
 				'Claude Code 利用制限（クリックでメニュー表示）',
 				'',
-				`5時間: ${ub(data.usage5h)}（リセットまで ${r5h}）`,
-				`7日間: ${ub(data.usage7d)}（リセットまで ${r7d}）`,
+				`5時間: ${fmtPct(data.usage5h)}%（リセットまで ${r5h}）`,
+				`7日間: ${fmtPct(data.usage7d)}%（リセットまで ${r7d}）`,
 			];
 			if (show5d && data.usageSonnet5d >= 0) {
-				tooltipLines.push(`Sonnet 5日: ${ub(data.usageSonnet5d)}（リセットまで ${formatTimeRemaining(data.resetSonnet5d)}）`);
+				tooltipLines.push(`Sonnet 5日: ${fmtPct(data.usageSonnet5d)}%（リセットまで ${formatTimeRemaining(data.resetSonnet5d)}）`);
 			}
 			if (show5d && data.usageOpus5d >= 0) {
-				tooltipLines.push(`Opus 5日: ${ub(data.usageOpus5d)}（リセットまで ${formatTimeRemaining(data.resetOpus5d)}）`);
+				tooltipLines.push(`Opus 5日: ${fmtPct(data.usageOpus5d)}%（リセットまで ${formatTimeRemaining(data.resetOpus5d)}）`);
 			}
 			this.statusBarItem.tooltip = tooltipLines.join('\n');
 

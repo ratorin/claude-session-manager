@@ -259,27 +259,3 @@ export async function runV05Migration(
 	outputChannel.appendLine(`[Migration v0.5] 完了 → v${currentVersion} を記録`);
 }
 
-// usage.showRemaining を既定 ON にする一度きりのマイグレーション（v0.5.10）
-// - 未設定ユーザー: 新しい default(true) が自動適用されるため何もしない
-// - 明示的に false にしているユーザー: 一度だけ true へ flip（更新者も ON にする要望）
-// - 一度実行したらフラグを立て、以降は再強制しない（ユーザーが後で OFF にしても尊重）
-const SHOW_REMAINING_ON_KEY = 'csm.migration.usageShowRemainingDefaultOn.v1';
-
-export async function runUsageShowRemainingMigration(
-	ctx: vscode.ExtensionContext,
-	outputChannel: vscode.OutputChannel,
-): Promise<void> {
-	if (ctx.globalState.get<boolean>(SHOW_REMAINING_ON_KEY, false)) { return; }
-	try {
-		const cfg = vscode.workspace.getConfiguration('claudeManager');
-		const inspected = cfg.inspect<boolean>('usage.showRemaining');
-		if (inspected?.globalValue === false) {
-			await cfg.update('usage.showRemaining', true, vscode.ConfigurationTarget.Global);
-			outputChannel.appendLine('[Migration] usage.showRemaining: 明示 OFF を既定 ON へ更新しました');
-		}
-		// globalValue が undefined（未設定）の場合は default(true) が効くため何もしない
-	} catch (err) {
-		outputChannel.appendLine(`[Migration] usage.showRemaining 更新失敗: ${err}`);
-	}
-	await ctx.globalState.update(SHOW_REMAINING_ON_KEY, true);
-}
