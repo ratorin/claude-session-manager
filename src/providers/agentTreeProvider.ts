@@ -413,7 +413,7 @@ export class AgentItem extends vscode.TreeItem {
 		mtimeMs?: number,
 	) {
 		// モデル頭文字（会話一覧と同じ全角表記）
-		const modelChar = agent.model === 'opus' ? 'Ｏ'
+		const modelChar = agent.model === 'opus' || agent.model === 'opus-1m' ? 'Ｏ'
 			: agent.model === 'sonnet-1m' ? '１'
 			: agent.model === 'haiku' ? 'Ｈ'
 			: 'Ｓ';

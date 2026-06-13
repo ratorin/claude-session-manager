@@ -412,9 +412,10 @@ let activeFilters = { model: '', parent: '' };
 
 function modelColor(model) {
 	switch (model) {
-		case 'opus':  return '#b388ff';
-		case 'haiku': return '#81c784';
-		default:      return '#64b5f6';
+		case 'opus':
+		case 'opus-1m': return '#b388ff';
+		case 'haiku':   return '#81c784';
+		default:        return '#64b5f6';
 	}
 }
 

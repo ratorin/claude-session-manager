@@ -1,5 +1,22 @@
 # 更新履歴
 
+## v0.5.7 (2026-06-01) — 更新内容の整合性修正（opus-1m の取りこぼし解消・ドキュメント追従）
+
+v0.5.2〜v0.5.6 の更新を横断監査し、`opus-1m` 追加で取りこぼしていた箇所を整合させた。
+
+### 🔧 opus-1m 表示・判定の整合
+- **モデル表示**: `agentPreviewPanel`（頭文字・ラベル）/ `agentTreeProvider`（頭文字）/ `projectDetailPanel`（バッジ class）/ `orgChartPanel`（ノード色）が opus-1m を未対応で **Sonnet として誤表示**していたのを修正（Opus 系として表示）。
+- **モデル不一致検出**（`agentWatcher`）: prefix マップに `opus-1m`（`claude-opus-`）を追加し、`opus-1m ↔ claude-opus-*[1m]` の 1M 判定を追加。`-1m` 付き設定が素の包含判定で誤一致しないようガード。
+- **セッションからのモデル解決**（`agentFormPanel.resolveModelName`）: `opus[1m]` を `opus`→`opus-1m` に修正。
+
+### 📝 ドキュメント・表記整合
+- README の「主な機能」に v0.5.4（フォーム項目）/ v0.5.5（cwd 修正）/ v0.5.6（Opus 1M・Fable 除外）を追記（v0.5.3 で止まっていた）。
+- `AgentConfig.effort` の陳腐化コメント（「max は Opus 4.6 のみ」）を現行に修正（max は全モデル可・セッション限定、Opus 4.8 既定=high）。
+
+### 確認
+- 横断 grep でモデル分岐・列挙・コスト/色/ラベル・effort・版表記を点検。`sessionTreeProvider` は `.includes('opus')` 方式のため opus-1m も自動的に拾えることを確認（変更不要）。
+- 全 30 テスト合格・`tsc` クリーン。
+
 ## v0.5.6 (2026-06-01) — モデル選択を現行 Claude Code に追従（Opus 1M 追加 / Fable 除外）
 
 現行 Claude Code（2.1.158 世代）のモデル構成に合わせてエージェントのモデル選択を更新。

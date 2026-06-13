@@ -80,6 +80,22 @@ python c:/xampp/.agent-rules/temp/migrate_agents.py
 
 ## 主な機能
 
+### v0.5.6 新機能（モデル選択の現行追従）
+
+- **Opus 1M 追加** — `opus-1m`（Opus 4.8 + 1M 長文コンテキスト）をエージェントのモデル選択に追加。大規模調査・大量ファイル向け（Sonnet 1M と対）
+- **Fable は非選択** — 最上位の `fable`（Fable 5）は組織で無効化のため選択肢に出さない（`normalizeModel` は `fable→opus` フォールバック）
+- モデルラベルを現行版に更新（Opus 4.8 / Sonnet 4.6 / Haiku 4.5）
+
+### v0.5.5 修正（新規セッション作成のクロスOS cwd）
+
+- 紐づけ「新規セッション作成」が、エージェントの `workDir`（Windows パス）を spawn の cwd に生使用して失敗していた問題を修正。`translateWorkDirPath` でクロス OS 変換 + 実在チェック + workspace/home フォールバック
+
+### v0.5.4 新機能（エージェントフォームに現行 subagent 項目）
+
+- **許可ツール（allowedTools）** — チェックボックス選択（全オフ=全継承）
+- **worktree 隔離（`isolation: worktree`）** / **バックグラウンド実行（`background: true`）** — トグル追加
+- フォーム由来の値は「指定があれば採用」で解除も反映（フォーム権威セマンティクス）
+
 ### v0.5.3 新機能（QA・安定性）
 
 - **frontmatter クォートバグ修正** — エージェントの `role` / `displayName` 等に `"` と改行が同時に含まれると YAML が複数行に割れて値が破損していた不具合を修正（`\n`/`\r`/`\t` エスケープ + パーサのダブルクォート復号を単一パス化）

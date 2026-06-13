@@ -218,10 +218,12 @@ async function readAgentFile(agentName: string, fileName: string): Promise<strin
 async function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle: string | undefined): Promise<string> {
 	const displayName = agent.displayName ? `${agent.displayName}（${agent.name}）` : agent.name;
 	const modelChar = agent.model === 'sonnet-1m' ? '１'
+		: agent.model === 'opus-1m' ? 'Ｏ'
 		: agent.model === 'opus' ? 'Ｏ'
 		: agent.model === 'haiku' ? 'Ｈ'
 		: 'Ｓ';
 	const modelLabel = agent.model === 'opus' ? 'Opus'
+		: agent.model === 'opus-1m' ? 'Opus 1M'
 		: agent.model === 'sonnet-1m' ? 'Sonnet 1M'
 		: agent.model === 'haiku' ? 'Haiku'
 		: 'Sonnet';

@@ -91,7 +91,7 @@ export interface AgentConfig {
 	previousSessionIds?: string[]; // 過去のセッションID（直近5件）
 	status?: 'active' | 'idle' | 'archived';
 	// Phase 1b: モデル制御
-	effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; // 推論努力レベル（xhigh: v2.1.111追加, max は Opus 4.6 のみ）
+	effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; // 推論努力レベル（xhigh: v2.1.111+, max: 全モデル可・セッション限定。Opus 4.8 既定=high）
 	thinkingEnabled?: boolean;   // Extended Thinking 有効/無効
 	permissionMode?: string;     // 権限モード（acceptEdits, auto, plan, default, bypassPermissions）
 	// CC subagent frontmatter (2.1.15x+)

@@ -577,7 +577,7 @@ function renderMiniOrg() {
 	const children = nodes.filter(n => n.parent);
 
 	function modelClass(model) {
-		if (model === 'opus')  return 'model-opus';
+		if (model === 'opus' || model === 'opus-1m')  return 'model-opus';
 		if (model === 'haiku') return 'model-haiku';
 		return 'model-sonnet';
 	}

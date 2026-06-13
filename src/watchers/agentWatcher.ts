@@ -247,6 +247,7 @@ export class AgentWatcher implements vscode.Disposable {
 		// 短縮名 → 正式IDプレフィックスのマッピング（バージョン番号は問わない）
 		const prefixMap: Record<string, string> = {
 			'opus':     'claude-opus-',
+			'opus-1m':  'claude-opus-',
 			'sonnet':   'claude-sonnet-',
 			'haiku':    'claude-haiku-',
 			'sonnet-1m': 'claude-sonnet-',
@@ -258,10 +259,12 @@ export class AgentWatcher implements vscode.Disposable {
 		}
 
 		// 逆方向: actualModelが短縮名を含む（例: claude-opus-4-7 → "opus" を含む）
-		if (act.includes(cfg)) { return true; }
+		// ただし '-1m' 付き cfg は素の包含判定だと取りこぼすので除外
+		if (!cfg.endsWith('-1m') && act.includes(cfg)) { return true; }
 
-		// 1Mコンテキスト: sonnet-1m ↔ claude-sonnet-*[1m]
+		// 1Mコンテキスト: <model>-1m ↔ claude-<model>-*[1m]
 		if (cfg === 'sonnet-1m' && act.includes('sonnet') && act.includes('[1m]')) { return true; }
+		if (cfg === 'opus-1m' && act.includes('opus') && act.includes('[1m]')) { return true; }
 
 		return false;
 	}

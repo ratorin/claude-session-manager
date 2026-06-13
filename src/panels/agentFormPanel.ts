@@ -83,7 +83,7 @@ export function showAgentFormPanel(
 						function resolveModelName(rawModel: string): string {
 							if (rawModel.includes('[1m]')) {
 								if (rawModel.includes('sonnet')) { return 'sonnet-1m'; }
-								return 'opus'; // opus[1m]
+								return 'opus-1m'; // opus[1m]
 							}
 							if (rawModel.includes('opus')) { return 'opus'; }
 							if (rawModel.includes('sonnet')) { return 'sonnet'; }
