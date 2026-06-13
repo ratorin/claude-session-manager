@@ -22,7 +22,7 @@ export interface AgentDefinition {
 	/** CSM独自: 日本語説明（UI表示用） */
 	displayDescription?: string;
 	/** CLI標準: モデル */
-	model: 'opus' | 'sonnet' | 'sonnet-1m' | 'haiku';
+	model: 'opus' | 'opus-1m' | 'sonnet' | 'sonnet-1m' | 'haiku';
 	/** CLI標準: メモリモード */
 	memory?: string;
 	/** CLI標準: 利用可能ツール */

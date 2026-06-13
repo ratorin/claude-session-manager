@@ -15,9 +15,11 @@ export interface CliCommand {
 // 例: 'opus' → フロントマターに 'opus' → CC が claude-opus-4-8 等へ解決
 export const modelCliMap: Record<string, string> = {
 	'opus': 'opus',
+	'opus-1m': 'opus[1m]',     // Opus 4.8 + 1M コンテキスト
 	'sonnet': 'sonnet',
 	'sonnet-1m': 'sonnet[1m]',
 	'haiku': 'haiku',
+	// 注: 'fable'(Fable 5) は意図的に非対応（選択肢に出さない）
 };
 
 // AgentConfig から CLI コマンドを組み立てる

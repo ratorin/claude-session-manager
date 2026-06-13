@@ -57,6 +57,7 @@ function loadFresh(tmpHome) {
 		afm: require(path.join(REPO, 'out', 'agents', 'agentFileManager')),
 		cleanup: require(path.join(REPO, 'out', 'utils', 'csmHookCleanup')),
 		agentUtils: require(path.join(REPO, 'out', 'utils', 'agentUtils')),
+		cliBuilder: require(path.join(REPO, 'out', 'utils', 'cliBuilder')),
 	};
 }
 
@@ -389,4 +390,39 @@ test('F1 translateWorkDirPath: Windows workDir を Linux HGFS パスへ変換（
 	// 既に Linux パスならそのまま
 	assert.equal(t('/home/u/proj'), '/home/u/proj', 'Linux パスは不変');
 	assert.equal(t(''), '', '空は空');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// G. モデル更新（opus-1m 追加 / Fable は非選択・opus フォールバック）
+// ════════════════════════════════════════════════════════════════════════════
+
+test('G1 normalizeModel: opus-1m / opus[1m] / sonnet[1m] / 正式ID / fable を正規化', () => {
+	const { agentUtils } = loadFresh(setupTmpHome());
+	const n = agentUtils.normalizeModel;
+	assert.equal(n('opus-1m'), 'opus-1m', 'opus-1m エイリアス');
+	assert.equal(n('opus[1m]'), 'opus-1m', 'CLI 値 opus[1m] → opus-1m');
+	assert.equal(n('sonnet[1m]'), 'sonnet-1m', 'sonnet[1m] → sonnet-1m');
+	assert.equal(n('claude-opus-4-8'), 'opus', '正式ID opus');
+	assert.equal(n('claude-sonnet-4-6'), 'sonnet', '正式ID sonnet');
+	// Fable は禁止 → opus にフォールバック（選択肢には出さない）
+	assert.equal(n('fable'), 'opus', 'fable → opus フォールバック');
+	assert.equal(n('claude-fable-5'), 'opus', 'fable 正式ID → opus');
+});
+
+test('G2 modelCliMap: opus-1m=opus[1m] / fable キーは存在しない', () => {
+	const { cliBuilder } = loadFresh(setupTmpHome());
+	assert.equal(cliBuilder.modelCliMap['opus-1m'], 'opus[1m]', 'opus-1m → opus[1m]');
+	assert.equal(cliBuilder.modelCliMap['sonnet-1m'], 'sonnet[1m]');
+	assert.equal(cliBuilder.modelCliMap['fable'], undefined, 'fable は意図的に非対応');
+});
+
+test('G3 opus-1m 往復: frontmatter に opus[1m] と書かれ opus-1m で復元', async () => {
+	const home = setupTmpHome();
+	const { afm } = loadFresh(home);
+	await afm.writeAgentFile({ name: 'big', model: 'opus-1m', role: 'r' });
+	afm.invalidateCache();
+	const def = await afm.getAgentByName('big');
+	assert.equal(def.model, 'opus-1m', 'opus-1m 往復');
+	const md = fs.readFileSync(path.join(home, '.claude', 'agents', 'big.md'), 'utf-8');
+	assert.match(md, /model: opus\[1m\]/, 'frontmatter は CLI 値 opus[1m]');
 });

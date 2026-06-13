@@ -81,7 +81,7 @@ export interface AgentConfig {
 	role: string;                // 役割（例: デバッグ・品質確認）
 	displayRole?: string;        // 日本語役割説明（UI表示用）
 	displayDescription?: string; // 日本語説明（UI表示用）
-	model: 'opus' | 'sonnet' | 'sonnet-1m' | 'haiku'; // sonnet-1m = 長文コンテキスト対応モデル
+	model: 'opus' | 'opus-1m' | 'sonnet' | 'sonnet-1m' | 'haiku'; // -1m = 1M 長文コンテキスト対応（opus-1m: Opus 4.8 + 1M）
 	sessionMode?: 'fixed' | 'disposable'; // セッション運用（固定 / 使い捨て）
 	ruleFile?: string;           // ルールファイルパス
 	parentAgent?: string;        // 親エージェント名（班の場合）

@@ -610,16 +610,20 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 			<label for="model-opus">Opus<div class="radio-sub">Opus 4.8 — 最高度の判断・複雑な開発（デフォルト high effort）</div></label>
 		</div>
 		<div class="radio-option">
+			<input type="radio" name="model" id="model-opus-1m" value="opus-1m" ${v.model === 'opus-1m' ? 'checked' : ''}>
+			<label for="model-opus-1m">Opus 1M<div class="radio-sub">Opus 4.8 + 1M 長文コンテキスト（大規模調査・大量ファイル）</div></label>
+		</div>
+		<div class="radio-option">
 			<input type="radio" name="model" id="model-sonnet" value="sonnet" ${v.model === 'sonnet' ? 'checked' : ''}>
-			<label for="model-sonnet">Sonnet<div class="radio-sub">定型作業・補助（コスト効率◎）</div></label>
+			<label for="model-sonnet">Sonnet<div class="radio-sub">Sonnet 4.6 — 定型作業・補助（コスト効率◎）</div></label>
 		</div>
 		<div class="radio-option">
 			<input type="radio" name="model" id="model-sonnet-1m" value="sonnet-1m" ${v.model === 'sonnet-1m' ? 'checked' : ''}>
-			<label for="model-sonnet-1m">Sonnet 1M<div class="radio-sub">長文コンテキスト（5倍）・定型作業</div></label>
+			<label for="model-sonnet-1m">Sonnet 1M<div class="radio-sub">Sonnet 4.6 + 1M 長文コンテキスト・定型作業</div></label>
 		</div>
 		<div class="radio-option">
 			<input type="radio" name="model" id="model-haiku" value="haiku" ${v.model === 'haiku' ? 'checked' : ''}>
-			<label for="model-haiku">Haiku<div class="radio-sub">軽量タスク・高速応答</div></label>
+			<label for="model-haiku">Haiku<div class="radio-sub">Haiku 4.5 — 軽量タスク・高速応答</div></label>
 		</div>
 	</div>
 </div>
@@ -957,7 +961,7 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	// モデル変更時のグレーアウト連動
 	function onModelChange(model) {
 		const maxOption = document.getElementById('effort-option-max');
-		if (model === 'opus') {
+		if (model === 'opus' || model === 'opus-1m') {
 			maxOption.classList.remove('disabled');
 		} else {
 			maxOption.classList.add('disabled');

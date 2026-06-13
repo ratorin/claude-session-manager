@@ -1,5 +1,23 @@
 # 更新履歴
 
+## v0.5.6 (2026-06-01) — モデル選択を現行 Claude Code に追従（Opus 1M 追加 / Fable 除外）
+
+現行 Claude Code（2.1.158 世代）のモデル構成に合わせてエージェントのモデル選択を更新。
+
+### ➕ Opus 1M を追加
+- **Opus 1M（`opus-1m` → CLI `opus[1m]`）** をモデル選択肢に追加。Opus 4.8 + 1M 長文コンテキスト。
+  大規模調査・大量ファイル処理向け（従来の Sonnet 1M と対）。
+- `AgentConfig` / `AgentDefinition` の model union、`modelCliMap`、`normalizeModel`、フォームラジオ、
+  effort `max` の有効化条件（opus ファミリ）を更新。
+
+### 🚫 Fable は選択肢に含めない（組織で無効化）
+- 現行 CC には最上位の `fable`（Fable 5）が追加されたが、**組織で無効化されているため CSM の選択肢には出さない**。
+- 防御策として `normalizeModel('fable')` は `opus` にフォールバック（禁止モデルを保持・表示しない）。
+
+### 表記更新
+- モデルラベルを現行版に更新（Sonnet 4.6 / Haiku 4.5 を明記、Opus は 4.8）。
+- test: G1〜G3 を追加（normalizeModel / modelCliMap / opus-1m 往復）。全 30 テスト合格。
+
 ## v0.5.5 (2026-06-01) — 新規セッション作成のクロスOS cwd バグ修正
 
 ### 🐛 紐づけ「新規セッション作成」失敗を修正
