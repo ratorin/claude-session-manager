@@ -343,6 +343,7 @@ export function activate(context: vscode.ExtensionContext) {
 	// 利用率メニュー（StatusBarクリック時）
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.openUsageMenu', async () => {
+			const showRemainingNow = vscode.workspace.getConfiguration('claudeManager').get<boolean>('usage.showRemaining', false);
 			const items: vscode.QuickPickItem[] = [
 				{
 					label: '$(browser) Claude Code を開く',
@@ -353,6 +354,11 @@ export function activate(context: vscode.ExtensionContext) {
 					label: '$(link-external) claude.ai/settings/usage をブラウザで開く',
 					description: '使用量ページをブラウザで表示',
 					detail: 'https://claude.ai/settings/usage',
+				},
+				{
+					label: `$(arrow-swap) ${showRemainingNow ? '利用率（使用%）表示に切替' : '残量（残り%）表示に切替'}`,
+					description: showRemainingNow ? '現在: 残量表示' : '現在: 利用率表示',
+					detail: '残量 = 100% − 利用率。ステータスバーの表示を切り替えます',
 				},
 				{
 					label: '$(refresh) 利用率を再取得',
@@ -382,6 +388,13 @@ export function activate(context: vscode.ExtensionContext) {
 				// claude.ai をブラウザで開く
 				const primaryUrl = vscode.Uri.parse('https://claude.ai/settings/usage');
 				await vscode.env.openExternal(primaryUrl);
+			} else if (selected.label.startsWith('$(arrow-swap)')) {
+				// 残量 ⇄ 利用率 の表示切替（グローバル設定を更新して再描画）
+				await vscode.workspace.getConfiguration('claudeManager')
+					.update('usage.showRemaining', !showRemainingNow, vscode.ConfigurationTarget.Global);
+				const enabled = getConfig<boolean>('enableUsageMonitor', false);
+				if (enabled) { await usageMonitor.refresh(); }
+				vscode.window.showInformationMessage(`ステータスバーを${!showRemainingNow ? '残量' : '利用率'}表示に切り替えました`);
 			} else if (selected.label.startsWith('$(refresh)')) {
 				// 利用率を再取得
 				const enabled = getConfig<boolean>('enableUsageMonitor', false);
