@@ -451,3 +451,18 @@ test('H1 pruneOldSettingsBackups: 最新 N 件だけ残して古い .bak を削�
 	assert.ok(!remaining.includes('settings.json.bak.1000'), '最古を削除');
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// I. 追加分（overage）表示
+// ════════════════════════════════════════════════════════════════════════════
+
+test('I1 formatOverageText: 追加分の利用率を表示 / データ無しは空', () => {
+	const { usageMonitor } = loadFresh(setupTmpHome());
+	const base = {
+		usage5h: 5, usage7d: 10, reset5h: 0, reset7d: 0,
+		usageSonnet5d: -1, resetSonnet5d: 0, usageOpus5d: -1, resetOpus5d: 0, fetchedAt: 0,
+	};
+	assert.equal(usageMonitor.formatOverageText({ ...base, overageUtilization: 0, overageStatus: 'allowed', overageReset: 0 }), '追加 0%');
+	assert.equal(usageMonitor.formatOverageText({ ...base, overageUtilization: 12.5, overageStatus: 'allowed', overageReset: 0 }), '追加 12.5%');
+	assert.equal(usageMonitor.formatOverageText({ ...base, overageUtilization: -1, overageStatus: '', overageReset: 0 }), '', 'データ無しは空');
+});
+

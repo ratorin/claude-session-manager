@@ -15,6 +15,10 @@ export interface UsageData {
 	resetSonnet5d: number;  // Sonnet 5日リセット時刻（Unix秒）
 	usageOpus5d: number;    // Opus 5日間利用率（%）
 	resetOpus5d: number;    // Opus 5日リセット時刻（Unix秒）
+	// 追加分（overage）。取得できない場合は overageUtilization = -1
+	overageUtilization: number;  // 追加分の利用率（%）
+	overageStatus: string;       // 追加分の状態（allowed 等）
+	overageReset: number;        // 追加分リセット時刻（Unix秒）
 	fetchedAt: number;  // 取得時刻（ms）
 }
 
@@ -120,6 +124,11 @@ function fetchUsageHeaders(accessToken: string): Promise<FetchResult> {
 				const resetSonnet5d = pickHeader(['anthropic-ratelimit-claude-sonnet-5d-reset',       'anthropic-ratelimit-sonnet-5d-reset',       'anthropic-ratelimit-unified-sonnet-5d-reset']);
 				const resetOpus5d   = pickHeader(['anthropic-ratelimit-claude-opus-5d-reset',         'anthropic-ratelimit-opus-5d-reset',         'anthropic-ratelimit-unified-opus-5d-reset']);
 
+				// 追加分（overage）: 利用率 / 状態 / リセット
+				const rawOverage   = pickHeader(['anthropic-ratelimit-unified-overage-utilization']);
+				const resetOverage = pickHeader(['anthropic-ratelimit-unified-overage-reset']);
+				const overageStatus = (headers['anthropic-ratelimit-unified-overage-status'] as string) || '';
+
 				// 全rate-limitヘッダをデバッグログ出力（ヘッダ名発見用）
 				const allHeaders = Object.keys(headers).filter(h => h.includes('ratelimit'));
 				log.appendLine(`  ratelimit headers: ${allHeaders.join(', ')}`);
@@ -135,7 +144,8 @@ function fetchUsageHeaders(accessToken: string): Promise<FetchResult> {
 				const pct7d = isNaN(usage7d) ? 0 : Math.round(usage7d * 1000) / 10;
 				const pctSonnet5d = isNaN(rawSonnet5d) ? -1 : Math.round(rawSonnet5d * 1000) / 10;
 				const pctOpus5d   = isNaN(rawOpus5d)   ? -1 : Math.round(rawOpus5d * 1000) / 10;
-				log.appendLine(`  5h: ${pct5h}%, 7d: ${pct7d}%, S5d: ${pctSonnet5d}%, O5d: ${pctOpus5d}%`);
+				const pctOverage  = isNaN(rawOverage)  ? -1 : Math.round(rawOverage * 1000) / 10;
+				log.appendLine(`  5h: ${pct5h}%, 7d: ${pct7d}%, S5d: ${pctSonnet5d}%, O5d: ${pctOpus5d}%, 追加: ${pctOverage}% (${overageStatus})`);
 
 				resolve({
 					data: {
@@ -147,6 +157,9 @@ function fetchUsageHeaders(accessToken: string): Promise<FetchResult> {
 						resetSonnet5d: isNaN(resetSonnet5d) ? 0 : resetSonnet5d,
 						usageOpus5d: pctOpus5d,
 						resetOpus5d: isNaN(resetOpus5d) ? 0 : resetOpus5d,
+						overageUtilization: pctOverage,
+						overageStatus,
+						overageReset: isNaN(resetOverage) ? 0 : resetOverage,
 						fetchedAt: Date.now(),
 					},
 					statusCode,
@@ -217,6 +230,15 @@ export function formatUsageText(data: UsageData, show5d = true): string {
 		parts.push(`O ${fmtPct(data.usageOpus5d)}% ${ro}`);
 	}
 	return parts.join(' / ');
+}
+
+/**
+ * 追加分（overage）のステータスバー用テキスト。データが無ければ '' を返す。
+ * 例: "追加 0%"（API は利用率%のみ提供、ドル金額は無し）
+ */
+export function formatOverageText(data: UsageData): string {
+	if (typeof data.overageUtilization !== 'number' || data.overageUtilization < 0) { return ''; }
+	return `追加 ${fmtPct(data.overageUtilization)}%`;
 }
 
 // 利用率監視クラス
@@ -303,7 +325,9 @@ export class UsageMonitor implements vscode.Disposable {
 			this.lastData = data;
 			// T2.23: show5dColumns 設定を読んで表示フォーマットを切り替え
 			const show5d = vscode.workspace.getConfiguration('claudeManager').get<boolean>('usage.show5dColumns', true);
-			this.statusBarItem.text = `$(dashboard) ${formatUsageText(data, show5d)}`;
+			// 追加分（overage）は使用量とは別セグメントで併記
+			const overageText = formatOverageText(data);
+			this.statusBarItem.text = `$(dashboard) ${formatUsageText(data, show5d)}${overageText ? ` ｜ ${overageText}` : ''}`;
 
 			// 警告色の判定（5h / Sonnet5d / Opus5d の最大値で判定）
 			const candidates = [data.usage5h, data.usage7d];
@@ -331,6 +355,12 @@ export class UsageMonitor implements vscode.Disposable {
 			}
 			if (show5d && data.usageOpus5d >= 0) {
 				tooltipLines.push(`Opus 5日: ${fmtPct(data.usageOpus5d)}%（リセットまで ${formatTimeRemaining(data.resetOpus5d)}）`);
+			}
+			if (data.overageUtilization >= 0) {
+				const ro = data.overageReset ? `・リセットまで ${formatTimeRemaining(data.overageReset)}` : '';
+				tooltipLines.push('');
+				tooltipLines.push(`追加分(overage): ${fmtPct(data.overageUtilization)}% 使用 / ${data.overageStatus || '不明'}${ro}`);
+				tooltipLines.push('※ ドル残高は claude.ai/settings/usage で確認（APIは%のみ提供）');
 			}
 			this.statusBarItem.tooltip = tooltipLines.join('\n');
 
