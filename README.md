@@ -18,67 +18,16 @@
 
 ---
 
-## ⚠️ 取締役セッション運用者へ（重要）
-
-### エージェント運用について（v0.4.4 更新）
-
-v0.4.0 よりエージェント定義は **`~/.claude/agents/*.md`**（Claude Code CLI 標準）が **Single Source of Truth** です。
-CSM はエージェント定義ファイルを自動検出・GUI管理し、`session-manager.json` にはブックマーク・タグ等の CSM 独自データのみを保持します。
-
-v0.4.1: 旧形式 `agents[]` からの自動マイグレーション（`agentSessions` に統一）
-v0.4.2: エージェントプレビューパネル・確認待ち横断ビュー・`/csm-ask-agent` スキル・SessionStart hookによる役割自動注入・extension.ts分割（2776→347行）
-v0.4.3: Windows `.cmd` EINVAL 回避・他プロジェクトのセッションタイトル解決・`/csm-ask-agent` の workDir cd 対応・空sessionId自動クリーンアップ
-v0.4.4: Claude Code v2.1.113（claude.exe ネイティブバイナリ）対応・「Claudeで開く（IDE）」workspace整合チェック・サブエージェント10分タイムアウト対応・エラー自動収集（ローカル）
-v0.4.5: `/csm-ask-agent` スキル指示の刷新（無条件フォールバック禁止、workDir cd 必須、`No conversation found` 時のユーザー確認）
-v0.4.6: 緊急パッチ — MEMORY.md 別プロジェクト汚染防止 / `csm-precompact.sh` → `.js` 移行（Windows silent fail解消）/ dataStore 並行書き込み排他 / セッションパス エンコード非対称解消（大小文字・スペース）/ dead menu削除 / OutputChannel リーク修正
-
-#### 起動方式
-
-**推奨: `/csm-ask-agent` スキル**（Claude セッション内から使用）
-
-```
-/csm-ask-agent csm-impl "セッション一覧の表示速度を改善して"
-/csm-ask-agent al-debug "見積一覧画面で500エラーが出る。調査して"
-```
-
-- セッションIDがあれば `--resume` で既存セッションに継続、なければ `--agent` で新規起動
-- 完了報告を自動的に返すため、結果確認が不要
-- 出力先: `.agent-rules/tmp/agent_{name}_{タスク名}.txt`
-
-**代替: bash から直接起動**
-
-```bash
-# 部署に指示
-echo "指示内容" | claude --agent <部署名> -p > .agent-rules/tmp/agent_{部署名}_{タスク}.txt 2>&1
-
-# 同じ部署に並行タスク
-echo "タスクA" | claude --agent <部署名> -p > .agent-rules/tmp/agent_{部署名}_taskA.txt 2>&1 &
-echo "タスクB" | claude --agent <部署名> -p > .agent-rules/tmp/agent_{部署名}_taskB.txt 2>&1 &
-```
-
-> **Agent ツール（subagent_type）は使い捨て調査のみ許可。** 並行タスクには使わないでください（親コンテキスト漏洩の問題があります — Issue #14118）。
-
-#### セッション跨ぎの記憶（memory: project）
-
-`agents/*.md` の frontmatter に `memory: project` を設定すると、セッションをまたいでエージェントが記憶を保持します。ルールファイルに遺言を蓄積する旧方式と異なり、Claude Code 本体の機能として自然に動作します。
-
-#### 旧方式からの移行
-
-`--resume <セッションID>` や `session-manager.json` の `agents[]` を使っていた場合は、移行スクリプトで一括変換できます:
-
-```bash
-python c:/xampp/.agent-rules/temp/migrate_agents.py
-```
-
-移行後は `--agent <name> -p` での起動に切り替えてください。`session-manager.json` の旧 `agents[]` は読み取り専用で後方互換を維持しますが、新規追加はすべて `agents/*.md` に対して行われます。
-
----
-
 ブックマーク、タグ付け、メモ、Markdownプレビュー、エージェント管理、組織図など、Claude Code本体にない会話・エージェント管理機能を提供します。
 
 ---
 
 ## 主な機能
+
+### v0.5.7〜v0.5.12（利用状況表示・安定化）
+
+- **追加分（overage）をステータスバーに別表示** — 使用量%はそのまま、`… ｜ 追加 0%` の形で追加分の利用率を併記（API は利用率%のみ提供。ドル金額は claude.ai/settings/usage で確認）
+- モデル表示の整合（opus-1m 等）・hook ライフサイクルの QA 修正・frontmatter クォート修正・設定バックアップの世代管理 など安定化
 
 ### v0.5.6 新機能（モデル選択の現行追従）
 
