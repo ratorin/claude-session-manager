@@ -377,6 +377,25 @@ test('E3 フォーム権威: 空配列/解除で再保存すると isolation/bac
 	assert.ok(!def.tools || def.tools.length === 0, 'allowedTools クリア（全継承）');
 });
 
+test('E4 maxTurns 往復: 数値が保存・復元され、0 でクリア、未指定は書かない', async () => {
+	const home = setupTmpHome();
+	const { afm } = loadFresh(home);
+	await afm.writeAgentFile({ name: 'mt', model: 'opus', role: 'r', maxTurns: 5 });
+	afm.invalidateCache();
+	let def = await afm.getAgentByName('mt');
+	assert.equal(def.maxTurns, 5, 'maxTurns 復元');
+	assert.match(fs.readFileSync(path.join(home, '.claude', 'agents', 'mt.md'), 'utf-8'), /maxTurns: 5/, 'frontmatter に maxTurns');
+	// フォーム権威: 0 でクリア
+	await afm.saveAgentConfig({ name: 'mt', sessionId: '', role: 'r', model: 'opus', maxTurns: 0 });
+	afm.invalidateCache();
+	assert.equal((await afm.getAgentByName('mt')).maxTurns, undefined, 'maxTurns クリア');
+	// 未指定は書かない
+	await afm.writeAgentFile({ name: 'mt2', model: 'opus', role: 'r' });
+	afm.invalidateCache();
+	assert.equal((await afm.getAgentByName('mt2')).maxTurns, undefined, '未指定は undefined');
+	assert.doesNotMatch(fs.readFileSync(path.join(home, '.claude', 'agents', 'mt2.md'), 'utf-8'), /maxTurns/, '未指定は frontmatter に書かない');
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 // F. クロス OS workDir 変換（新規セッション作成の cwd 解決）
 // ════════════════════════════════════════════════════════════════════════════

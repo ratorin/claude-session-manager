@@ -1,5 +1,17 @@
 # 更新履歴
 
+## v0.5.13 (2026-06-27) — エージェントフォームに maxTurns を追加（現行 CC 追従）
+
+現行 Claude Code(2.1.19x)のサブエージェント frontmatter に合わせ、`maxTurns` をフォームから設定可能に。
+
+### ➕ maxTurns
+- **最大ターン数（maxTurns）** — 数値入力（空=無制限）。暴走・コスト制御用。`AgentConfig`/`AgentDefinition` に追加し、parse/buildFrontmatter/toAgentConfig/saveAgentConfig を整備。
+- フォーム権威セマンティクス: 0/空で**クリア**、`>0` で設定。未指定・0以下は frontmatter に書かない。
+- test: E4（maxTurns 往復・クリア・未指定）追加。全 33 テスト合格。
+
+### 注記
+- モデル/effort/SubagentStart-Stop hook は既に現行 CC に整合（前 commit で README に追従状況を明記）。`initialPrompt` 等の他フィールドは CSM の初期注入と競合しうるため意図的に見送り。
+
 ## v0.5.12 (2026-06-01) — 追加分（overage）をステータスバーに別表示
 
 - ステータスバーの利用率（使用量）表示はそのまま、**追加分（overage）を別セグメントで併記**: `… ｜ 追加 0%`。

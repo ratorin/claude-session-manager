@@ -33,6 +33,8 @@ export interface AgentDefinition {
 	isolation?: string;
 	/** CLI標準: バックグラウンド実行 */
 	background?: boolean;
+	/** CLI標準: 最大ターン数 */
+	maxTurns?: number;
 	/** CSM独自: HISTORY自動追記 */
 	historyEnabled?: boolean;
 	/** CSM独自: HISTORY.md 保存先スコープ上書き（未指定=.md実在スコープ） */
@@ -122,6 +124,7 @@ async function parseAgentFile(filePath: string, scope: 'global' | 'project'): Pr
 			permissionMode: d.permissionMode ? String(d.permissionMode) : undefined,
 			isolation: d.isolation ? String(d.isolation) : undefined,
 			background: d.background === true || d.background === 'true',
+			maxTurns: (() => { const n = Number(d.maxTurns); return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined; })(),
 			historyEnabled: d.historyEnabled === true || d.historyEnabled === 'true',
 			historyScope: (d.historyScope === 'global' || d.historyScope === 'project') ? d.historyScope : undefined,
 			todoEnabled: d.todoEnabled === true || d.todoEnabled === 'true',
@@ -305,6 +308,7 @@ export function toAgentConfig(def: AgentDefinition): AgentConfig {
 		showInOrgChart: def.showInOrgChart,
 		isolation: def.isolation,
 		background: def.background,
+		maxTurns: def.maxTurns,
 	};
 }
 
@@ -444,6 +448,7 @@ function buildFrontmatter(def: Partial<AgentDefinition> & { name: string }): str
 	if (def.todoEnabled !== undefined) { lines.push(`todoEnabled: ${def.todoEnabled}`); }
 	if (def.isolation) { lines.push(`isolation: ${def.isolation}`); }
 	if (def.background) { lines.push(`background: true`); }
+	if (def.maxTurns && def.maxTurns > 0) { lines.push(`maxTurns: ${Math.floor(def.maxTurns)}`); }
 	if (def.parentAgent) { lines.push(`parentAgent: ${quoteYamlValue(def.parentAgent)}`); }
 	if (def.status) { lines.push(`status: ${def.status}`); }
 	if (def.workDir) { lines.push(`workDir: ${quoteYamlValue(def.workDir)}`); }
@@ -479,6 +484,7 @@ export async function saveAgentConfig(config: AgentConfig, body?: string): Promi
 		tools: config.allowedTools !== undefined ? config.allowedTools : existing?.tools,
 		isolation: config.isolation !== undefined ? (config.isolation || undefined) : existing?.isolation,
 		background: config.background !== undefined ? config.background : existing?.background,
+		maxTurns: config.maxTurns !== undefined ? (config.maxTurns || undefined) : existing?.maxTurns,
 		permissionMode: config.permissionMode || existing?.permissionMode,
 		historyEnabled: config.historyEnabled !== undefined ? config.historyEnabled : existing?.historyEnabled,
 		historyScope: config.historyScope !== undefined ? config.historyScope : existing?.historyScope,

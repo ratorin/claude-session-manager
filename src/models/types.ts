@@ -97,6 +97,7 @@ export interface AgentConfig {
 	// CC subagent frontmatter (2.1.15x+)
 	isolation?: string;          // worktree 隔離（現行は 'worktree' のみ。'' / 未指定 = 隔離なし）
 	background?: boolean;        // バックグラウンド実行
+	maxTurns?: number;           // 最大ターン数（暴走/コスト制御・1以上。未指定=無制限）
 	// 記録機能
 	historyEnabled?: boolean;    // HISTORY自動追記（デフォルト: false）
 	historyScope?: 'global' | 'project';  // HISTORY保存先スコープ上書き（未指定=.md実在スコープ）

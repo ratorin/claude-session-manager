@@ -674,6 +674,7 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	<div class="form-desc">並列・バックグラウンド運用向け。サブエージェント定義の frontmatter に書き出されます。</div>
 	<label style="display:flex;align-items:center;gap:6px;margin:4px 0;font-size:13px;"><input type="checkbox" id="isolation" ${v.isolation === 'worktree' ? 'checked' : ''}>worktree 隔離（isolation: worktree — 専用ワークツリーで実行）</label>
 	<label style="display:flex;align-items:center;gap:6px;margin:4px 0;font-size:13px;"><input type="checkbox" id="background" ${v.background ? 'checked' : ''}>バックグラウンド実行（background: true）</label>
+	<label style="display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px;">最大ターン数（maxTurns）<input type="number" id="maxTurns" min="1" step="1" placeholder="無制限" value="${v.maxTurns && v.maxTurns > 0 ? v.maxTurns : ''}" style="width:90px;"><span class="form-desc" style="margin:0;">暴走/コスト制御。空=無制限</span></label>
 </div>
 
 <div class="form-group">
@@ -833,6 +834,7 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 			allowedTools: Array.from(document.querySelectorAll('input[name="tool"]:checked')).map(el => el.value),
 			isolation: document.getElementById('isolation').checked ? 'worktree' : '',
 			background: document.getElementById('background').checked,
+			maxTurns: (() => { const n = parseInt(document.getElementById('maxTurns').value, 10); return Number.isFinite(n) && n > 0 ? n : 0; })(),
 			status: ${JSON.stringify(v.status || 'idle')},
 		};
 	}
