@@ -10,11 +10,16 @@
 |-------------|------------|-----------|
 | 必須 | VS Code | 1.85.0+ |
 | 必須 | Claude Code | 2.1.113+ |
-| 推奨 | Claude Code | **2.1.158+** — 最新機能フル対応（Opus 4.8・fast mode 2x cost/2.5x speed・Faster/Smarter effort ラベル） |
-| 旧推奨 | Claude Code | 2.1.153+ — MessageDisplay hook・sessionTitle・bg tasks 継続表示 |
+| 推奨 | Claude Code | **2.1.158+**（現行最新は 2.1.19x 系 / 2026-06 Week 26 まで追従確認） |
 
 > Claude Code のバージョン確認: `claude --version`
 > アップデート: `npm install -g @anthropic-ai/claude-code`
+
+**現行 Claude Code への追従状況（2.1.19x / 2026-06 時点）**
+- モデル: `opus`(Opus 4.8) / `opus-1m` / `sonnet`(4.6) / `sonnet-1m` / `haiku`(4.5) を選択可。最上位の **Fable 5(`fable`) は組織方針で非選択**（`normalizeModel` で `fable→opus` フォールバック）。新規モデル/エイリアスの追加は無し。
+- effort: `low`〜`max` に対応。`ultracode`（= xhigh + 動的ワークフロー）はセッション専用設定のため per-agent フォームには出さない。
+- hook: `SubagentStart`/`SubagentStop` を利用（サブエージェント可視化）。`permissionDecision` 等の出力契約は現行どおり。
+- subagent frontmatter: `model`/`effort`/`permissionMode`/`allowedTools`/`isolation`/`background` をフォームから編集可。`initialPrompt` 等の新規フィールドは未対応（CSM の初期プロンプト注入と競合しうるため意図的に見送り）。
 
 ---
 
