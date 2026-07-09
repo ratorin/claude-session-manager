@@ -1,5 +1,160 @@
 # 更新履歴
 
+## v0.5.18 (2026-07-09) — Sprint C-2: UX 改善 6 件（最終バッチ）
+
+### 🔍 コードレビュー修正ラウンド（Sprint C-2 レビュー時点）
+
+Sprint C-2 実装後のコードレビュー（CRITICAL 1 件・HIGH 3 件・MEDIUM 2 件）で検出した以下 6 件を追い込み修正（本 v0.5.18 に含める）。
+
+#### レビュー修正 (1) [CRITICAL] — installCsmAskAgent の二重登録で activate() が失敗
+
+- **症状**: `claudeManager.installCsmAskAgent` を `migrationCommands.ts:272`（既存の本実装）と `agentCommands.ts:174`（Sprint C-2 で追加した walkthrough 用ラッパー）の両方が `registerCommand` していた。VS Code の `commands.registerCommand` は同一 id の二重登録で例外を投げる。`activate()` は try/catch なしのため拡張全体のアクティブ化が失敗し、起動クラッシュ。
+- **package.json 側の重複**: `contributes.commands` にも同 id が 2 件（403 行 / 610 行、タイトルが「/csm-ask-agent スキルをインストール」と「/csm-ask-agent をインストール」で不一致）。VS Code は Command Palette に両方表示してしまい混乱。
+- **修正**:
+  - `agentCommands.ts` 側の walkthrough 用ラッパーを削除。walkthrough step は既存の `migrationCommands.ts:272` 実装をそのまま呼ぶ。
+  - `package.json` の 403 行側（Sprint C-2 追加分）を削除し 610 行側の 1 件だけを維持。
+- **再発防止テスト（新規追加）**:
+  - **M1-a**: `package.json` の `contributes.commands` を Map で数え上げ、重複 id が 0 件であることを保証。
+  - **M1-b**: `src/**/*.ts` を静的スキャンして `vscode.commands.registerCommand('id')` 呼び出しを検出、同一 id が 2 か所以上あればエラーメッセージ付き `assert.fail`。以降どの Sprint でも同種の起動クラッシュを事前検知できる。
+
+#### レビュー修正 (2) [HIGH] — 組織図の dimm 表示が canvas 描画に反映されない
+
+- **症状**: `orgChartPanel.ts:272` の `.cy-node-dimmed { opacity: 0.2 }` は CSS ルール。Cytoscape は canvas 描画のため CSS はデッドコードで、検索・凡例チップの半透明化が全く効いていなかった。
+- **修正**:
+  - `buildStyle()`（543 行付近）の style 配列に `{ selector: '.cy-node-dimmed', style: { opacity: 0.2 } }` を追加。
+  - CSS 側の `.cy-node-dimmed` ルールを撤去（コメントで撤去理由を明記）。
+- **判断**: CSS 側の記述はテンプレートリテラル内のためバッククォート含み文字列を書けない制約があり、コメントは通常の全角/半角引用符で記載。
+
+#### レビュー修正 (3) [HIGH] — グローバルエージェントの getParent が undefined を返し reveal 失敗
+
+- **症状**: `agentTreeProvider.ts:199-205` の `getParent()` は `parentAgent` が無いケースを一律 `undefined` として返していたが、グローバルエージェント（`parentAgent` 無し + `shouldShowInOrgChart=false`）は実際は `GlobalAgentsSectionItem` の子として描画される。VS Code の `TreeView.reveal(item)` は親を辿れないと「該当要素なし」で失敗するため、`searchAgents` からグローバルエージェントを reveal しようとすると常にエラー。
+- **修正**:
+  - `GlobalAgentsSectionItem` の単一インスタンスを `lastGlobalSectionItem` にキャッシュ。
+  - `getParent()` で `parentAgent` が無いケースは `shouldShowInOrgChart(agent)` を見て、false なら `lastGlobalSectionItem` を返す。true（トップレベル）なら従来どおり `undefined`。
+  - `refresh()` でキャッシュを初期化。
+
+#### レビュー修正 (4) [HIGH] — グルーピングモード配下で AgentItem が展開不能
+
+- **症状**: `agentTreeProvider.ts:243`（GroupNodeItem 分岐）で `new AgentItem(a, ..., false, false, ...)` と hasChildren=false 固定。サブエージェント・タスクログを持つエージェントも Collapsed 不能で、`model`/`status`/`flat` モードで組織構造が消失。
+- **修正**:
+  - `GroupNodeItem` 分岐でも `org` モードと同じ `childMap`（親名 → 子エージェント[]）を計算し、`getVisibleTasksFn` でタスクログ有無も判定。
+  - `hasChildrenFlag = childMap.has(a.name) || hasTasks` を `AgentItem` の 5 番目の引数に渡す。
+  - AgentItem 分岐（既存）でサブエージェント / タスクログ描画するため、この修正で全モード共通に組織構造が復活。
+
+#### レビュー修正 (5) [MEDIUM] — dispose() で _onDidChangeBadge がクリーンアップされない
+
+- **症状**: Sprint C-2 で追加した `_onDidChangeBadge` EventEmitter が `dispose()` で解放されず、拡張再読み込み時にリソースリーク。
+- **修正**: `dispose()` に `this._onDidChangeBadge.dispose()` を追加。
+
+#### レビュー修正 (6) [MEDIUM] — mainTabPanel の残 #64b5f6 直書き
+
+- **症状**: `mainTabPanel.ts:1124`（`.scope-project`）と `:1301`（`.tag-chip`）が Sprint C-2 の §4-10 テーマ追従から漏れて `color: #64b5f6` 直書きのまま。隣接ルール（`.memory-type-user`）は `var(--vscode-charts-blue)` に更新済みで不整合。
+- **修正**: 2 か所を `var(--vscode-charts-blue, #64b5f6)` に統一。
+
+### 検証（レビュー修正含む v0.5.18 最終）
+
+- `npx tsc --noEmit` クリーン。
+- `npm test`: **50 / 50 → 52 / 52 pass**（M1-a / M1-b の 2 テストを新規追加）。
+  - **M1-b（registerCommand 静的重複チェック）は同種の CRITICAL バグを本 Sprint 以降で自動検知**する再発防止装置。
+- テストハーネスは修正済み USERPROFILE 隔離 + fail-fast ガード維持。
+
+### レビュー修正の判断・見送り事項
+
+- **installCsmAskAgent 実装の統合**: `migrationCommands.ts` の既存実装が本命処理（テンプレートコピー・古い .sh 退避・refreshAll）を持つため、Sprint C-2 のラッパー側を撤去する形で解消。walkthrough は既存コマンドを直接呼ぶ設計に整理。
+- **`agentCommands.ts` から `refreshAll` の削除**: 撤去したラッパーで `refreshAll` は使っていなかったため import 影響なし。
+- **静的テストの適用範囲**: `src/commands/` `src/panels/` `src/extension.ts` に限定。他ディレクトリの新設時は必要に応じて walk 対象を拡張する。
+
+
+仕様書 `docs/v0.5.x-fable-qa-20260709.md §4` の UX 改善 12 件のうち、Sprint C-1 で実装した 5 件（§4-1/2/5/6/12）に加え、本 Sprint C-2 で残り **§4-4 / §4-7 / §4-8 / §4-9 / §4-10 / §4-11** を実装。**§4-3（1M 上付き数字化）は前 Sprint 継続で保留**（現行の頭文字統一設計を尊重）。
+
+### 🌱 §4-4 ライブ視認性
+
+- **TreeView.badge API** で `claudeAgents` / `claudeAgentsLive` ビューアイコンに稼働数バッジを表示。
+  - `AgentTreeProvider.updateBadge()` を新設し、`setWatcherStates()` の後に稼働数を再計算 → `onDidChangeBadge` イベントで extension.ts に通知 → `view.badge = { value, tooltip }` を反映。
+  - tooltip は「N 件のエージェントが稼働中（登録 M 件中）」。
+- **『稼働中のみ表示』フィルタトグル** — 新コマンド `claudeManager.toggleAgentActiveOnly` + 設定 `claudeManager.agents.activeOnly`（既定 `false`）。ツールバーに `$(filter)` アイコン追加。
+  - 稼働中のエージェント本体だけでなく、その先祖ノード（親子連鎖）も残す実装で組織階層を維持。
+- **description を『セッションタイトル + 経過時間』に絞る** — 旧 description の 👁/🙈（組織図表示フラグ）は tooltip の「表示」行へ移動。
+  - 経過時間は `[対話中]` プレフィックスと重複しないよう `セッション名 · 5分` の形で出す（`isLive && !isOtherProject && mtimeMs !== undefined`）。
+- **起動時の展開状態を設定化** — 新設定 `claudeManager.agents.expandMode`（`all` / `active-branches` / `top-level`、既定 `active-branches`）。
+  - `active-branches`: 稼働中エージェント（子を持つ場合）のみ Expanded で初期化、それ以外は Collapsed。
+
+### 🧭 §4-7 オンボーディング
+
+- **`contributes.walkthroughs`** で 5 ステップの `csmGettingStarted` を新設:
+  1. Claude Code の確認（`claudeManager.openUsageMenu`）
+  2. 取締役を登録（`claudeManager.registerDirector` / `onContext:claudeManager.hasAgents`）
+  3. `/csm-ask-agent` スキルをインストール（`claudeManager.installCsmAskAgent`）
+  4. エージェント監視を有効化（`claudeManager.enableAgentMonitor` / `onSettingChanged:claudeManager.enableAgentMonitor`）
+  5. 組織図を開く（`claudeManager.openOrgChart`）
+- 各ステップの `completionEvents` に対応コマンド or 設定変更イベントを紐づけ、実行で自動チェック済みになる。
+- 各ステップに Markdown 説明ファイル（`media/walkthrough/step[1-5].md`）を配置。
+- `viewsWelcome` を **`claudeSessions` / `claudeMemory` / `claudeOrchestration`** に追加し、空状態から「使い方ガイド / エージェント監視有効化」等の次アクションに誘導。
+- `claudeAgents` 既存の viewsWelcome にウォークスルーへのリンクを追記。
+- **新規コマンド 2 種**:
+  - `claudeManager.enableAgentMonitor`: 設定を書き換えるラッパー（既に有効なら通知のみ）
+  - `claudeManager.installCsmAskAgent`: 既存インストーラコマンド（`claudeManager.installAskAgent*` / `setupAskAgent`）を優先的に呼ぶ。存在しない環境では「使い方ガイドを開く」の案内 QuickPick に切替（判断: 環境差を吸収するラッパー）。
+
+### 🗂 §4-8 グルーピング
+
+- **新コマンド `claudeManager.groupAgents`** — QuickPick で 4 モード切替:
+  - `org`: 組織図（現行の親子関係）
+  - `model`: モデル別（fable / opus / sonnet / haiku…、`MODEL_CATALOG` 順）
+  - `status`: 状態別（稼働中 / 待機 / 未紐づけ）
+  - `flat`: フラット（名前順）
+- **新設定 `claudeManager.agents.defaultGroupMode`** で永続化（既定 `org`）。`onDidChangeConfiguration` で即時反映。
+- **`GroupNodeItem`** を新設し、`getChildren(element)` の分岐でグループ配下の `AgentItem` を返す。組織図モードは既存ロジック無変更で下位互換。
+- `buildGroupNodes` は純粋関数で、テストしやすい形（判断: 単体テストは package.json 経由の設定確認で代替、TreeView 依存の Cytoscape/vscode モック省略）。
+
+### 🎯 §4-9 Activity Bar 削減 (5 → 4 アイコン)
+
+- **`claude-orchestration` コンテナを撤去**し、`claudeOrchestration` ビューを **`claude-agents` コンテナ内**（エージェント管理・お気に入り・ライブ状態と同列）へ移設。
+- Activity Bar が「💬 セッション / 👤 エージェント / 🧠 メモリ / 📁 プロジェクト」の 4 アイコンに整理。
+- 判断: 移行期間の互換 `when` 句や旧位置維持は不要（仕様書明示）。CHANGELOG のみで告知する運用。
+
+### 🎨 §4-10 テーマ追従
+
+- **webview 4 枚のモデル色以外の直書き HEX を `var(--vscode-charts-*)` へ寄せる**:
+  - `orgChartPanel.ts`: `--accent` を `charts.orange` に変更 + `body.vscode-light` / `body.vscode-high-contrast` セレクタで `--accent-fg` オーバーライド追加。
+  - `webviewPanel.ts`: `agent-badge .agent-name` の `#e27e4a` → `charts.orange`。メモリタイプ色（user/feedback/project/reference）を `charts.blue/orange/green/purple` へ。
+  - `mainTabPanel.ts`: `.memory-type-*` および `.bookmarked` の `#ffb74d` → `charts.orange`。
+  - `projectDetailPanel.ts`: `.memory-type-*` を同様に置換。
+- **モデル色は `modelCatalog.generateModelCss()` 由来を維持**（Fable 5 の `#ffd54f` 金など、v0.5.14 以降のブランドカラー要件）。
+- **Cytoscape の node 内部 style は HEX のまま維持**（判断: CSS 変数を getComputedStyle で動的解決するとテーマ切替時に再描画が必要で影響範囲が大きい。Sprint D 以降で検討）。
+
+### 🔎 §4-11 組織図検索
+
+- **検索ボックス**を組織図ツールバーに追加（`#org-search`）:
+  - 200ms デバウンス
+  - `cy.filter` で name / role を lowercase 部分一致検索
+  - 一致ノード以外に `cy-node-dimmed`（opacity 0.2）付与
+  - 一致ノード群に `cy.animate({ fit, duration: 400 })` でズーム
+- **凡例チップ 5 種**（Fable / Opus / Sonnet / Haiku / 稼働中）:
+  - クリックでトグル動作。有効時は対応モデル or 稼働中ノードのみを残し、他を半透明化
+  - 再クリックでフィルタ解除
+  - 検索ボックスと同じ dimmed クラスを流用（クラス競合なし）
+
+### 🧪 テスト
+
+- L1: walkthroughs 5 ステップの構造検証（順序 + `completionEvents` 定義）
+- L2: Activity Bar 4 コンテナ化 + `claudeOrchestration` の移設先確認
+- L3: `defaultGroupMode` 4 モード enum の存在確認
+- L4: `agents.activeOnly` / `agents.expandMode` + 新規 4 コマンドの存在確認
+- **46/46 → 50/50 pass**（Sprint C-1 → C-2 の増分 4）
+
+### 検証
+
+- `npx tsc --noEmit` クリーン。
+- `npm test`: **50 / 50 pass**。
+- テストハーネスは修正済み USERPROFILE 隔離 + fail-fast ガード維持。
+
+### 判断・見送り事項
+
+- **§4-3（1M 上付き数字化）**: Sprint C-1 と同じく保留継続。現行の頭文字統一設計を尊重。
+- **Cytoscape 内部 style の HEX**: テーマ変数への動的解決は再描画影響が大きく、別 Sprint（Sprint D）で扱う。
+- **installCsmAskAgent の実インストール処理**: 既存インストーラコマンドがある環境ではそれを呼び、なければ案内 QuickPick に切替（環境差の吸収を優先）。
+- **buildGroupNodes 単体テスト**: TreeView 依存のため package.json 経由の設定検証で代替。挙動はセッション上での目視検証を推奨。
+
 ## v0.5.17 (2026-07-09) — Sprint C-1: UX 改善 5 件（小工数・高効果）
 
 仕様書 `docs/v0.5.x-fable-qa-20260709.md §4` の UX 改善 12 件のうち、費用対効果順トップ 5（§4-1 / §4-2 / §4-5 / §4-6 / §4-12）を本 v0.5.17 に実装。

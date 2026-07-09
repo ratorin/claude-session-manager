@@ -174,11 +174,21 @@ function buildOrgChartHtml(
 	--border: var(--vscode-panel-border);
 	--text: var(--vscode-foreground);
 	--text-dim: var(--vscode-descriptionForeground);
-	--accent: #e27e4a;
-	--live: #4ec94e;
-	--opus: #b388ff;
-	--sonnet: #64b5f6;
-	--haiku: #81c784;
+	/* v0.5.18 §4-10 テーマ追従: 直書き HEX を VS Code テーマ変数へ寄せる。
+	   モデル色（--opus/--sonnet/--haiku）は modelCatalog 由来を維持し、
+	   light/high-contrast オーバーライドを body クラスセレクタで実施する。 */
+	--accent: var(--vscode-charts-orange, #e27e4a);
+	--accent-fg: var(--vscode-button-foreground, #fff);
+	--live: var(--vscode-charts-green, #4ec94e);
+	--opus: var(--vscode-charts-purple, #b388ff);
+	--sonnet: var(--vscode-charts-blue, #64b5f6);
+	--haiku: var(--vscode-charts-green, #81c784);
+}
+body.vscode-light {
+	--accent-fg: #fff;
+}
+body.vscode-high-contrast {
+	--accent-fg: var(--vscode-editor-background);
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 html, body { height:100%; overflow:hidden; }
@@ -229,9 +239,37 @@ body {
 .mode-btn:hover { background: var(--vscode-list-hoverBackground); }
 .mode-btn.active {
 	background: var(--accent);
-	color: #fff;
+	color: var(--accent-fg);
 	border-color: transparent;
 }
+/* v0.5.18 §4-11: 凡例チップ */
+.legend-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 8px;
+	font-size: 10.5px;
+	background: transparent;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	color: var(--text);
+	cursor: pointer;
+	font-family: inherit;
+	transition: background 0.1s, border-color 0.1s;
+}
+.legend-chip:hover { background: var(--vscode-list-hoverBackground); }
+.legend-chip.active {
+	border-color: var(--accent);
+	background: var(--vscode-list-activeSelectionBackground);
+}
+.legend-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	display: inline-block;
+}
+/* v0.5.18 §4-11 レビュー修正 (2): Cytoscape は canvas 描画のため CSS ルールは効かない。
+   dimm 挙動は buildStyle() 配列の .cy-node-dimmed セレクタで実装（下記参照）。この CSS ブロックは撤去。 */
 .filter-select {
 	padding: 3px 6px;
 	font-size: 11px;
@@ -318,6 +356,11 @@ body {
 		<button class="mode-btn" data-mode="group" title="グループ (ELK box)">グループ</button>
 	</div>
 
+	<!-- v0.5.18 §4-11: 検索ボックス -->
+	<div class="toolbar-group">
+		<input type="search" class="filter-select" id="org-search" placeholder="🔎 検索（名前・役割）" style="max-width:180px;" aria-label="組織図ノード検索">
+	</div>
+
 	<!-- T2.20: フィルタ -->
 	<div class="toolbar-group">
 		<span class="toolbar-label">モデル:</span>
@@ -332,6 +375,25 @@ body {
 			<option value="">すべて</option>
 			${parents.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('')}
 		</select>
+	</div>
+
+	<!-- v0.5.18 §4-11: 凡例チップ（クリックで該当色モデル or 稼働状態のみハイライト） -->
+	<div class="toolbar-group" id="legend-chips" role="group" aria-label="凡例フィルタ">
+		<button class="legend-chip" data-chip-type="model" data-chip-value="fable" title="Fable モデルのみハイライト">
+			<span class="legend-dot" style="background:var(--vscode-charts-yellow, #ffd54f);"></span>Fable
+		</button>
+		<button class="legend-chip" data-chip-type="model" data-chip-value="opus" title="Opus モデルのみハイライト">
+			<span class="legend-dot" style="background:var(--opus);"></span>Opus
+		</button>
+		<button class="legend-chip" data-chip-type="model" data-chip-value="sonnet" title="Sonnet モデルのみハイライト">
+			<span class="legend-dot" style="background:var(--sonnet);"></span>Sonnet
+		</button>
+		<button class="legend-chip" data-chip-type="model" data-chip-value="haiku" title="Haiku モデルのみハイライト">
+			<span class="legend-dot" style="background:var(--haiku);"></span>Haiku
+		</button>
+		<button class="legend-chip" data-chip-type="status" data-chip-value="live" title="稼働中のみハイライト">
+			<span class="legend-dot" style="background:var(--live);"></span>稼働中
+		</button>
 	</div>
 
 	<!-- T2.20: エクスポート -->
@@ -540,6 +602,15 @@ function buildStyle() {
 				'opacity': 0.25,
 			},
 		},
+		{
+			// v0.5.18 §4-11 レビュー修正 (2): 検索・凡例チップの dimm 表示
+			//   Cytoscape の style で opacity を指定しないと canvas 描画に反映されない
+			//   （CSS ルールはデッドコードだったため上記 buildStyle 側に集約）。
+			selector: '.cy-node-dimmed',
+			style: {
+				'opacity': 0.2,
+			},
+		},
 	];
 }
 
@@ -623,6 +694,58 @@ document.getElementById('filter-model').addEventListener('change', (e) => {
 document.getElementById('filter-parent').addEventListener('change', (e) => {
 	activeFilters.parent = e.target.value;
 	applyFilters();
+});
+
+// v0.5.18 §4-11: 検索ボックス — cy.filter で一致ノードをハイライト + fit でズーム
+let orgSearchTimer;
+document.getElementById('org-search').addEventListener('input', (e) => {
+	if (orgSearchTimer) { clearTimeout(orgSearchTimer); }
+	const q = (e.target.value || '').trim().toLowerCase();
+	// デバウンス 200ms
+	orgSearchTimer = setTimeout(() => {
+		if (!cy) { return; }
+		cy.nodes().removeClass('cy-node-dimmed');
+		if (!q) { return; }
+		const matched = cy.nodes().filter((n) => {
+			const d = n.data();
+			return String(d.label || d.id || '').toLowerCase().includes(q)
+				|| String(d.role || '').toLowerCase().includes(q);
+		});
+		cy.nodes().not(matched).addClass('cy-node-dimmed');
+		if (matched.length > 0) {
+			cy.animate({ fit: { eles: matched, padding: 60 }, duration: 400, easing: 'ease-in-out' });
+		}
+	}, 200);
+});
+
+// v0.5.18 §4-11: 凡例チップ — クリックでモデル/稼働状態フィルタ
+document.querySelectorAll('.legend-chip').forEach((chip) => {
+	chip.addEventListener('click', () => {
+		const wasActive = chip.classList.contains('active');
+		document.querySelectorAll('.legend-chip').forEach((c) => c.classList.remove('active'));
+		if (wasActive) {
+			// トグル OFF: フィルタ解除
+			if (cy) { cy.nodes().removeClass('cy-node-dimmed'); }
+			return;
+		}
+		chip.classList.add('active');
+		if (!cy) { return; }
+		const type = chip.dataset.chipType;
+		const value = chip.dataset.chipValue;
+		cy.nodes().removeClass('cy-node-dimmed');
+		const matched = cy.nodes().filter((n) => {
+			const d = n.data();
+			if (type === 'model') {
+				const m = String(d.model || '').toLowerCase();
+				return m.includes(value);
+			}
+			if (type === 'status') {
+				return value === 'live' ? !!d.isLive : true;
+			}
+			return true;
+		});
+		cy.nodes().not(matched).addClass('cy-node-dimmed');
+	});
 });
 
 // T2.20: PNG エクスポート

@@ -118,6 +118,61 @@ export function registerAgentCommands(
 		})
 	);
 
+	// v0.5.18 §4-8: エージェント表示グループを切替
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.groupAgents', async () => {
+			const cfg = vscode.workspace.getConfiguration('claudeManager');
+			const current = cfg.get<string>('agents.defaultGroupMode', 'org');
+			interface ModePick extends vscode.QuickPickItem { value: 'org' | 'model' | 'status' | 'flat'; }
+			const items: ModePick[] = [
+				{ value: 'org',    label: '組織図', description: '親子関係で階層表示（既定）' },
+				{ value: 'model',  label: 'モデル別', description: 'fable / opus / sonnet / haiku で集約' },
+				{ value: 'status', label: '状態別', description: '稼働中 / 待機 / 未紐づけ で集約' },
+				{ value: 'flat',   label: 'フラット', description: 'グルーピングなし・名前順' },
+			];
+			for (const it of items) { if (it.value === current) { it.label = `$(check) ${it.label}`; } }
+			const picked = await vscode.window.showQuickPick(items, {
+				placeHolder: 'エージェント一覧のグルーピング方式を選択',
+				title: 'エージェント表示グループ',
+			});
+			if (!picked) { return; }
+			await cfg.update('agents.defaultGroupMode', picked.value, vscode.ConfigurationTarget.Global);
+			agentProvider.setGroupMode(picked.value);
+		})
+	);
+
+	// v0.5.18 §4-4: 稼働中のみ表示を切替
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.toggleAgentActiveOnly', async () => {
+			const cfg = vscode.workspace.getConfiguration('claudeManager');
+			const current = cfg.get<boolean>('agents.activeOnly', false);
+			const next = !current;
+			await cfg.update('agents.activeOnly', next, vscode.ConfigurationTarget.Global);
+			agentProvider.setActiveOnly(next);
+			vscode.window.showInformationMessage(
+				next ? '稼働中のエージェントのみ表示中' : '全エージェントを表示中'
+			);
+		})
+	);
+
+	// v0.5.18 §4-7 walkthrough 用: エージェント監視を有効化
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.enableAgentMonitor', async () => {
+			const cfg = vscode.workspace.getConfiguration('claudeManager');
+			const already = cfg.get<boolean>('enableAgentMonitor', false);
+			if (already) {
+				vscode.window.showInformationMessage('エージェント監視は既に有効です。');
+				return;
+			}
+			await cfg.update('enableAgentMonitor', true, vscode.ConfigurationTarget.Global);
+			vscode.window.showInformationMessage('エージェント監視を有効にしました。');
+		})
+	);
+
+	// v0.5.18 §4-7 walkthrough では既存の `claudeManager.installCsmAskAgent`（migrationCommands.ts:272 実装）
+	// をそのまま呼ぶ。ここで再登録すると二重 registerCommand で activate() が失敗するため、
+	// レビュー修正 (1) [CRITICAL] で本ラッパーは撤去済み。
+
 // 初回エージェント登録時: 役割自動認識(SessionStart hook)の有効化を提案
 const SESSION_INJECT_ASKED_KEY = 'csm.sessionAgentInject.asked';
 async function promptSessionInjectIfFirstTime(context: vscode.ExtensionContext): Promise<void> {

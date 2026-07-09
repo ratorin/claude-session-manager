@@ -34,6 +34,15 @@
 - **追加分（overage）をステータスバーに別表示** — 使用量%はそのまま、`… ｜ 追加 0%` の形で追加分の利用率を併記（API は利用率%のみ提供。ドル金額は claude.ai/settings/usage で確認）
 - モデル表示の整合（opus-1m 等）・hook ライフサイクルの QA 修正・frontmatter クォート修正・設定バックアップの世代管理 など安定化
 
+### v0.5.18 新機能（Sprint C-2: UX 改善 6 件・最終バッチ）
+
+- **ライブ視認性（§4-4）** — `TreeView.badge` で「エージェント管理」「ライブ状態」ビューアイコンに稼働数バッジ、ツールバーに $(filter)『稼働中のみ表示』トグル、description は「セッションタイトル + 経過時間」に整理、👁/🙈 は tooltip 側の「表示」行へ。起動時の展開状態は `claudeManager.agents.expandMode`（`all` / `active-branches`(既定) / `top-level`）で制御。
+- **ウォークスルー（§4-7）** — Get Started 5 ステップ（Claude Code 確認 → 取締役登録 → /csm-ask-agent → 監視有効化 → 組織図）を `contributes.walkthroughs` で提供。空ビューの `viewsWelcome` を claudeSessions / claudeMemory / claudeOrchestration に追加。
+- **グルーピング切替（§4-8）** — 新コマンド `claudeManager.groupAgents` で **組織図 / モデル別 / 状態別 / フラット** の 4 モード切替。`claudeManager.agents.defaultGroupMode` で永続化。
+- **Activity Bar 削減（§4-9）** — 5→4 アイコンに整理。オーケストレーションビューはエージェントコンテナ内へ移設。
+- **テーマ追従（§4-10）** — webview 4 枚の直書き HEX（アクセント / メモリタイプ / ブックマーク）を `var(--vscode-charts-*)` へ寄せて `light` / `high-contrast` に追従。モデル色は `modelCatalog.generateModelCss()` 由来を維持。
+- **組織図検索（§4-11）** — 検索ボックスで名前・役割の高速あいまい検索 → 一致ノードに `cy.animate fit` でズーム。凡例チップ（Fable/Opus/Sonnet/Haiku/稼働中）クリックで該当以外を半透明化。
+
 ### v0.5.17 新機能（Sprint C-1: UX 改善 5 件）
 
 - **エージェント検索コマンド** — 新コマンド `claudeManager.searchAgents` を追加。エージェント名 / 表示名 / 役割 / モデル / 親部署をあいまい検索し、選択で TreeView.reveal による該当ノードへのジャンプ + プレビュー起動。エージェント管理ビューのツールバーに $(search) アイコンを追加
@@ -419,6 +428,10 @@ VS Code 左のアクティビティバーに 💬 アイコンが表示されま
 | `Claude: エージェントを削除` | エージェント登録を削除 |
 | `Claude: エージェント管理を更新` | エージェント一覧を再読み込み |
 | `Claude: エージェントを検索` | 名前・表示名・役割・モデル・親部署であいまい検索し、選択でツリーにジャンプ + プレビュー起動（v0.5.17） |
+| `Claude: エージェント表示グループを切替` | 組織図 / モデル別 / 状態別 / フラット の 4 モード切替（v0.5.18） |
+| `Claude: 稼働中のみ表示を切替` | エージェント一覧の稼働中フィルタトグル（v0.5.18） |
+| `Claude: エージェント監視を有効化` | ウォークスルー用: `claudeManager.enableAgentMonitor` を ON にする（v0.5.18） |
+| `Claude: /csm-ask-agent スキルをインストール` | ウォークスルー用: 既存インストーラのラッパー（v0.5.18） |
 | `Claude: 組織図を開く` | 組織図 Webview を表示 |
 | `Claude: メモリパスをコピー` | メモリファイルパスをコピー |
 | `Claude: 使い方ガイドを開く` | guide.html を Webview で表示 |

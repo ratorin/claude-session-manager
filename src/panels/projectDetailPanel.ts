@@ -366,10 +366,11 @@ body {
 	border-radius: 3px;
 	flex-shrink: 0;
 }
-.memory-type-user     { background: rgba(100,181,246,0.15); color: #64b5f6; }
-.memory-type-feedback { background: rgba(255,183,77,0.15);  color: #ffb74d; }
-.memory-type-project  { background: rgba(129,199,132,0.15); color: #81c784; }
-.memory-type-reference{ background: rgba(206,147,216,0.15); color: #ce93d8; }
+/* v0.5.18 §4-10: メモリタイプ色を charts.* テーマ変数へ */
+.memory-type-user     { background: rgba(100,181,246,0.15); color: var(--vscode-charts-blue, #64b5f6); }
+.memory-type-feedback { background: rgba(255,183,77,0.15);  color: var(--vscode-charts-orange, #ffb74d); }
+.memory-type-project  { background: rgba(129,199,132,0.15); color: var(--vscode-charts-green, #81c784); }
+.memory-type-reference{ background: rgba(206,147,216,0.15); color: var(--vscode-charts-purple, #ce93d8); }
 .memory-name { font-weight: 500; color: var(--vscode-foreground); }
 .memory-desc { color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; }
 .memory-group-header {

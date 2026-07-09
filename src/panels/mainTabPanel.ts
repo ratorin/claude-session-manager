@@ -1062,10 +1062,11 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			border-radius: 2px;
 			flex-shrink: 0;
 		}
-		.memory-type-user { background: rgba(100,181,246,0.15); color: #64b5f6; }
-		.memory-type-feedback { background: rgba(255,183,77,0.15); color: #ffb74d; }
-		.memory-type-project { background: rgba(129,199,132,0.15); color: #81c784; }
-		.memory-type-reference { background: rgba(206,147,216,0.15); color: #ce93d8; }
+		/* v0.5.18 §4-10: メモリタイプ色を charts.* テーマ変数へ */
+		.memory-type-user { background: rgba(100,181,246,0.15); color: var(--vscode-charts-blue, #64b5f6); }
+		.memory-type-feedback { background: rgba(255,183,77,0.15); color: var(--vscode-charts-orange, #ffb74d); }
+		.memory-type-project { background: rgba(129,199,132,0.15); color: var(--vscode-charts-green, #81c784); }
+		.memory-type-reference { background: rgba(206,147,216,0.15); color: var(--vscode-charts-purple, #ce93d8); }
 		.memory-name { color: var(--vscode-foreground); font-weight: 500; }
 		.memory-desc { color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -1118,9 +1119,10 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			border-radius: 3px;
 		}
 		.scope-global { color: var(--vscode-descriptionForeground); }
+		/* v0.5.18 レビュー修正 (6): 隣接する .memory-type-user と同じ charts.blue に統一 */
 		.scope-project {
 			background: rgba(100,181,246,0.1);
-			color: #64b5f6;
+			color: var(--vscode-charts-blue, #64b5f6);
 		}
 		.bookmark-btn {
 			background: transparent;
@@ -1132,7 +1134,7 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			line-height: 1;
 		}
 		.bookmark-btn:hover { color: var(--vscode-foreground); }
-		.bookmark-btn.bookmarked { color: #ffb74d; }
+		.bookmark-btn.bookmarked { color: var(--vscode-charts-orange, #ffb74d); }
 
 		/* ---- フィルタチップ (T2.14) ---- */
 		.filter-section {
@@ -1292,12 +1294,13 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			flex-wrap: wrap;
 			margin-top: 2px;
 		}
+		/* v0.5.18 レビュー修正 (6): tag-chip 直書きも charts.blue に統一 */
 		.tag-chip {
 			font-size: 8px;
 			padding: 1px 4px;
 			border-radius: 8px;
 			background: rgba(100,181,246,0.1);
-			color: #64b5f6;
+			color: var(--vscode-charts-blue, #64b5f6);
 			border: 1px solid rgba(100,181,246,0.2);
 			white-space: nowrap;
 		}
@@ -1318,7 +1321,7 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			flex-shrink: 0;
 		}
 		.session-bm-btn:hover { color: var(--vscode-foreground); }
-		.session-bm-btn.bookmarked { color: #ffb74d; }
+		.session-bm-btn.bookmarked { color: var(--vscode-charts-orange, #ffb74d); }
 		.session-model-dot {
 			width: 6px;
 			height: 6px;

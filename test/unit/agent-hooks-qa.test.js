@@ -764,3 +764,114 @@ test('J7 レビュー修正(3) isSessionInAnyWorkspace: projectFilter/decoration
 	assert.equal(isInAnyWs('/any/project', []), false, '空 workspaceFolders では非一致（呼び出し元で全表示にフォールバック）');
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// L. Sprint C-2 (v0.5.18) 追加テスト
+// ════════════════════════════════════════════════════════════════════════════
+
+test('L1 §4-7 package.json walkthroughs: 5 ステップ csmGettingStarted が定義されている', () => {
+	const pkg = require(path.join(REPO, 'package.json'));
+	const walks = pkg.contributes && pkg.contributes.walkthroughs;
+	assert.ok(Array.isArray(walks), 'walkthroughs 配列がある');
+	const wt = walks.find((w) => w.id === 'csmGettingStarted');
+	assert.ok(wt, 'csmGettingStarted 定義');
+	assert.equal(wt.steps.length, 5, '5 ステップ');
+	// 各ステップに completionEvents が定義されていること（自動チェック）
+	for (const step of wt.steps) {
+		assert.ok(Array.isArray(step.completionEvents) && step.completionEvents.length > 0,
+			`step ${step.id} に completionEvents`);
+	}
+	// ステップ順序の確認
+	assert.deepEqual(
+		wt.steps.map((s) => s.id),
+		['checkClaudeCode', 'registerDirector', 'installAskAgent', 'enableMonitor', 'openOrgChart'],
+		'ステップ順序');
+});
+
+test('L2 §4-9 package.json Activity Bar: claude-orchestration コンテナが撤去されている', () => {
+	const pkg = require(path.join(REPO, 'package.json'));
+	const containers = pkg.contributes.viewsContainers.activitybar;
+	const ids = containers.map((c) => c.id);
+	assert.ok(!ids.includes('claude-orchestration'), '独立コンテナは撤去');
+	assert.equal(containers.length, 4, 'Activity Bar は 4 コンテナに');
+	// claudeOrchestration は claude-agents 内へ移設されているか
+	const agentsViews = pkg.contributes.views['claude-agents'];
+	assert.ok(agentsViews.some((v) => v.id === 'claudeOrchestration'),
+		'claudeOrchestration ビューは claude-agents コンテナ配下');
+});
+
+test('L3 §4-8 package.json defaultGroupMode: 4 モード enum が定義されている', () => {
+	const pkg = require(path.join(REPO, 'package.json'));
+	const prop = pkg.contributes.configuration
+		.flatMap((c) => Object.entries(c.properties || {}))
+		.find(([k]) => k === 'claudeManager.agents.defaultGroupMode');
+	assert.ok(prop, 'defaultGroupMode 設定が存在');
+	assert.deepEqual(prop[1].enum, ['org', 'model', 'status', 'flat'], '4 モード enum');
+	assert.equal(prop[1].default, 'org', '既定は org');
+});
+
+test('L4 §4-4 package.json agents.activeOnly / expandMode / commands 追加確認', () => {
+	const pkg = require(path.join(REPO, 'package.json'));
+	const props = pkg.contributes.configuration.flatMap((c) => Object.keys(c.properties || {}));
+	assert.ok(props.includes('claudeManager.agents.activeOnly'), 'activeOnly 設定');
+	assert.ok(props.includes('claudeManager.agents.expandMode'), 'expandMode 設定');
+	const cmds = pkg.contributes.commands.map((c) => c.command);
+	assert.ok(cmds.includes('claudeManager.toggleAgentActiveOnly'), 'toggleAgentActiveOnly コマンド');
+	assert.ok(cmds.includes('claudeManager.groupAgents'), 'groupAgents コマンド');
+	assert.ok(cmds.includes('claudeManager.enableAgentMonitor'), 'enableAgentMonitor コマンド');
+	assert.ok(cmds.includes('claudeManager.installCsmAskAgent'), 'installCsmAskAgent コマンド');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// M. Sprint C-2 レビュー修正 (v0.5.18 コミット前)
+// ════════════════════════════════════════════════════════════════════════════
+
+test('M1 レビュー修正(1)-a: package.json の contributes.commands は同一 command id が 1 件のみ', () => {
+	const pkg = require(path.join(REPO, 'package.json'));
+	const cmds = pkg.contributes.commands.map((c) => c.command);
+	const counts = new Map();
+	for (const c of cmds) { counts.set(c, (counts.get(c) || 0) + 1); }
+	const dups = [...counts.entries()].filter(([, n]) => n > 1).map(([k, n]) => `${k}=${n}`);
+	assert.deepEqual(dups, [], `重複 command 定義があります: ${dups.join(', ')}`);
+});
+
+test('M1 レビュー修正(1)-b: src 内の registerCommand は同一 id が 1 か所のみ', () => {
+	// out/ ではなく src/**/*.ts を静的にスキャン（実 registerCommand 呼び出しの重複を検出）
+	const commonPaths = [
+		path.join(REPO, 'src', 'commands'),
+		path.join(REPO, 'src', 'panels'),
+		path.join(REPO, 'src', 'extension.ts'),
+	];
+	const files = [];
+	function walk(p) {
+		let st;
+		try { st = fs.statSync(p); } catch { return; }
+		if (st.isDirectory()) {
+			for (const e of fs.readdirSync(p)) { walk(path.join(p, e)); }
+		} else if (p.endsWith('.ts')) {
+			files.push(p);
+		}
+	}
+	for (const p of commonPaths) { walk(p); }
+	const re = /vscode\.commands\.registerCommand\(\s*['"]([^'"]+)['"]/g;
+	const idFiles = new Map(); // id -> [file:line]
+	for (const f of files) {
+		const text = fs.readFileSync(f, 'utf-8');
+		const lines = text.split('\n');
+		for (let i = 0; i < lines.length; i++) {
+			// registerCommand 呼び出しは 1 行に収まる想定
+			const m = re.exec(lines[i]);
+			re.lastIndex = 0;
+			if (!m) { continue; }
+			const id = m[1];
+			const arr = idFiles.get(id) || [];
+			arr.push(`${path.relative(REPO, f)}:${i + 1}`);
+			idFiles.set(id, arr);
+		}
+	}
+	const dups = [...idFiles.entries()].filter(([, locs]) => locs.length > 1);
+	if (dups.length > 0) {
+		const msg = dups.map(([id, locs]) => `${id} → ${locs.join(' / ')}`).join('\n');
+		assert.fail(`registerCommand の同一 id が複数箇所で登録されています:\n${msg}`);
+	}
+});
+

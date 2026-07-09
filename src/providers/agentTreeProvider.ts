@@ -10,7 +10,7 @@ import { getModelChar } from '../models/modelCatalog';
 import { resolveExternalSessionTitles } from '../utils/sessionLoader';
 import { isBookmarked, addBookmark, removeBookmark } from '../services/bookmarkService';
 
-type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem | SessionInjectInstallBannerItem;
+type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem | SessionInjectInstallBannerItem | GroupNodeItem;
 
 // D&DのMIMEタイプ
 const AGENT_MIME = 'application/vnd.csm.agent';
@@ -25,6 +25,8 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 
 	dispose(): void {
 		this._onDidChangeTreeData.dispose();
+		// v0.5.18 レビュー修正 (5): バッジ更新用 EventEmitter も dispose する
+		this._onDidChangeBadge.dispose();
 	}
 
 	private getSessionsFn: () => ParsedSession[];
@@ -33,6 +35,8 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 
 	setWatcherStates(states: Map<string, import('../models/types').AgentWatcherState>): void {
 		this.watcherStates = states;
+		// v0.5.18 §4-4: バッジ更新イベントを発火（TreeView.badge の同期用）
+		this.updateBadge();
 	}
 	private activeAgentNamesFn: () => Set<string>;
 	private getSessionMtimeFn: ((sessionId: string) => number | undefined) | undefined;
@@ -44,6 +48,44 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		this.refresh();
 	}
 	getHideOtherProjects(): boolean { return this.hideOtherProjects; }
+
+	// v0.5.18 §4-4: 稼働中のみ表示するフィルタ
+	private activeOnly: boolean = false;
+	setActiveOnly(active: boolean): void {
+		this.activeOnly = active;
+		this.refresh();
+	}
+	getActiveOnly(): boolean { return this.activeOnly; }
+
+	// v0.5.18 §4-8: グルーピングモード
+	private groupMode: 'org' | 'model' | 'status' | 'flat' = 'org';
+	setGroupMode(mode: 'org' | 'model' | 'status' | 'flat'): void {
+		this.groupMode = mode;
+		this.refresh();
+	}
+	getGroupMode(): 'org' | 'model' | 'status' | 'flat' { return this.groupMode; }
+
+	// v0.5.18 §4-4: バッジ更新通知（TreeView.badge の text 更新）
+	private _onDidChangeBadge = new vscode.EventEmitter<{ count: number; total: number }>();
+	readonly onDidChangeBadge = this._onDidChangeBadge.event;
+	private lastBadge: { count: number; total: number } = { count: 0, total: 0 };
+	getLastBadge(): { count: number; total: number } { return this.lastBadge; }
+	// エージェント状態の更新後、バッジデータを再計算して通知する
+	private updateBadge(): void {
+		let active = 0;
+		let total = 0;
+		const activeNames = this.activeAgentNamesFn();
+		for (const s of this.watcherStates.values()) {
+			total++;
+			if (s.isLive || activeNames.has(s.agentName)) { active++; }
+		}
+		// watcherStates が空でも UI からの refresh 直後は total を維持
+		const next = { count: active, total: Math.max(total, this.lastBadge.total) };
+		if (next.count !== this.lastBadge.count || next.total !== this.lastBadge.total) {
+			this.lastBadge = next;
+			this._onDidChangeBadge.fire(next);
+		}
+	}
 
 	constructor(
 		getSessions: () => ParsedSession[],
@@ -73,6 +115,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 	refresh(): void {
 		this._rootChildrenCache = undefined;
 		this.lastAgentItemsByName.clear(); // v0.5.17 §4-1: reveal 用キャッシュも初期化
+		this.lastGlobalSectionItem = undefined; // v0.5.18 レビュー修正 (3): global セクションキャッシュも初期化
 		this._onDidChangeTreeData.fire(undefined);
 	}
 
@@ -158,13 +201,23 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 	//   直近の getChildren 実行時のキャッシュを見て一致するインスタンスを返す。
 	getParent(element: AgentTreeNode): AgentTreeNode | undefined {
 		if (!(element instanceof AgentItem)) { return undefined; }
+		// v0.5.18 レビュー修正 (3): グローバルエージェント（parentAgent 無し + shouldShowInOrgChart=false）は
+		//   GlobalAgentsSectionItem 配下に描画されるため、undefined を返すと TreeView.reveal が
+		//   「該当要素が見つかりません」で失敗する。仮想セクションのキャッシュ済みインスタンスを返す。
 		const parentName = element.agent.parentAgent;
-		if (!parentName) { return undefined; } // ルート直下 or グローバルセクション配下 → undefined でOK
-		// キャッシュ済みの兄弟マップから同名エージェントの AgentItem インスタンスを探す
-		return this.lastAgentItemsByName.get(parentName);
+		if (parentName) {
+			return this.lastAgentItemsByName.get(parentName);
+		}
+		// parentAgent なし: グローバルセクション配下かトップレベルかで分岐
+		if (!shouldShowInOrgChart(element.agent) && this.lastGlobalSectionItem) {
+			return this.lastGlobalSectionItem;
+		}
+		return undefined; // トップレベル（ルート）はundefinedでOK
 	}
 	/** getParent が使うキャッシュ（getChildren 内で更新） */
 	private lastAgentItemsByName = new Map<string, AgentItem>();
+	/** v0.5.18 レビュー修正 (3): GlobalAgentsSectionItem の単一インスタンス（reveal の親参照用） */
+	private lastGlobalSectionItem: GlobalAgentsSectionItem | undefined;
 
 	/**
 	 * v0.5.17 §4-1: エージェント名で AgentItem インスタンスを取得（reveal 用）。
@@ -182,6 +235,45 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		if (element instanceof CsmAskAgentInstallBannerItem) { return []; }
 		if (element instanceof AskAgentMigrationBannerItem) { return []; }
 		if (element instanceof SessionInjectInstallBannerItem) { return []; }
+
+		// v0.5.18 §4-8: グループノード配下 → 対応する AgentItem を返す
+		// v0.5.18 レビュー修正 (4): hasChildren=false 固定を撤去し、childMap + タスクログ判定で
+		//   サブエージェント・タスクログを展開可能に。AgentItem.getChildren（下の instanceof AgentItem 分岐）で
+		//   親子連鎖を再帰的に描画するため、hasChildrenFlag が正しくないと展開できない。
+		if (element instanceof GroupNodeItem) {
+			const allAgents = await dataStore.getAgents();
+			const byName = new Map(allAgents.map((a) => [a.name, a]));
+			const agentNames = new Set(allAgents.map((a) => a.name));
+			// childMap（親名 → 子エージェント[]）
+			const childMap = new Map<string, AgentConfig[]>();
+			for (const a of allAgents) {
+				if (a.parentAgent && agentNames.has(a.parentAgent)) {
+					const arr = childMap.get(a.parentAgent) || [];
+					arr.push(a);
+					childMap.set(a.parentAgent, arr);
+				}
+			}
+			const result: AgentTreeNode[] = [];
+			const activeNames = this.activeAgentNamesFn();
+			const isLive = (a: AgentConfig) =>
+				activeNames.has(a.name) || (a.sessionId ? this.isLiveFn(a.sessionId) : false);
+			const sessionsAll = this.getSessionsFn();
+			const titles = new Map<string, string>();
+			for (const s of sessionsAll) { titles.set(s.id, s.customName || s.claudeTitle || s.firstMessage.substring(0, 40)); }
+			for (const name of element.childrenAgentNames) {
+				const a = byName.get(name);
+				if (!a) { continue; }
+				const ws = this.watcherStates.get(a.name);
+				const mtimeMs = a.sessionId ? this.getSessionMtimeFn?.(a.sessionId) : undefined;
+				const sessionTitle = a.sessionId ? titles.get(a.sessionId) : undefined;
+				const hasTasks = this.getVisibleTasksFn ? this.getVisibleTasksFn(a.name).length > 0 : false;
+				const hasChildrenFlag = childMap.has(a.name) || hasTasks;
+				const item = new AgentItem(a, isLive(a), sessionTitle, false, hasChildrenFlag, '', ws?.modelMismatch ?? false, ws?.actualModel, false, mtimeMs);
+				this.lastAgentItemsByName.set(a.name, item);
+				result.push(item);
+			}
+			return result;
+		}
 
 		if (element instanceof GlobalAgentsSectionItem) {
 			// グローバルエージェント を返す
@@ -248,9 +340,32 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			}
 			return false; // workDir未設定のグローバルエージェントは「他プロジェクト」扱いしない
 		};
-		const agents = this.hideOtherProjects
+		// v0.5.18 §4-4: activeOnly フィルタ（稼働中のみ表示）
+		const activeNamesEarly = this.activeAgentNamesFn();
+		const isLiveEarly = (a: AgentConfig): boolean => {
+			if (activeNamesEarly.has(a.name)) { return true; }
+			return a.sessionId ? this.isLiveFn(a.sessionId) : false;
+		};
+		let agents = this.hideOtherProjects
 			? allAgents.filter((a) => !isOtherProject(a))
 			: allAgents;
+		if (this.activeOnly) {
+			// 稼働中のエージェント + その先祖ノード（親子関係の維持）
+			const liveNames = new Set<string>();
+			for (const a of agents) { if (isLiveEarly(a)) { liveNames.add(a.name); } }
+			// 親を辿って追加
+			const byName = new Map(agents.map((a) => [a.name, a]));
+			const shouldKeep = new Set<string>(liveNames);
+			for (const name of liveNames) {
+				let cur = byName.get(name);
+				while (cur?.parentAgent && byName.has(cur.parentAgent)) {
+					if (shouldKeep.has(cur.parentAgent)) { break; }
+					shouldKeep.add(cur.parentAgent);
+					cur = byName.get(cur.parentAgent);
+				}
+			}
+			agents = agents.filter((a) => shouldKeep.has(a.name));
+		}
 
 		if (agents.length === 0) { return []; }
 
@@ -343,6 +458,14 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				result.push(new MigrationBannerItem(legacyAgents.length));
 			}
 
+			// v0.5.18 §4-8: グルーピングモードが org 以外なら GroupNodeItem を返す（バナーは残す）
+			if (this.groupMode !== 'org') {
+				const groupNodes = buildGroupNodes(agents, checkLive, this.groupMode);
+				result.push(...groupNodes);
+				this._rootChildrenCache = { nodes: result, ts: now };
+				return result;
+			}
+
 			// トップレベル: parentAgent 未設定（または孤児）かつ組織図表示対象
 			// グローバルエージェント は仮想親の下に移動したので除外
 			const topLevel = agents.filter((a) => (!a.parentAgent || !agentNames.has(a.parentAgent)) && shouldShowInOrgChart(a));
@@ -371,7 +494,10 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			// グローバルエージェント の仮想親ノード
 			if (globalAgents.length > 0) {
 				const globalAgentItem = new GlobalAgentsSectionItem();
+				this.lastGlobalSectionItem = globalAgentItem; // v0.5.18 レビュー修正 (3): reveal 用
 				result.push(globalAgentItem);
+			} else {
+				this.lastGlobalSectionItem = undefined;
 			}
 
 			// ルートノードをキャッシュ（TTL 5s）
@@ -476,26 +602,49 @@ export class AgentItem extends vscode.TreeItem {
 			: agent.name;
 		const displayName = `${livePrefix}${modelChar}\u2007${agentDisplayName}${disposableLabel}${mismatchLabel}`;
 
-		// 折りたたみ状態
-		const collapsible = hasChildren
-			? vscode.TreeItemCollapsibleState.Expanded
-			: vscode.TreeItemCollapsibleState.None;
+		// v0.5.18 §4-4: 起動時の展開状態を設定で制御
+		//   claudeManager.agents.expandMode: 'all' | 'active-branches' | 'top-level'
+		//   - all: 常に Expanded（従来動作）
+		//   - active-branches: 稼働中の枝のみ Expanded、その他は Collapsed（既定）
+		//   - top-level: 親ノードでも Collapsed で初期化する
+		const expandMode = vscode.workspace.getConfiguration('claudeManager')
+			.get<string>('agents.expandMode', 'active-branches');
+		let collapsible: vscode.TreeItemCollapsibleState;
+		if (!hasChildren) {
+			collapsible = vscode.TreeItemCollapsibleState.None;
+		} else if (expandMode === 'top-level') {
+			collapsible = vscode.TreeItemCollapsibleState.Collapsed;
+		} else if (expandMode === 'active-branches') {
+			collapsible = isLive
+				? vscode.TreeItemCollapsibleState.Expanded
+				: vscode.TreeItemCollapsibleState.Collapsed;
+		} else {
+			collapsible = vscode.TreeItemCollapsibleState.Expanded;
+		}
 
 		super(displayName, collapsible);
 		this.agent = agent;
 
-		// description: セッション情報 + 組織図表示フラグ
+		// v0.5.18 §4-4: description をシンプルに『セッションタイトル + 経過時間』へ絞る。
+		//   旧: `${orgChartFlag} ${sessionInfo}` — 👁/🙈 で行が混み合っていた
+		//   新: セッション未紐づけなら「未紐づけ」、紐づけありならタイトル + 経過時間
+		//        👁/🙈（組織図表示フラグ）は tooltip 側に移動。
 		const sessionInfo = agent.sessionId
 			? (sessionTitle || `${agent.sessionId.substring(0, 8)}...`)
 			: '未紐づけ';
-		const orgChartFlag = shouldShowInOrgChart(agent) ? '👁' : '🙈';
-		this.description = `${orgChartFlag} ${sessionInfo}`;
+		const elapsedForDesc = (isLive && !isOtherProject && mtimeMs !== undefined)
+			? formatLiveElapsed(Date.now() - mtimeMs)
+			: '';
+		this.description = elapsedForDesc
+			? `${sessionInfo} · ${elapsedForDesc}`
+			: sessionInfo;
 
 		// ツールチップ
 		const modelLine = modelMismatch && actualModel
 			? `| モデル（設定） | ${agent.model} |\n| モデル（実際） | **⚠️ ${actualModel}** |\n`
 			: `| モデル | ${agent.model} |\n`;
 		const displayRoleStr = agent.displayRole || agent.role || '未設定';
+		const orgChartFlag = shouldShowInOrgChart(agent) ? '👁 組織図に表示' : '🙈 組織図から除外';
 		this.tooltip = new vscode.MarkdownString(
 			`**${agent.name}**${modelMismatch ? ' ⚠️ モデル不一致' : ''}\n\n` +
 			`| | |\n|---|---|\n` +
@@ -504,6 +653,7 @@ export class AgentItem extends vscode.TreeItem {
 			modelLine +
 			`| 運用 | ${agent.sessionMode === 'disposable' ? '使い捨て' : '固定'} |\n` +
 			`| セッション | ${sessionInfo} |\n` +
+			`| 表示 | ${orgChartFlag} |\n` +
 			(agent.parentAgent ? `| 親エージェント | ${agent.parentAgent} |\n` : '') +
 			(agent.workDir ? `| 作業フォルダ | ${agent.workDir} |\n` : '')
 		);
@@ -610,6 +760,69 @@ export class GlobalAgentsSectionItem extends vscode.TreeItem {
 		this.resourceUri = vscode.Uri.parse('csm-agent-other://global-agents-section');
 		this.iconPath = new vscode.ThemeIcon('package', new vscode.ThemeColor('disabledForeground'));
 		this.contextValue = 'globalAgentsSection';
+	}
+}
+
+/**
+ * v0.5.18 §4-8: グルーピングモードごとに GroupNodeItem 配列を組み立てる。
+ *   - model: モデルごとに集約
+ *   - status: 稼働中 / 待機 / 未紐づけ
+ *   - flat: 全エージェント 1 グループ（名前順）
+ */
+function buildGroupNodes(
+	agents: AgentConfig[],
+	checkLive: (a: AgentConfig) => boolean,
+	mode: 'model' | 'status' | 'flat',
+): GroupNodeItem[] {
+	if (mode === 'flat') {
+		const sorted = [...agents].sort((a, b) => a.name.localeCompare(b.name));
+		return [new GroupNodeItem('📋 すべて', sorted, 'list-flat')];
+	}
+	if (mode === 'model') {
+		const byModel = new Map<string, AgentConfig[]>();
+		for (const a of agents) {
+			const key = a.model || 'unknown';
+			const arr = byModel.get(key) || [];
+			arr.push(a);
+			byModel.set(key, arr);
+		}
+		const order = ['fable', 'fable-1m', 'opus', 'opus-1m', 'sonnet', 'sonnet-1m', 'haiku', 'unknown'];
+		const keys = Array.from(byModel.keys()).sort((a, b) => {
+			const ai = order.indexOf(a); const bi = order.indexOf(b);
+			return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+		});
+		return keys.map((k) => new GroupNodeItem(`🎨 ${k}`, byModel.get(k)!.sort((a, b) => a.name.localeCompare(b.name)), 'symbol-color'));
+	}
+	// status
+	const active: AgentConfig[] = [];
+	const idle: AgentConfig[] = [];
+	const unlinked: AgentConfig[] = [];
+	for (const a of agents) {
+		if (checkLive(a)) { active.push(a); }
+		else if (!a.sessionId) { unlinked.push(a); }
+		else { idle.push(a); }
+	}
+	const byName = (a: AgentConfig, b: AgentConfig) => a.name.localeCompare(b.name);
+	return [
+		new GroupNodeItem('🟢 稼働中', active.sort(byName), 'circle-filled', 'terminal.ansiGreen'),
+		new GroupNodeItem('⚪ 待機', idle.sort(byName), 'circle-outline'),
+		new GroupNodeItem('🔗 未紐づけ', unlinked.sort(byName), 'link', 'disabledForeground'),
+	].filter((g) => g.childrenAgentNames.length > 0);
+}
+
+/**
+ * v0.5.18 §4-8: 汎用グループノード（モデル別 / 状態別 / フラットモードで使用）。
+ *   childrenAgentNames をこのノードに紐づけ、getChildren の element 分岐で対象 AgentItem を返す。
+ */
+export class GroupNodeItem extends vscode.TreeItem {
+	public readonly childrenAgentNames: string[];
+	constructor(label: string, agents: AgentConfig[], iconId: string, themeColor?: string) {
+		super(`${label} (${agents.length})`, vscode.TreeItemCollapsibleState.Expanded);
+		this.childrenAgentNames = agents.map((a) => a.name);
+		this.iconPath = themeColor
+			? new vscode.ThemeIcon(iconId, new vscode.ThemeColor(themeColor))
+			: new vscode.ThemeIcon(iconId);
+		this.contextValue = 'agentGroupNode';
 	}
 }
 

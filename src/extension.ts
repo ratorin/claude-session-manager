@@ -461,6 +461,20 @@ export function activate(context: vscode.ExtensionContext) {
 		) {
 			sessionProvider.refresh();
 		}
+		// v0.5.18 §4-4 §4-8: agents 表示設定の変更を反映
+		if (
+			e.affectsConfiguration('claudeManager.agents.expandMode') ||
+			e.affectsConfiguration('claudeManager.agents.activeOnly') ||
+			e.affectsConfiguration('claudeManager.agents.defaultGroupMode')
+		) {
+			const cfg2 = vscode.workspace.getConfiguration('claudeManager');
+			const gm = cfg2.get<string>('agents.defaultGroupMode', 'org');
+			if (gm === 'org' || gm === 'model' || gm === 'status' || gm === 'flat') {
+				agentProvider.setGroupMode(gm);
+			}
+			agentProvider.setActiveOnly(cfg2.get<boolean>('agents.activeOnly', false));
+			agentProvider.refresh();
+		}
 		if (e.affectsConfiguration('claudeManager.locale')) {
 			setLocale(getLocaleConfig());
 		}
@@ -521,6 +535,37 @@ export function activate(context: vscode.ExtensionContext) {
 	const claudeOrchestrationTreeView = vscode.window.createTreeView('claudeOrchestration', {
 		treeDataProvider: orchestrationProvider,
 	});
+
+	// v0.5.18 §4-4: TreeView.badge — 稼働中エージェント数を claudeAgents / claudeAgentsLive のビューアイコンに表示
+	const applyBadge = (view: vscode.TreeView<unknown>, badge: { count: number; total: number }): void => {
+		if (badge.count > 0) {
+			view.badge = {
+				value: badge.count,
+				tooltip: `${badge.count} 件のエージェントが稼働中（登録 ${badge.total} 件中）`,
+			};
+		} else {
+			view.badge = undefined;
+		}
+	};
+	context.subscriptions.push(agentProvider.onDidChangeBadge((badge) => {
+		applyBadge(claudeAgentsTreeView, badge);
+		applyBadge(claudeAgentsLiveTreeView, badge);
+	}));
+	// 初期値を反映
+	applyBadge(claudeAgentsTreeView, agentProvider.getLastBadge());
+	applyBadge(claudeAgentsLiveTreeView, agentProvider.getLastBadge());
+
+	// v0.5.18 §4-4 §4-8: 起動時に defaultGroupMode / activeOnly を反映
+	{
+		const cfg0 = vscode.workspace.getConfiguration('claudeManager');
+		const gm = cfg0.get<string>('agents.defaultGroupMode', 'org');
+		if (gm === 'model' || gm === 'status' || gm === 'flat') {
+			agentProvider.setGroupMode(gm);
+		}
+		if (cfg0.get<boolean>('agents.activeOnly', false)) {
+			agentProvider.setActiveOnly(true);
+		}
+	}
 	context.subscriptions.push(
 		vscode.window.createTreeView('claudeSessions', { treeDataProvider: sessionProvider }),
 		vscode.window.createTreeView('claudeBookmarks', { treeDataProvider: bookmarkProvider }),

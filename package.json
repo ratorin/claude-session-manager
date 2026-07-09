@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager - セッション履歴管理",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.5.17",
+	"version": "0.5.18",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -37,11 +37,6 @@
 					"id": "claude-projects",
 					"title": "📁 プロジェクト",
 					"icon": "$(folder-opened)"
-				},
-				{
-					"id": "claude-orchestration",
-					"title": "🎼 オーケストレーション",
-					"icon": "$(circuit-board)"
 				}
 			],
 			"panel": [
@@ -85,6 +80,11 @@
 					"id": "claudeAgents",
 					"name": "エージェント管理",
 					"icon": "$(person)"
+				},
+				{
+					"id": "claudeOrchestration",
+					"name": "🎼 オーケストレーション",
+					"icon": "$(circuit-board)"
 				}
 			],
 			"claude-memory": [
@@ -102,13 +102,6 @@
 					"icon": "$(folder-opened)"
 				}
 			],
-			"claude-orchestration": [
-				{
-					"id": "claudeOrchestration",
-					"name": "🎼 オーケストレーション",
-					"icon": "$(circuit-board)"
-				}
-			],
 			"claude-help": [
 				{
 					"id": "claudeHelp",
@@ -120,13 +113,91 @@
 		"viewsWelcome": [
 			{
 				"view": "claudeAgents",
-				"contents": "エージェントが未登録です。\nまずは取締役を登録して、マルチエージェント運用を始めましょう。\n[取締役を登録](command:claudeManager.registerDirector)\n[使い方ガイドを開く](command:claudeManager.openGuide)",
+				"contents": "エージェントが未登録です。\nまずは取締役を登録して、マルチエージェント運用を始めましょう。\n[取締役を登録](command:claudeManager.registerDirector)\n[使い方ガイドを開く](command:claudeManager.openGuide)\n\n初めて使う場合は [Get Started ウォークスルー](command:workbench.action.openWalkthrough?%22ratorin.claude-session-manager%23csmGettingStarted%22) がおすすめです。",
 				"when": "!claudeManager.hasAgents"
 			},
 			{
 				"view": "claudeAgentsFavorites",
 				"contents": "お気に入りエージェントがありません。\nエージェントリストで ☆ をクリックして追加しましょう。",
 				"when": "claudeManager.hasAgents"
+			},
+			{
+				"view": "claudeSessions",
+				"contents": "セッションがまだありません。\nClaude Code で会話を始めるとここに表示されます。\n\n[使い方ガイドを開く](command:claudeManager.openGuide)"
+			},
+			{
+				"view": "claudeMemory",
+				"contents": "メモリファイルがありません。\n`~/.claude/CLAUDE.md` や `<workspace>/.claude/CLAUDE.md` を作成すると Claude が起動時に読み込みます。\n\n[使い方ガイドを開く](command:claudeManager.openGuide)"
+			},
+			{
+				"view": "claudeOrchestration",
+				"contents": "稼働中のセッションがありません。\nエージェント監視を有効にすると、ここでライブ状況を可視化できます。\n\n[エージェント監視を有効化](command:claudeManager.enableAgentMonitor)\n[使い方ガイドを開く](command:claudeManager.openGuide)"
+			}
+		],
+		"walkthroughs": [
+			{
+				"id": "csmGettingStarted",
+				"title": "Claude Session Manager をはじめる",
+				"description": "5 ステップで CSM のマルチエージェント運用を立ち上げます。",
+				"steps": [
+					{
+						"id": "checkClaudeCode",
+						"title": "① Claude Code の確認",
+						"description": "Claude Code 拡張と CLI がインストールされていることを確認します。\n[Claude Code パネルを開く](command:claudeManager.openUsageMenu)",
+						"media": {
+							"markdown": "media/walkthrough/step1.md"
+						},
+						"completionEvents": [
+							"onCommand:claudeManager.openUsageMenu"
+						]
+					},
+					{
+						"id": "registerDirector",
+						"title": "② 取締役を登録",
+						"description": "組織のトップに位置する『取締役』エージェントを登録します。プリセットから開始できます。\n[取締役を登録](command:claudeManager.registerDirector)",
+						"media": {
+							"markdown": "media/walkthrough/step2.md"
+						},
+						"completionEvents": [
+							"onCommand:claudeManager.registerDirector",
+							"onContext:claudeManager.hasAgents"
+						]
+					},
+					{
+						"id": "installAskAgent",
+						"title": "③ /csm-ask-agent スキルをインストール",
+						"description": "Claude 内から子エージェントに指示を送るためのスキルをインストールします。\n[/csm-ask-agent をインストール](command:claudeManager.installCsmAskAgent)",
+						"media": {
+							"markdown": "media/walkthrough/step3.md"
+						},
+						"completionEvents": [
+							"onCommand:claudeManager.installCsmAskAgent"
+						]
+					},
+					{
+						"id": "enableMonitor",
+						"title": "④ エージェント監視を有効化",
+						"description": "ライブ状態やモデル不一致を検知するために監視を有効にします。\n[エージェント監視を有効化](command:claudeManager.enableAgentMonitor)",
+						"media": {
+							"markdown": "media/walkthrough/step4.md"
+						},
+						"completionEvents": [
+							"onCommand:claudeManager.enableAgentMonitor",
+							"onSettingChanged:claudeManager.enableAgentMonitor"
+						]
+					},
+					{
+						"id": "openOrgChart",
+						"title": "⑤ 組織図を開いて確認",
+						"description": "エージェントの親子関係を組織図で確認しましょう。\n[組織図を開く](command:claudeManager.openOrgChart)",
+						"media": {
+							"markdown": "media/walkthrough/step5.md"
+						},
+						"completionEvents": [
+							"onCommand:claudeManager.openOrgChart"
+						]
+					}
+				]
 			}
 		],
 		"commands": [
@@ -308,6 +379,24 @@
 				"command": "claudeManager.searchAgents",
 				"title": "エージェントを検索",
 				"icon": "$(search)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.groupAgents",
+				"title": "エージェント表示グループを切替",
+				"icon": "$(list-tree)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.toggleAgentActiveOnly",
+				"title": "稼働中のみ表示を切替",
+				"icon": "$(filter)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.enableAgentMonitor",
+				"title": "エージェント監視を有効化",
+				"icon": "$(pulse)",
 				"category": "Claude Session Manager"
 			},
 			{
@@ -623,6 +712,16 @@
 				{
 					"command": "claudeManager.searchAgents",
 					"when": "view == claudeAgents",
+					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.groupAgents",
+					"when": "view == claudeAgents",
+					"group": "navigation"
+				},
+				{
+					"command": "claudeManager.toggleAgentActiveOnly",
+					"when": "view == claudeAgents || view == claudeAgentsLive",
 					"group": "navigation"
 				},
 				{
@@ -1098,6 +1197,43 @@
 							"recent"
 						],
 						"description": "エージェントタブで起動時に展開するセクション（bookmarks / recent / global / project）"
+					},
+					"claudeManager.agents.expandMode": {
+						"type": "string",
+						"default": "active-branches",
+						"enum": [
+							"all",
+							"active-branches",
+							"top-level"
+						],
+						"enumDescriptions": [
+							"全て展開",
+							"稼働中の枝のみ展開（既定）",
+							"トップレベルのみ展開（子を折りたたむ）"
+						],
+						"description": "エージェント一覧の起動時の展開状態（v0.5.18 追加）"
+					},
+					"claudeManager.agents.activeOnly": {
+						"type": "boolean",
+						"default": false,
+						"description": "エージェント一覧・ライブ状態ビューで稼働中のエージェントのみを表示するフィルタ。ツールバーの $(filter) から切替可能（v0.5.18 追加）"
+					},
+					"claudeManager.agents.defaultGroupMode": {
+						"type": "string",
+						"default": "org",
+						"enum": [
+							"org",
+							"model",
+							"status",
+							"flat"
+						],
+						"enumDescriptions": [
+							"組織図（現行の親子関係グルーピング）",
+							"モデル別（fable/opus/sonnet/haiku…）",
+							"状態別（稼働中 / 待機 / 未紐づけ）",
+							"フラット（グルーピングなし・名前順）"
+						],
+						"description": "エージェント一覧のグルーピング方式（v0.5.18 追加）"
 					},
 					"claudeManager.claudeAgentsIntegration.enabled": {
 						"type": "boolean",

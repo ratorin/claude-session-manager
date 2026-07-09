@@ -557,7 +557,8 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 	   旧: 7 モデル分の CSS をハードコード（追加時に 4 ファイルの CSS を同期更新する必要があった）
 	   新: MODEL_CATALOG に追記するだけで自動反映 */
 	${generateModelCss('badge')}
-	.agent-badge .agent-name { font-weight: 600; font-size: 0.85em; color: #e27e4a; }
+	/* v0.5.18 §4-10: テーマ追従 — 直書き #e27e4a を charts.orange 変数へ */
+	.agent-badge .agent-name { font-weight: 600; font-size: 0.85em; color: var(--vscode-charts-orange, #e27e4a); }
 	.agent-badge .agent-role { font-size: 0.75em; opacity: 0.6; }
 	.agent-badge .agent-actions { margin-left: auto; display: flex; gap: 8px; }
 	.agent-badge .agent-link {
@@ -823,11 +824,12 @@ function getMemoryHtml(file: MemoryFile): string {
 		reference: '外部リファレンス',
 	};
 
+	// v0.5.18 §4-10: メモリタイプの色を charts.* テーマ変数へ寄せる（フォールバックは元の直書き）
 	const typeColors: Record<string, string> = {
-		user: '#4fc3f7',
-		feedback: '#ffb74d',
-		project: '#81c784',
-		reference: '#ce93d8',
+		user: 'var(--vscode-charts-blue, #4fc3f7)',
+		feedback: 'var(--vscode-charts-orange, #ffb74d)',
+		project: 'var(--vscode-charts-green, #81c784)',
+		reference: 'var(--vscode-charts-purple, #ce93d8)',
 	};
 
 	const content = escapeHtml(file.content).replace(/\n/g, '<br>');
