@@ -1,5 +1,16 @@
 # 更新履歴
 
+## v0.5.19 (2026-07-09) — 「Claudeで開く」を拡張UIで開くよう変更 + CLIボタン分離
+
+ユーザーフィードバック対応: v0.5.15 の「▶ Claudeで開く」がターミナルで CLI を起動していたが、
+期待される挙動は Claude Code **拡張の画面**で開くことだった（セッションツリー右クリックの
+`claudeManager.openInClaude` は元から正しい挙動）。
+
+### 🔧 変更
+- **「▶ Claudeで開く」** — 右クリックメニューと同一経路（`<uriScheme>://anthropic.claude-code/open?session=<id>` の URI ハンドラ）で **Claude Code 拡張の UI** を開くよう変更。
+- **「⌨ CLIで開く」** — 従来のターミナル起動（作成時 cwd で `claude --resume`）は別ボタンとして存続。cwd 依存の注意書きはこちらの tooltip に移動。
+- webview → 拡張のメッセージは `openInClaude`（拡張UI）/ `openInClaudeCli`（ターミナル）に分離。
+
 ## v0.5.18 (2026-07-09) — Sprint C-2: UX 改善 6 件（最終バッチ）
 
 ### 🔍 コードレビュー修正ラウンド（Sprint C-2 レビュー時点）

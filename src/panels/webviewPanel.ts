@@ -217,7 +217,16 @@ export async function showSessionPreview(session: ParsedSession, context: vscode
 			} else if (message.type === 'editRuleFile') {
 				vscode.commands.executeCommand('claudeManager.editRuleFileBySessionId', sid);
 			} else if (message.type === 'openInClaude') {
-				// v0.5.15: セッションを Claude Code の新規ターミナルで再開する。
+				// v0.5.19: Claude Code「拡張」のUIでセッションを開く。
+				//   セッションツリー右クリックの claudeManager.openInClaude と同一経路
+				//   （sessionCommands.ts 参照）: URI ハンドラ経由で拡張がセッションを resume する。
+				const scheme = vscode.env.uriScheme;
+				const uri = vscode.Uri.parse(
+					`${scheme}://anthropic.claude-code/open?session=` + encodeURIComponent(sid)
+				);
+				vscode.env.openExternal(uri);
+			} else if (message.type === 'openInClaudeCli') {
+				// v0.5.15/v0.5.19: セッションを CLI（新規ターミナル）で再開する。
 				//   ⚠ 最重要: `--resume` は **セッション作成時と同じ cwd** で起動しないと
 				//   "No conversation found" で失敗する（実証済み既知問題）。
 				//   ParsedSession.cwd は JSONL 内 cwd フィールドから抽出した生の値。
@@ -633,15 +642,18 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 		${agentHeaderHtml}
 		<div class="session-info">
 			<div class="info-main">
-				${/* v0.5.15: h2 タイトル横に「Claudeで開く」ボタン。
-				   ツールチップは cwd 判明時と不明時で切り替え、後者は失敗の可能性を明示。 */''}
+				${/* v0.5.15/v0.5.19: h2 タイトル横のアクションボタン。
+				   「Claudeで開く」= Claude Code 拡張のUI（右クリックメニューと同一経路）、
+				   「CLIで開く」= 新規ターミナルで claude --resume（cwd 依存のためツールチップで注意喚起）。 */''}
 				<div class="title-row">
 					<h2>${escapeHtml(displayName)}</h2>
 					<div class="header-actions">
 						<button type="button" class="action-btn" id="openInClaudeBtn"
+							title="このセッションをClaude Code拡張の画面で開きます">▶ Claudeで開く</button>
+						<button type="button" class="action-btn" id="openInCliBtn"
 							title="${session.cwd
-								? 'このセッションをClaude Codeで再開します'
-								: 'このセッションをClaude Codeで再開します（cwd 不明のためワークスペースルートで起動。作成時と cwd が異なると『No conversation found』で失敗する場合があります）'}">▶ Claudeで開く</button>
+								? 'このセッションを新規ターミナルの claude CLI で再開します'
+								: 'このセッションを新規ターミナルの claude CLI で再開します（cwd 不明のためワークスペースルートで起動。作成時と cwd が異なると『No conversation found』で失敗する場合があります）'}">⌨ CLIで開く</button>
 					</div>
 				</div>
 				<div class="meta-grid">
@@ -752,12 +764,19 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 			});
 		}
 
-		// v0.5.15: 「Claudeで開く」ボタン
-		// 拡張側で作成時 cwd を使って createTerminal + \`claude --resume <id>\` を実行する
+		// v0.5.15/v0.5.19: ヘッダのアクションボタン
+		// openInClaude = Claude Code 拡張のUIで開く（URIハンドラ経由）
+		// openInClaudeCli = 拡張側で作成時 cwd を使って createTerminal + \`claude --resume <id>\` を実行
 		const openInClaudeBtn = document.getElementById('openInClaudeBtn');
 		if (openInClaudeBtn) {
 			openInClaudeBtn.addEventListener('click', () => {
 				vscode.postMessage({ type: 'openInClaude' });
+			});
+		}
+		const openInCliBtn = document.getElementById('openInCliBtn');
+		if (openInCliBtn) {
+			openInCliBtn.addEventListener('click', () => {
+				vscode.postMessage({ type: 'openInClaudeCli' });
 			});
 		}
 
