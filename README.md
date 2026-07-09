@@ -34,6 +34,14 @@
 - **追加分（overage）をステータスバーに別表示** — 使用量%はそのまま、`… ｜ 追加 0%` の形で追加分の利用率を併記（API は利用率%のみ提供。ドル金額は claude.ai/settings/usage で確認）
 - モデル表示の整合（opus-1m 等）・hook ライフサイクルの QA 修正・frontmatter クォート修正・設定バックアップの世代管理 など安定化
 
+### v0.5.17 新機能（Sprint C-1: UX 改善 5 件）
+
+- **エージェント検索コマンド** — 新コマンド `claudeManager.searchAgents` を追加。エージェント名 / 表示名 / 役割 / モデル / 親部署をあいまい検索し、選択で TreeView.reveal による該当ノードへのジャンプ + プレビュー起動。エージェント管理ビューのツールバーに $(search) アイコンを追加
+- **ステータスバー表示モード** — 設定 `claudeManager.usage.statusBarStyle` を新設（`full` / `compact` / `max-only`）。`compact` はリセット時刻を省略、`max-only` は最逼迫の 1 枠のみ表示。ステータスバークリックメニューから切替可能。5d 列を配列駆動化（Fable 5d 枠が将来追加される場合、1 行足すだけで対応）
+- **和英混在ラベルの日本語統一** — ライブプレフィックス `[Open]` → `[対話中]`、ライブ状態ビューの `[running]/[blocked]` → `[稼働]/[承認待ち]/[完了]`、サブエージェントの `(no description)` → `（説明なし）` 等
+- **セッション一覧の情報密度** — 設定 `claudeManager.sessions.descriptionFields`（配列）で description 構成要素と順序を制御可能に。既定は `live/agent/originalMsg/time/tags`（モデル短縮名は頭文字と重複するため除外）。日付グループの初期展開は `expandRecentDateGroupsOnly`（既定 ON）で「今日・昨日」のみ展開。ファイルサイズ列は `showFileSize=count-sort-only`（既定）で会話件数ソート時のみ表示
+- **タブバー非表示化** — 設定 `claudeManager.ui.showTabBar`（既定 ON）で Activity Bar と重複するタブ行を OFF にできる。アクティブタブは `description の ●` から `iconPath の ThemeColor（focusBorder）` 表現に変更
+
 ### v0.5.14 新機能（Fable 5 解禁 + normalizeModel 判定順序修正）
 
 - **Fable 5 解禁** — 旧 v0.5.6〜v0.5.13 で「組織方針で非選択」として除外していた最上位モデル `fable` / `fable-1m` を第一級モデルとして復活（オーナー承認 2026-07-09）。表示文字 **Ｆ**、色 **金 #ffd54f**。effort=`max` も選択可。
@@ -410,6 +418,7 @@ VS Code 左のアクティビティバーに 💬 アイコンが表示されま
 | `Claude: セッションを紐づけ` | エージェントにセッションを紐づけ |
 | `Claude: エージェントを削除` | エージェント登録を削除 |
 | `Claude: エージェント管理を更新` | エージェント一覧を再読み込み |
+| `Claude: エージェントを検索` | 名前・表示名・役割・モデル・親部署であいまい検索し、選択でツリーにジャンプ + プレビュー起動（v0.5.17） |
 | `Claude: 組織図を開く` | 組織図 Webview を表示 |
 | `Claude: メモリパスをコピー` | メモリファイルパスをコピー |
 | `Claude: 使い方ガイドを開く` | guide.html を Webview で表示 |

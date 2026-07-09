@@ -264,7 +264,16 @@ export class LiveAgentItem extends vscode.TreeItem {
 		super(`${name}${matchSuffix}`, vscode.TreeItemCollapsibleState.None);
 		this.view = view;
 
-		const statusBadge = `[${entry.status}]`;
+		// v0.5.17 §4-5: 英語ステータスを日本語ラベルへ統一
+		const statusJa = ((): string => {
+			switch (entry.status) {
+				case 'running': return '稼働';
+				case 'blocked': return '承認待ち';
+				case 'done':    return '完了';
+				default:        return String(entry.status);
+			}
+		})();
+		const statusBadge = `[${statusJa}]`;
 		const cwdShort = entry.cwd ? (path.basename(entry.cwd) || entry.cwd) : '—';
 		const elapsed = entry.elapsedSec !== undefined ? `  ${formatElapsed(entry.elapsedSec)}` : '';
 		this.description = `${statusBadge}  ${cwdShort}${elapsed}`;

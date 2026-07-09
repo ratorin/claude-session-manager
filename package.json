@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager - セッション履歴管理",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.5.16",
+	"version": "0.5.17",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -302,6 +302,12 @@
 				"command": "claudeManager.registerAgent",
 				"title": "エージェントとして登録",
 				"icon": "$(person-add)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.searchAgents",
+				"title": "エージェントを検索",
+				"icon": "$(search)",
 				"category": "Claude Session Manager"
 			},
 			{
@@ -615,6 +621,11 @@
 					"group": "navigation"
 				},
 				{
+					"command": "claudeManager.searchAgents",
+					"when": "view == claudeAgents",
+					"group": "navigation"
+				},
+				{
 					"command": "claudeManager.refreshAgents",
 					"when": "view == claudeAgents",
 					"group": "navigation"
@@ -895,6 +906,22 @@
 						"order": 9,
 						"description": "ステータスバーに Sonnet 5日 / Opus 5日 の利用率列を表示する（S xx% / O xx% 形式）。OFFにすると従来の 5h / 7d 表示のみになります"
 					},
+					"claudeManager.usage.statusBarStyle": {
+						"type": "string",
+						"default": "full",
+						"enum": [
+							"full",
+							"compact",
+							"max-only"
+						],
+						"enumDescriptions": [
+							"フル表示（5h ・ 7d ・ Sonnet 5d ・ Opus 5d をパーセントとリセット時刻付きで表示）",
+							"コンパクト表示（リセット時刻を省略し、パーセントのみ）",
+							"最逼迫のみ（もっとも利用率が高い1枠のみ表示）"
+						],
+						"order": 9,
+						"markdownDescription": "ステータスバーの表示スタイル。\n\n- **full**: `5% 4.5h / 7% 7d / S 3% 5d20h / O 20% 5d10h`\n- **compact**: `5% / 7% / S 3% / O 20%`\n- **max-only**: 最逼迫の枠のみ `O 20% 5d10h`\n\n詳細は常に tooltip / 利用率メニューから参照可能"
+					},
 					"claudeManager.hooks.desktopNotification.enabled": {
 						"type": "boolean",
 						"default": false,
@@ -974,6 +1001,56 @@
 							"すべてのセッションを表示"
 						],
 						"description": "会話一覧のフィルターモード"
+					},
+					"claudeManager.sessions.descriptionFields": {
+						"type": "array",
+						"default": [
+							"live",
+							"agent",
+							"originalMsg",
+							"time",
+							"tags"
+						],
+						"items": {
+							"type": "string",
+							"enum": [
+								"live",
+								"agent",
+								"originalMsg",
+								"time",
+								"model",
+								"tags"
+							],
+							"enumDescriptions": [
+								"ライブマーク（●）",
+								"紐づけエージェント（🤖name）",
+								"元のメッセージ（タイトル変更時のみ）",
+								"時刻（HH:MM）",
+								"モデル短縮名（頭文字と重複するため既定でOFF）",
+								"タグ [tag1, tag2]"
+							]
+						},
+						"markdownDescription": "セッション一覧の description（右側）に表示する要素と順序。既定でモデル短縮名は含まれません（頭文字と重複するため）。\n\n順序も反映されます。例: `[\"live\",\"time\"]` にすると `● 12:34` のみが表示されます。"
+					},
+					"claudeManager.sessions.expandRecentDateGroupsOnly": {
+						"type": "boolean",
+						"default": true,
+						"description": "日付グループを『今日・昨日』のみ初期展開し、それ以前は初期折り畳みにします。OFF にすると従来どおり全展開します。"
+					},
+					"claudeManager.sessions.showFileSize": {
+						"type": "string",
+						"default": "count-sort-only",
+						"enum": [
+							"always",
+							"count-sort-only",
+							"never"
+						],
+						"enumDescriptions": [
+							"常に表示",
+							"会話件数ソート時のみ表示（既定）",
+							"表示しない"
+						],
+						"description": "セッションラベル前のファイルサイズ列の表示条件"
 					}
 				}
 			},
@@ -981,6 +1058,11 @@
 				"title": "その他",
 				"order": 3,
 				"properties": {
+					"claudeManager.ui.showTabBar": {
+						"type": "boolean",
+						"default": true,
+						"markdownDescription": "サイドバー上部のタブ行（💬 セッション / 👤 エージェント / 🧠 メモリ / 📁 プロジェクト）を表示します。\n\nActivity Bar と重複するため OFF にできます。OFF でもステータス行と Activity Bar は残ります。アクティブタブは iconPath の色で表現されます。"
+					},
 					"claudeManager.preview.showThinkingBlocks": {
 						"type": "boolean",
 						"default": false,

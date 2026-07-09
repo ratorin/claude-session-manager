@@ -1,5 +1,75 @@
 # 更新履歴
 
+## v0.5.17 (2026-07-09) — Sprint C-1: UX 改善 5 件（小工数・高効果）
+
+仕様書 `docs/v0.5.x-fable-qa-20260709.md §4` の UX 改善 12 件のうち、費用対効果順トップ 5（§4-1 / §4-2 / §4-5 / §4-6 / §4-12）を本 v0.5.17 に実装。
+
+### ➕ §4-1 エージェント検索
+
+- **新コマンド `claudeManager.searchAgents`** を追加。QuickPick で `name` / `displayName` / `role` / `model` / `parentAgent` をあいまい検索（`matchOnDescription` / `matchOnDetail` 有効）→ 選択で既存の `previewAgentByName` を実行。
+- **AgentTreeProvider に `getParent()` 実装** + reveal 用の `getAgentItemByName()` ヘルパー追加。TreeView.reveal でツリーの該当ノードにジャンプ（親を辿って自動展開）。
+- **エージェント管理ビューのツールバーに `$(search)` アイコン**追加（`view/title` メニュー: `when: view == claudeAgents, group: navigation`）。
+- 判断: 未展開のツリー階層の項目は reveal 対象キャッシュに載っていないケースがあり、その場合は無視して preview 起動のみ行う（実害なし）。
+
+### ➕ §4-2 ステータスバー表示モード + 5d 列の配列駆動化
+
+- **新設定 `claudeManager.usage.statusBarStyle`** (`full` / `compact` / `max-only`、既定 `full`)
+  - `full`: 現状維持（例: `5% 4.5h / 7% 7d / S 3% 5d20h / O 20% 5d10h`）
+  - `compact`: リセット時刻を省略し % のみ（`5% / 7% / S 3% / O 20%`）
+  - `max-only`: 最も逼迫している 1 枠のみ表示（`O 20% 5d10h`）
+- 詳細は既存 tooltip / `openUsageMenu`（利用率メニュー）に集約。**ステータスバークリックから「表示スタイルを切替」でモード変更可能**。
+- **5d 列を `USAGE_MULTIDAY_COLUMNS: readonly UsageMultiDayColumn[]` として配列駆動化**（`{ key, label, longLabel, getUsage, getReset }`）。`formatUsageText` / tooltip 生成 / 警告色判定 / 通知フラグまわりを配列イテレーションで統一。将来 Fable 5d 枠がヘッダに来た場合、配列に 1 行追加するだけで全経路に自動反映される構造。
+- `usageMonitor.refresh()` を `onDidChangeConfiguration('usage.statusBarStyle' | 'usage.show5dColumns')` で即時反映。
+
+### 🌐 §4-5 和英混在ラベルの日本語統一
+
+- `agentTreeProvider.ts`: ライブプレフィックス **`[Open]` → `[対話中]`**（30 秒以内の対話中判定）
+- `agentLiveTreeProvider.ts`: **`[running]/[blocked]/[done]` → `[稼働]/[承認待ち]/[完了]`**（内部ステータス enum はそのまま、表示ラベル関数化）
+- `orchestrationTreeProvider.ts`: サブエージェントの **`${info.name} (no description)` → `${info.name}（説明なし）`**
+- 判断: `claudeAgentsService.ts` のコメント（Claude CLI テキスト出力の仕様サンプル）と、SummaryItem の「JSON API」（Anthropic API ブランド用語）は保持。i18n の `t()` 全面移行は本 Sprint スコープ外（仕様書明示）。
+
+### 🗂 §4-6 セッション一覧の情報密度
+
+- **新設定 `claudeManager.sessions.descriptionFields`**（配列、既定 `['live','agent','originalMsg','time','tags']`）
+  - `live` / `agent` / `originalMsg` / `time` / `model` / `tags` の順序・オンオフを制御。
+  - モデル短縮名は頭文字（Ｓ/Ｏ 等）と重複するため既定から除外。
+  - 内部で `Record<string,string>` によるフィールドマップを構築 → `fields.map(k => fieldMap[k]).filter(Boolean).join(' ')` で連結。
+- **新設定 `claudeManager.sessions.expandRecentDateGroupsOnly`**（既定 `true`）
+  - `DateGroupItem` の初期展開を「今日 / 昨日」のみに絞る。それ以外は `Collapsed`。
+- **新設定 `claudeManager.sessions.showFileSize`** (`always` / `count-sort-only` / `never`、既定 `count-sort-only`)
+  - `count-sort-only`: `sortMode === 'count'` のときのみラベル前にファイルサイズ列を表示。
+  - `SessionItem._currentSortMode` 静的プロパティで provider の `sortMode` を共有（`setSortMode()` で更新）。
+- 設定変更は `onDidChangeConfiguration` で `sessionProvider.refresh()` を発火して即時反映。
+
+### 🎛 §4-12 タブバー非表示化 + アクティブ表示の ThemeColor 化
+
+- **新設定 `claudeManager.ui.showTabBar`**（既定 `true`）
+  - `TabBarTreeProvider.getChildren()` が `false` のときタブアイテムを返さず、ステータス行のみ表示（Activity Bar と重複するケース向け）。
+- **アクティブタブ表現を `description の ●` から `iconPath の ThemeColor`** に変更
+  - アクティブ: `focusBorder`（VS Code 標準の強調色）
+  - 非アクティブ: `descriptionForeground`（薄いテーマ色）
+  - `TAB_DEFS` の `icon` フィールドは常時使用（アクセシビリティ + iconPath 表現用）。
+- **`mainTabPanel.ts` の旧コメント（「3タブ完全実装」）を実態に更新** — 現在は projects ペイン専用の WebviewView であり、セッション / エージェント / メモリはそれぞれ独立の TreeView（別 view container）で提供される旨を明記。過去バージョンで統合表示していた名残の記述を撤去。
+
+### 🧪 テスト
+
+- `K1 formatUsageText`: full / compact / max-only 各スタイルの出力を検証（`O 20% 5d10h` が max-only で単独出力になることまで確認）
+- `K2 USAGE_MULTIDAY_COLUMNS`: 配列駆動化の型契約（`getUsage` / `getReset` / `label` / `longLabel` 必須、Sprint C-1 時点で `sonnet-5d` / `opus-5d` の 2 件）を確認
+- **44/44 → 46/46 pass**（Sprint B → C-1 の増分 2）
+
+### 検証
+
+- `npx tsc --noEmit` クリーン。
+- `npm test`: **46 / 46 pass**。
+- テストハーネスは修正済み USERPROFILE 隔離 + fail-fast ガード維持。
+
+### 判断・見送り事項
+
+- **§4-3 モデル表示（1M 上付き数字化）**: `modelCatalog.ts` の一元化は v0.5.14 で完了済み。上付き数字（Ｏ¹/Ｓ¹/Ｆ¹）表示は現状の頭文字統一（Ｓ/Ｏ/Ｆ/Ｈ）と 1M 情報を tooltip/label で担保する設計と衝突するため Sprint C-1 スコープ外。将来対応の候補として保留。
+- **§4-4 ライブ視認性（TreeView.badge）**: `TreeView.badge` は VS Code の TreeView.badge API に依存するため別 Sprint で実施。
+- **§4-7〜11 (walkthroughs/グルーピング切替/Activity Bar 移設/テーマ追従/組織図検索)**: 中〜大工数のため Sprint C-2 以降。
+- **searchAgents の初回検索時に未展開ノードは reveal 対象キャッシュに未登録**: 現状は preview のみ実行して silent fail（reveal は catch）。事前スキャンや遅延展開のため実害は薄く、深掘りは後続 Sprint で対応。
+
 ## v0.5.16 (2026-07-09) — Sprint B: MEDIUM/LOW 12 件 + 新規バグ 1 件（ワークスペース内セッション灰色表示）修正
 
 ### 🔍 コードレビュー修正ラウンド（Sprint B レビュー時点）

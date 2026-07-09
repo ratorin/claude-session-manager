@@ -1,17 +1,20 @@
 /**
  * mainTabPanel.ts — v0.5.0 Sprint 2 T2.1〜T2.15
- * claudeMain WebviewView Container — 3タブ完全実装
  *
- * タブ構成:
- *   0: セッション (sessions)
- *   1: エージェント (agents)  — T2.12〜T2.15: ブックマーク/最終使用/フィルタ/スコープ
- *   2: プロジェクト (projects) — T2.1〜T2.9: カード/詳細ペイン/進捗/メモリ/紐づけ
+ * v0.5.17 §4-12 で実態に合わせて記述を更新:
+ *   本 WebviewView は **プロジェクト詳細タブ専用** のペインになっている。
+ *   セッション / エージェント / メモリはそれぞれ独立した TreeView 実装 (sessionTreeProvider,
+ *   agentTreeProvider, memoryTreeProvider) で提供され、activeTab の切替で claudeMain の可視性
+ *   自体が変わる（package.json の view when 句を参照）。
+ *
+ * 過去バージョンの「3タブ完全実装」表記は WebView 内でセッション/エージェント/プロジェクトを
+ *   統合表示するプロトタイプ実装時の名残。現在は projects ペインのみアクティブに描画される。
  *
  * アーキテクチャ:
  *   - WebviewViewProvider として登録
- *   - タブ切り替えは Webview 内 JS で管理
- *   - 各タブのデータ取得は postMessage でサービス層に委譲
- *   - TreeView providers はそのまま残す（後方互換）
+ *   - activeTab='projects' の間だけ表示される（claudeTabBar TreeView が切替の実体）
+ *   - プロジェクト一覧のデータ取得は postMessage でサービス層に委譲
+ *   - TreeView providers はそのまま残す（セッション/エージェント/メモリの本体）
  */
 
 import * as vscode from 'vscode';

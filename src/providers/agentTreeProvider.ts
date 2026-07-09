@@ -72,6 +72,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 
 	refresh(): void {
 		this._rootChildrenCache = undefined;
+		this.lastAgentItemsByName.clear(); // v0.5.17 §4-1: reveal 用キャッシュも初期化
 		this._onDidChangeTreeData.fire(undefined);
 	}
 
@@ -148,6 +149,30 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 
 	getTreeItem(element: AgentTreeNode): vscode.TreeItem {
 		return element;
+	}
+
+	// v0.5.17 §4-1: reveal(item) で該当 AgentItem までツリーを辿るための getParent 実装。
+	//   AgentItem のみ親子関係を持つ（parentAgent 名 → 親 AgentItem）。
+	//   GlobalAgentsSectionItem 配下のエージェントは仮想セクションを親として扱う。
+	//   本 getParent は同期的に「そのノードが所属する親のインスタンス」を要求する。
+	//   直近の getChildren 実行時のキャッシュを見て一致するインスタンスを返す。
+	getParent(element: AgentTreeNode): AgentTreeNode | undefined {
+		if (!(element instanceof AgentItem)) { return undefined; }
+		const parentName = element.agent.parentAgent;
+		if (!parentName) { return undefined; } // ルート直下 or グローバルセクション配下 → undefined でOK
+		// キャッシュ済みの兄弟マップから同名エージェントの AgentItem インスタンスを探す
+		return this.lastAgentItemsByName.get(parentName);
+	}
+	/** getParent が使うキャッシュ（getChildren 内で更新） */
+	private lastAgentItemsByName = new Map<string, AgentItem>();
+
+	/**
+	 * v0.5.17 §4-1: エージェント名で AgentItem インスタンスを取得（reveal 用）。
+	 * 直近の getChildren 実行時のキャッシュを見る。未展開のツリー階層の項目は取得できない可能性があるため、
+	 * 呼び出し側で reveal 失敗時に catch すること。
+	 */
+	getAgentItemByName(name: string): AgentItem | undefined {
+		return this.lastAgentItemsByName.get(name);
 	}
 
 	async getChildren(element?: AgentTreeNode): Promise<AgentTreeNode[]> {
@@ -338,7 +363,9 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				const hasChildrenFlag = childMap.has(agent.name) || hasTasks;
 				const ws = this.watcherStates.get(agent.name);
 				const mtimeMs = agent.sessionId ? this.getSessionMtimeFn?.(agent.sessionId) : undefined;
-				result.push(new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs));
+				const item = new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs);
+				this.lastAgentItemsByName.set(agent.name, item); // v0.5.17 §4-1: reveal 用
+				result.push(item);
 			}
 
 			// グローバルエージェント の仮想親ノード
@@ -370,7 +397,9 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			const hasChildren = childMap.has(agent.name) || hasTasks;
 			const ws = this.watcherStates.get(agent.name);
 			const mtimeMs = agent.sessionId ? this.getSessionMtimeFn?.(agent.sessionId) : undefined;
-			result.push(new AgentItem(agent, isLive, sessionTitle, true, hasChildren, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs));
+			const item = new AgentItem(agent, isLive, sessionTitle, true, hasChildren, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs);
+			this.lastAgentItemsByName.set(agent.name, item); // v0.5.17 §4-1: reveal 用
+			result.push(item);
 		}
 
 		// タスクログ
@@ -424,23 +453,24 @@ export class AgentItem extends vscode.TreeItem {
 		// モデル不一致警告ラベル
 		const mismatchLabel = modelMismatch ? ' ⚠️' : '';
 
-		// ライブプレフィックス: [Open] または [経過時間]
-		// - isLive かつ mtime が 30 秒以内 → [Open] (現在対話中と推定)
+		// ライブプレフィックス: [対話中] または [経過時間]
+		// - isLive かつ mtime が 30 秒以内 → [対話中] (現在対話中と推定)
 		// - isLive かつ mtime が古い      → [5分] のような経過時間
 		// - 停止中                        → プレフィックスなし
+		// v0.5.17 §4-5: [Open] → [対話中] へ和英統一
 		let livePrefix = '';
 		if (isLive && !isOtherProject) {
 			if (mtimeMs !== undefined) {
 				const elapsedMs = Date.now() - mtimeMs;
 				livePrefix = elapsedMs < 30_000
-					? '[Open] '
+					? '[対話中] '
 					: `[${formatLiveElapsed(elapsedMs)}] `;
 			} else {
 				livePrefix = '[実行中] ';
 			}
 		}
 
-		// 表示名: "[Open] Ｏ  CSM開発部（csm-dev）使い捨て ⚠️"
+		// 表示名: "[対話中] Ｏ  CSM開発部（csm-dev）使い捨て ⚠️"
 		const agentDisplayName = agent.displayName
 			? `${agent.displayName}（${agent.name}）`
 			: agent.name;

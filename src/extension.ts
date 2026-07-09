@@ -343,6 +343,14 @@ export function activate(context: vscode.ExtensionContext) {
 	// 利用率メニュー（StatusBarクリック時）
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.openUsageMenu', async () => {
+			// v0.5.17 §4-2: 現在のステータスバースタイルを取得
+			const cfgUsage = vscode.workspace.getConfiguration('claudeManager.usage');
+			const currentStyle = cfgUsage.get<string>('statusBarStyle', 'full');
+			const styleLabels: Record<string, string> = {
+				full: 'フル表示（%＋リセット時刻）',
+				compact: 'コンパクト表示（%のみ）',
+				'max-only': '最逼迫のみ（1枠のみ表示）',
+			};
 			const items: vscode.QuickPickItem[] = [
 				{
 					label: '$(browser) Claude Code を開く',
@@ -357,6 +365,11 @@ export function activate(context: vscode.ExtensionContext) {
 				{
 					label: '$(refresh) 利用率を再取得',
 					description: '最新の利用率データを取得します',
+				},
+				{
+					label: '$(list-selection) 表示スタイルを切替',
+					description: `現在: ${styleLabels[currentStyle] || currentStyle}`,
+					detail: 'full / compact / max-only を選択します',
 				},
 			];
 
@@ -391,6 +404,23 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 				await usageMonitor.refresh();
 				vscode.window.showInformationMessage('利用制限を更新しました');
+			} else if (selected.label.startsWith('$(list-selection)')) {
+				// v0.5.17 §4-2: ステータスバースタイル切替
+				const styleItems: (vscode.QuickPickItem & { value: string })[] = [
+					{ label: 'フル表示', description: '5% 4.5h / 7% 7d / S 3% 5d20h / O 20% 5d10h', value: 'full' },
+					{ label: 'コンパクト', description: '5% / 7% / S 3% / O 20%', value: 'compact' },
+					{ label: '最逼迫のみ', description: '最も利用率が高い1枠のみ', value: 'max-only' },
+				];
+				for (const s of styleItems) { if (s.value === currentStyle) { s.label = `$(check) ${s.label}`; } }
+				const chosen = await vscode.window.showQuickPick(styleItems, {
+					placeHolder: 'ステータスバー表示スタイルを選択',
+					title: 'Claude 利用率 — 表示スタイル',
+				});
+				if (chosen) {
+					await cfgUsage.update('statusBarStyle', chosen.value, vscode.ConfigurationTarget.Global);
+					await usageMonitor.refresh();
+					vscode.window.showInformationMessage(`表示スタイルを「${styleLabels[chosen.value]}」に切替しました`);
+				}
 			}
 		})
 	);
@@ -414,6 +444,22 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 		if (e.affectsConfiguration('claudeManager.enableUsageMonitor') || e.affectsConfiguration('claudeManager.usageMonitorInterval')) {
 			startUsageMonitorIfEnabled();
+		}
+		// v0.5.17 §4-2: ステータスバースタイル / show5dColumns の変更は即時反映
+		if (
+			e.affectsConfiguration('claudeManager.usage.statusBarStyle') ||
+			e.affectsConfiguration('claudeManager.usage.show5dColumns')
+		) {
+			void usageMonitor.refresh();
+		}
+		// v0.5.17 §4-6 / §4-12: セッション表示・タブバー・description 設定の変更を反映
+		if (
+			e.affectsConfiguration('claudeManager.sessions.descriptionFields') ||
+			e.affectsConfiguration('claudeManager.sessions.expandRecentDateGroupsOnly') ||
+			e.affectsConfiguration('claudeManager.sessions.showFileSize') ||
+			e.affectsConfiguration('claudeManager.ui.showTabBar')
+		) {
+			sessionProvider.refresh();
 		}
 		if (e.affectsConfiguration('claudeManager.locale')) {
 			setLocale(getLocaleConfig());
@@ -510,6 +556,7 @@ export function activate(context: vscode.ExtensionContext) {
 	registerAgentCommands(context, {
 		sessionProvider, agentProvider, agentWatcher, sessionServiceDeps,
 		refreshAll, getExtensionOutputChannel, updateStatusBar, extensionOutputChannel,
+		claudeAgentsTreeView, // v0.5.17 §4-1: searchAgents で reveal に使用
 	});
 
 	// 組織図・ディレクター関連コマンド登録

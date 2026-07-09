@@ -698,6 +698,44 @@ test('J6 M-11 thinkingEnabled: 未指定なら既存値を維持', async () => {
 	assert.equal(def.thinkingEnabled, true, 'thinkingEnabled が保存で消失しない');
 });
 
+test('K1 §4-2 formatUsageText: full / compact / max-only スタイルの出力', () => {
+	const { usageMonitor } = loadFresh(setupTmpHome());
+	const now = Math.floor(Date.now() / 1000);
+	const data = {
+		usage5h: 5, reset5h: now + 3600 * 4,        // 4h 残
+		usage7d: 10, reset7d: now + 86400 * 7,      // 7d 残
+		usageSonnet5d: 3, resetSonnet5d: now + 86400 * 5,
+		usageOpus5d: 20, resetOpus5d: now + 86400 * 5 + 3600 * 10,
+		overageUtilization: -1, overageStatus: '', overageReset: 0, fetchedAt: 0,
+	};
+	// full = デフォルト表示 (label + % + リセット時刻)
+	const full = usageMonitor.formatUsageText(data, true, 'full');
+	assert.match(full, /5% [\d.]+h/, 'full: 5h 情報付き');
+	assert.match(full, / \/ S 3% /, 'full: S 5d 表示');
+	assert.match(full, / \/ O 20% /, 'full: O 5d 表示');
+	// compact = リセット時刻省略
+	const compact = usageMonitor.formatUsageText(data, true, 'compact');
+	assert.match(compact, /^5% \/ S 3% \/ O 20%$/, 'compact: %のみ');
+	// max-only = 最も逼迫している1枠のみ
+	const maxOnly = usageMonitor.formatUsageText(data, true, 'max-only');
+	assert.match(maxOnly, /^O 20% /, 'max-only: Opus 5d が最大 → その1枠のみ');
+});
+
+test('K2 §4-2 USAGE_MULTIDAY_COLUMNS: 配列駆動化（Fable 追加時に 1 行足すだけで済むか）', () => {
+	const { usageMonitor } = loadFresh(setupTmpHome());
+	assert.ok(Array.isArray(usageMonitor.USAGE_MULTIDAY_COLUMNS), 'USAGE_MULTIDAY_COLUMNS が配列');
+	// Sprint C-1 時点: sonnet-5d, opus-5d の 2 件
+	const keys = usageMonitor.USAGE_MULTIDAY_COLUMNS.map((c) => c.key);
+	assert.deepEqual(keys, ['sonnet-5d', 'opus-5d'], 'sonnet-5d と opus-5d のみ登録');
+	// 各列は getUsage / getReset / label を持つ（型契約）
+	for (const c of usageMonitor.USAGE_MULTIDAY_COLUMNS) {
+		assert.equal(typeof c.getUsage, 'function');
+		assert.equal(typeof c.getReset, 'function');
+		assert.equal(typeof c.label, 'string');
+		assert.equal(typeof c.longLabel, 'string');
+	}
+});
+
 test('J7 レビュー修正(3) isSessionInAnyWorkspace: projectFilter/decoration 共通判定', () => {
 	// sessionTreeProvider は vscode モジュール依存が濃いのでロードせず、
 	// pathUtils.isContainedIn の組み合わせ挙動で等価な判定ができることを検証。

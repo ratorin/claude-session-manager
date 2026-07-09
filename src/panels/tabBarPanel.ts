@@ -121,18 +121,28 @@ export class TabBarTreeProvider
 
 		const info = this._statusInfo ?? this._statusProvider?.();
 
-		const tabItems = TAB_DEFS.map(({ id, label }) => {
-			const isActive = id === this._activeTab;
-			// iconPath は設定しない (絵文字のみで揃える)。description ● でアクティブ表示。
-			return new TabBarItem(
-				id,
-				label,
-				undefined,
-				undefined,
-				isActive ? '●' : undefined,
-				isActive ? `${label} (現在のタブ)` : label,
-			);
-		});
+		// v0.5.17 §4-12: タブ行表示を設定可能に。既定 true。OFF ならタブアイテムを返さずステータス行のみ残す。
+		//   Activity Bar と重複することから、ミニマル運用の希望に応える。
+		const showTabBar = vscode.workspace.getConfiguration('claudeManager')
+			.get<boolean>('ui.showTabBar', true);
+
+		// v0.5.17 §4-12: アクティブタブを description の ● でなく iconPath ThemeColor で表現。
+		//   非アクティブは薄いテーマ色、アクティブは focusBorder 相当を使う。
+		const tabItems = showTabBar
+			? TAB_DEFS.map(({ id, label, icon }) => {
+				const isActive = id === this._activeTab;
+				return new TabBarItem(
+					id,
+					label,
+					icon,
+					isActive
+						? new vscode.ThemeColor('focusBorder')
+						: new vscode.ThemeColor('descriptionForeground'),
+					undefined, // description（旧 ● 表示）は撤廃
+					isActive ? `${label} (現在のタブ)` : label,
+				);
+			})
+			: [];
 
 		const statusItem = new TabBarItem(
 			'status',

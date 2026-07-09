@@ -322,9 +322,10 @@ export class SubagentItem extends vscode.TreeItem {
 	public readonly subagentInfo: SubagentInfo;
 
 	constructor(info: SubagentInfo) {
+		// v0.5.17 §4-5: (no description) → （説明なし）に和英統一
 		const desc = info.description
 			? (info.description.length > 60 ? `${info.description.substring(0, 60)}…` : info.description)
-			: `${info.name} (no description)`;
+			: `${info.name}（説明なし）`;
 
 		super(desc, vscode.TreeItemCollapsibleState.None);
 		this.subagentInfo = info;

@@ -205,31 +205,68 @@ function fmtPct(v: number): string {
 	return v % 1 === 0 ? `${v}` : v.toFixed(1);
 }
 
+// v0.5.17 §4-2: 5d 列を配列駆動化（Fable 5d 枠が将来追加される場合、この配列に 1 行足すだけで済む）。
+// 各列は `getUsage(data)` / `getReset(data)` / `label`（表示上の 1 文字）で自己完結する。
+interface UsageMultiDayColumn {
+	key: 'sonnet-5d' | 'opus-5d';
+	label: string;                     // ステータスバー用の 1 文字（S/O 等）
+	longLabel: string;                 // tooltip 用の日本語ラベル
+	getUsage(data: UsageData): number; // <0 なら「データなし」
+	getReset(data: UsageData): number; // Unix 秒
+}
+export const USAGE_MULTIDAY_COLUMNS: readonly UsageMultiDayColumn[] = [
+	{ key: 'sonnet-5d', label: 'S', longLabel: 'Sonnet 5日',
+		getUsage: (d) => d.usageSonnet5d, getReset: (d) => d.resetSonnet5d },
+	{ key: 'opus-5d', label: 'O', longLabel: 'Opus 5日',
+		getUsage: (d) => d.usageOpus5d,   getReset: (d) => d.resetOpus5d },
+];
+
+export type StatusBarStyle = 'full' | 'compact' | 'max-only';
+
 /**
- * 利用率の表示テキストを生成（T2.23）
+ * 利用率の表示テキストを生成（T2.23 / v0.5.17 §4-2）
  * show5d=true:  "5% 4.5h / S 3% 5d20h / O 20% 5d10h"
  * show5d=false: "5% 4.5h / 7% 7d"
+ * style:
+ *   - 'full'     : 現状維持（%表記 + リセット時刻）
+ *   - 'compact'  : リセット時刻を省略し % のみ  例: "5% / 7% / S 3% / O 20%"
+ *   - 'max-only' : 最も逼迫している1枠のみ表示 例: "O 20% 5d10h"
  */
-export function formatUsageText(data: UsageData, show5d = true): string {
-	const r5h = formatTimeRemaining(data.reset5h);
-	const base = `${fmtPct(data.usage5h)}% ${r5h}`;
-
-	if (!show5d || (data.usageSonnet5d < 0 && data.usageOpus5d < 0)) {
-		// Sonnet/Opus 5dデータなし → 従来フォーマット
-		const r7d = formatTimeRemaining(data.reset7d);
-		return `${base} / ${fmtPct(data.usage7d)}% ${r7d}`;
+export function formatUsageText(data: UsageData, show5d = true, style: StatusBarStyle = 'full'): string {
+	// 内部型: 1 セグメントぶんの情報
+	interface Seg { label: string; usage: number; reset: number; }
+	const segs: Seg[] = [
+		{ label: '', usage: data.usage5h, reset: data.reset5h }, // 5h は無ラベル（base）
+	];
+	// 5d 有無で残りセグメントを追加
+	const activeCols = show5d
+		? USAGE_MULTIDAY_COLUMNS.filter((c) => c.getUsage(data) >= 0)
+		: [];
+	if (activeCols.length === 0) {
+		// 従来フォーマット: 5h / 7d
+		segs.push({ label: '', usage: data.usage7d, reset: data.reset7d });
+	} else {
+		for (const c of activeCols) {
+			segs.push({ label: c.label, usage: c.getUsage(data), reset: c.getReset(data) });
+		}
 	}
 
-	const parts: string[] = [base];
-	if (data.usageSonnet5d >= 0) {
-		const rs = formatTimeRemaining(data.resetSonnet5d);
-		parts.push(`S ${fmtPct(data.usageSonnet5d)}% ${rs}`);
+	function fmtSeg(s: Seg): string {
+		const labelPrefix = s.label ? `${s.label} ` : '';
+		if (style === 'compact') {
+			return `${labelPrefix}${fmtPct(s.usage)}%`;
+		}
+		return `${labelPrefix}${fmtPct(s.usage)}% ${formatTimeRemaining(s.reset)}`;
 	}
-	if (data.usageOpus5d >= 0) {
-		const ro = formatTimeRemaining(data.resetOpus5d);
-		parts.push(`O ${fmtPct(data.usageOpus5d)}% ${ro}`);
+
+	if (style === 'max-only') {
+		// 最逼迫の 1 枠のみ（同率のときは配列順で先勝ち）
+		let top = segs[0];
+		for (const s of segs) { if (s.usage > top.usage) { top = s; } }
+		return fmtSeg(top);
 	}
-	return parts.join(' / ');
+
+	return segs.map(fmtSeg).join(' / ');
 }
 
 /**
@@ -334,15 +371,23 @@ export class UsageMonitor implements vscode.Disposable {
 			const data = result.data;
 			this.lastData = data;
 			// T2.23: show5dColumns 設定を読んで表示フォーマットを切り替え
-			const show5d = vscode.workspace.getConfiguration('claudeManager').get<boolean>('usage.show5dColumns', true);
+			const cfg = vscode.workspace.getConfiguration('claudeManager');
+			const show5d = cfg.get<boolean>('usage.show5dColumns', true);
+			// v0.5.17 §4-2: 表示スタイル（full/compact/max-only）
+			const style = cfg.get<StatusBarStyle>('usage.statusBarStyle', 'full');
 			// 追加分（overage）は使用量とは別セグメントで併記
 			const overageText = formatOverageText(data);
-			this.statusBarItem.text = `$(dashboard) ${formatUsageText(data, show5d)}${overageText ? ` ｜ ${overageText}` : ''}`;
+			this.statusBarItem.text = `$(dashboard) ${formatUsageText(data, show5d, style)}${overageText ? ` ｜ ${overageText}` : ''}`;
 
 			// 警告色の判定（5h / Sonnet5d / Opus5d の最大値で判定）
+			// v0.5.17 §4-2: 5d 列を USAGE_MULTIDAY_COLUMNS 経由に統一
 			const candidates = [data.usage5h, data.usage7d];
-			if (show5d && data.usageSonnet5d >= 0) { candidates.push(data.usageSonnet5d); }
-			if (show5d && data.usageOpus5d   >= 0) { candidates.push(data.usageOpus5d); }
+			if (show5d) {
+				for (const c of USAGE_MULTIDAY_COLUMNS) {
+					const u = c.getUsage(data);
+					if (u >= 0) { candidates.push(u); }
+				}
+			}
 			const maxUsage = Math.max(...candidates);
 			if (maxUsage >= 95) {
 				this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
@@ -360,11 +405,14 @@ export class UsageMonitor implements vscode.Disposable {
 				`5時間: ${fmtPct(data.usage5h)}%（リセットまで ${r5h}）`,
 				`7日間: ${fmtPct(data.usage7d)}%（リセットまで ${r7d}）`,
 			];
-			if (show5d && data.usageSonnet5d >= 0) {
-				tooltipLines.push(`Sonnet 5日: ${fmtPct(data.usageSonnet5d)}%（リセットまで ${formatTimeRemaining(data.resetSonnet5d)}）`);
-			}
-			if (show5d && data.usageOpus5d >= 0) {
-				tooltipLines.push(`Opus 5日: ${fmtPct(data.usageOpus5d)}%（リセットまで ${formatTimeRemaining(data.resetOpus5d)}）`);
+			// v0.5.17 §4-2: 5d 列を USAGE_MULTIDAY_COLUMNS 経由に統一（Fable 5d 等が追加された際も自動対応）
+			if (show5d) {
+				for (const c of USAGE_MULTIDAY_COLUMNS) {
+					const u = c.getUsage(data);
+					if (u >= 0) {
+						tooltipLines.push(`${c.longLabel}: ${fmtPct(u)}%（リセットまで ${formatTimeRemaining(c.getReset(data))}）`);
+					}
+				}
 			}
 			if (data.overageUtilization >= 0) {
 				const ro = data.overageReset ? `・リセットまで ${formatTimeRemaining(data.overageReset)}` : '';

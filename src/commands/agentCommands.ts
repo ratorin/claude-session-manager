@@ -34,6 +34,8 @@ export interface AgentCommandsDeps {
 	getExtensionOutputChannel: () => vscode.OutputChannel;
 	updateStatusBar: () => void;
 	extensionOutputChannel: vscode.OutputChannel;
+	// v0.5.17 §4-1: エージェント検索コマンドで reveal に使う
+	claudeAgentsTreeView?: vscode.TreeView<unknown>;
 }
 
 // --resume コマンド引数を組み立てるヘルパー
@@ -64,7 +66,57 @@ export function registerAgentCommands(
 		sessionProvider, agentProvider, agentWatcher,
 		sessionServiceDeps, refreshAll, getExtensionOutputChannel,
 		updateStatusBar, extensionOutputChannel,
+		claudeAgentsTreeView,
 	} = deps;
+
+	// v0.5.17 §4-1: エージェント検索コマンド
+	//   name / displayName / role / model / parentAgent をあいまい検索し、選択で previewAgentByName を実行 +
+	//   TreeView.reveal で該当ノードにジャンプする（AgentTreeProvider.getParent 実装済み）。
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.searchAgents', async () => {
+			const agents = await dataStore.getAgents();
+			if (agents.length === 0) {
+				vscode.window.showInformationMessage('登録されているエージェントがありません');
+				return;
+			}
+			// QuickPickItem 型に整形（matchOnDescription / matchOnDetail であいまい検索を効かせる）
+			interface AgentPickItem extends vscode.QuickPickItem {
+				agentName: string;
+			}
+			const items: AgentPickItem[] = agents.map((a) => {
+				const parts: string[] = [];
+				if (a.displayName && a.displayName !== a.name) { parts.push(a.displayName); }
+				if (a.model) { parts.push(a.model); }
+				if (a.parentAgent) { parts.push(`親: ${a.parentAgent}`); }
+				const description = parts.join(' ・ ');
+				const detail = a.displayRole || a.role || a.displayDescription || '';
+				return {
+					label: `$(person) ${a.name}`,
+					description,
+					detail,
+					agentName: a.name,
+				};
+			});
+			const picked = await vscode.window.showQuickPick(items, {
+				placeHolder: 'エージェント名 / 表示名 / 役割 / モデル / 親部署で検索',
+				matchOnDescription: true,
+				matchOnDetail: true,
+			});
+			if (!picked) { return; }
+
+			// TreeView.reveal で該当ノードへジャンプ（getParent 経由でルートまで辿る）
+			if (claudeAgentsTreeView) {
+				const item = agentProvider.getAgentItemByName(picked.agentName);
+				if (item) {
+					try {
+						await claudeAgentsTreeView.reveal(item, { select: true, focus: true, expand: 3 });
+					} catch { /* reveal 失敗（親未展開等）は無視。preview は続行 */ }
+				}
+			}
+			// previewAgentByName を実行してプレビューを開く
+			await vscode.commands.executeCommand('claudeManager.previewAgentByName', picked.agentName);
+		})
+	);
 
 // 初回エージェント登録時: 役割自動認識(SessionStart hook)の有効化を提案
 const SESSION_INJECT_ASKED_KEY = 'csm.sessionAgentInject.asked';

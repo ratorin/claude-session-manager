@@ -7,9 +7,20 @@ import { isContainedIn } from '../utils/pathUtils';
 import * as dataStore from '../models/dataStore';
 
 // 日付グループヘッダー
+// v0.5.17 §4-6: 設定 `claudeManager.sessions.expandRecentDateGroupsOnly` (既定 true) が有効なら
+//   「今日 / 昨日」ラベルのみ Expanded、それ以外は Collapsed で表示する。
+//   ラベルの日本語（今日/昨日）は buildGroups で生成されるので、そこと同じ判定文字列を使用。
+const RECENT_DATE_LABELS = new Set(['今日', '昨日']);
 export class DateGroupItem extends vscode.TreeItem {
 	constructor(public readonly label: string, public readonly sessionCount: number) {
-		super(label, vscode.TreeItemCollapsibleState.Expanded);
+		const expandOnlyRecent = vscode.workspace.getConfiguration('claudeManager')
+			.get<boolean>('sessions.expandRecentDateGroupsOnly', true);
+		const shouldExpand = expandOnlyRecent
+			? RECENT_DATE_LABELS.has(label)
+			: true;
+		super(label, shouldExpand
+			? vscode.TreeItemCollapsibleState.Expanded
+			: vscode.TreeItemCollapsibleState.Collapsed);
 		this.description = `${sessionCount}件`;
 		this.contextValue = 'dateGroup';
 	}
@@ -65,6 +76,7 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 	// ソートモード設定
 	setSortMode(mode: 'updated-desc' | 'updated-asc' | 'created-desc' | 'created-asc' | 'name' | 'count' | 'model'): void {
 		this.sortMode = mode;
+		SessionItem._currentSortMode = mode; // v0.5.17 §4-6: ファイルサイズ列表示条件用に共有
 		const target = this.filteredSessions || this.sessions;
 		this.sortSessions(target);
 		this.buildGroups(target);
@@ -479,6 +491,13 @@ function agentTypeLabel(agentType?: string): string {
 }
 
 export class SessionItem extends vscode.TreeItem {
+	/**
+	 * v0.5.17 §4-6: 現在の sortMode を SessionTreeProvider から共有するための静的キャッシュ。
+	 *   SessionItem のコンストラクタで参照して、ファイルサイズ列の表示条件（count-sort-only）判定に使う。
+	 *   provider の setSortMode が更新する。
+	 */
+	public static _currentSortMode: string = 'updated-desc';
+
 	constructor(
 		public readonly session: ParsedSession,
 		public readonly isBookmarked: boolean,
@@ -504,13 +523,20 @@ export class SessionItem extends vscode.TreeItem {
 
 		// モデル頭文字（全角で等幅）— 親セッションのみ
 		// v0.5.14 レビュー修正 (7): modelCatalog.getModelChar() に統一（agentTree/tag/preview と揃える）。
-		//   旧: 1M を '１' で表示していたが、agentPreview（catalog char=Ｓ/Ｏ）と食い違い。
-		//   新: 母体モデル頭文字（Ｆ/Ｏ/Ｓ/Ｈ）に統一。1M 情報はラベル/tooltip で担保。
 		const modelChar = isSub ? '' : getModelChar(session.model);
+		// v0.5.17 §4-6: ファイルサイズ列の表示条件を設定化。
+		//   claudeManager.sessions.showFileSize: 'always'|'count-sort-only'|'never'
+		//   既定 'count-sort-only' — 会話件数ソート時のみ表示（sortMode='count'）。
+		//   sortMode は provider 側で SessionItem._currentSortMode 静的プロパティに保存される。
+		const cfgSt = vscode.workspace.getConfiguration('claudeManager');
+		const sizeSetting = cfgSt.get<string>('sessions.showFileSize', 'count-sort-only');
+		const currentSortMode = SessionItem._currentSortMode || 'updated-desc';
+		const showSize = sizeSetting === 'always'
+			|| (sizeSetting === 'count-sort-only' && currentSortMode === 'count');
 		// ファイルサイズを5桁右揃え（Figure Space U+2007 で等幅パディング）
 		const figureSpace = '\u2007';
 		const sizeLabel = formatFileSize(session.fileSize);
-		const countStr = isSub ? '' : sizeLabel.padStart(5, figureSpace) + ' ';
+		const countStr = (isSub || !showSize) ? '' : sizeLabel.padStart(5, figureSpace) + ' ';
 
 		// サブエージェントがある親は展開可能
 		const collapsible = hasChildren
@@ -529,25 +555,30 @@ export class SessionItem extends vscode.TreeItem {
 			// サブエージェント用のdescription
 			this.description = `${formatFileSize(session.fileSize)} ${timeStr}`;
 		} else {
-			// タグ表示
-			const tagStr = tags.length > 0 ? ` [${tags.join(', ')}]` : '';
+			// v0.5.17 §4-6: description 構成要素を設定駆動化。
+			//   claudeManager.sessions.descriptionFields: 順序も反映
+			//   既定 ['live','agent','originalMsg','time','tags'] — モデル短縮名はデフォルトから除外（頭文字と重複）
+			const fields = cfgSt.get<string[]>('sessions.descriptionFields', ['live', 'agent', 'originalMsg', 'time', 'tags']);
 
 			// モデル短縮名（[1m]は保持して区別できるようにする）
 			const modelShort = session.model
-				? session.model.replace('claude-', '').replace(/-\d+(\.\d+)?(-\d+)?(?=\[|$)/, (m, ...args) => {
-					// バージョン番号を削除しつつ [1m] は残す
-					return '';
-				}).replace(/^-/, '').replace(/-(?!\[).*$/, '')
+				? session.model.replace('claude-', '').replace(/-\d+(\.\d+)?(-\d+)?(?=\[|$)/, () => '').replace(/^-/, '').replace(/-(?!\[).*$/, '')
 				: '';
 
-			// 元のメッセージ（タイトルが変わっている場合のみ表示）
 			const hasCustomTitle = !!(session.customName || session.claudeTitle);
 			const originalMsg = hasCustomTitle ? session.firstMessage.substring(0, 30) : '';
+			const tagStr = tags.length > 0 ? `[${tags.join(', ')}]` : '';
 
-			// ステータス表示
-			const statusPrefix = isLive ? '● ' : '';
-			const agentLabel = agentConfig ? `🤖${agentConfig.name} ` : '';
-			this.description = `${statusPrefix}${agentLabel}${originalMsg ? originalMsg + ' ' : ''}${timeStr} ${modelShort}${tagStr}`;
+			// 各フィールドの表示文字列（該当データがなければ空）
+			const fieldMap: Record<string, string> = {
+				live: isLive ? '●' : '',
+				agent: agentConfig ? `🤖${agentConfig.name}` : '',
+				originalMsg,
+				time: timeStr,
+				model: modelShort,
+				tags: tagStr,
+			};
+			this.description = fields.map((k) => fieldMap[k] || '').filter(Boolean).join(' ');
 		}
 
 		// ツールチップ
