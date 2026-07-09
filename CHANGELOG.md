@@ -1,5 +1,45 @@
 # 更新履歴
 
+## v0.5.15 (2026-07-09) — セッション詳細ビューに「Claudeで開く」ボタン追加
+
+セッションをクリックして開く会話ビュー（`webviewPanel.ts`）のヘッダに **▶ Claudeで開く** ボタンを新設。ワンクリックで新規ターミナルが立ち上がり `claude --resume "<sessionId>"` が実行される。
+
+### ➕ 追加
+
+- **「▶ Claudeで開く」ボタン**: セッション詳細ビューの h2 タイトル横に配置。VS Code のボタンテーマ変数（`--vscode-button-background` / `--vscode-button-foreground` / `--vscode-button-hoverBackground` / `--vscode-focusBorder`）を使い、既存 UI と自然に調和。
+- **tooltip**: 「このセッションをClaude Codeで再開します」。cwd 不明時は「（cwd 不明のためワークスペースルートで起動。作成時と cwd が異なると『No conversation found』で失敗する場合があります）」と追記して失敗の可能性を明示。
+- **postMessage プロトコル**: webview → 拡張は `{ type: 'openInClaude' }`（他イベントと合わせ `type` フィールド統一）。仕様書の例示は `command: 'openInClaude'` だったが、既存 webview ⇄ 拡張間ハンドラが全て `type` ベースなので既存パターンに揃えた（判断）。
+
+### 🎯 cwd の扱い（最重要ポイント）
+
+`claude --resume` は **セッション作成時と同じ cwd** で起動しないと `No conversation found` で失敗する（本日実証済みの既知問題）。恒久対策として:
+
+- `ParsedSession` に `cwd?: string` フィールドを追加し、`parseSessionFile` / `parseSessionQuick` の両方で JSONL 内 `cwd` フィールド（先頭行から検出）を **加工せず生の値のまま**保持するようにした（従来は `translateWorkDirPath(cwd)` 変換後の `project` にしか渡っていなかった）。
+- ターミナル起動時は `translateWorkDirPath(session.cwd)` を通して Windows / dev-lamp（HGFS）配置差を吸収してから `createTerminal({ cwd })` へ渡す（`agentCommands.ts` の既存パターンと同じ）。
+- **cwd 不明時（旧セッションで cwd 行が読み取れなかった等）**: ボタンを無効化せず、`vscode.workspace.workspaceFolders?.[0]?.uri.fsPath` で「試行」させる（過剰実装しない）。失敗の可能性は上記 tooltip で明示。
+
+### 🔧 実装詳細
+
+- `types.ts`: `ParsedSession.cwd?: string` を追加。
+- `sessionLoader.ts`: `parseSessionFile` / `parseSessionQuick` の返却オブジェクトに `cwd` を含めるように 2 か所修正。
+- `webviewPanel.ts`:
+  - CSS に `.title-row` / `.header-actions` / `.action-btn` を追加（既存 `.info-main` と同スコープ、テーマ変数のみ使用）。
+  - session-info の h2 を `<div class="title-row">` で包み、`.header-actions` にボタンを配置。
+  - webview client JS に `openInClaudeBtn` のクリックハンドラを追加。
+  - `onDidReceiveMessage` に `openInClaude` 分岐を追加し、`vscode.window.createTerminal({ name, cwd })` + `terminal.show()` + `terminal.sendText('claude --resume "<sid>"')` を実行。
+  - ターミナル名は「▶ <セッション表示名 40 文字>」。
+  - sessionId は CSM が扱う hex UUID なのでシェルインジェクション懸念は薄いが、念のため二重引用符で括った（PowerShell / bash / zsh 共通で妥当）。
+
+### 検証
+
+- `npx tsc --noEmit` クリーン。
+- `npm test`: **35 / 35 pass**（既存テストに退行なし。新機能は VS Code API 依存のため単体テスト対象外・別途手動検証）。
+
+### 見送り事項
+
+- ボタンの表示条件（disposable セッションで隠す等）は未実装。全セッションで表示。
+- Claude CLI 未インストール環境向けの検出は未対応（sendText 後に `command not found` が出るだけ。過剰実装不要と判断）。
+
 ## v0.5.14 (2026-07-09) — Fable 5 解禁 + normalizeModel 判定順序修正 + フォーム保存バグ修正
 
 Sprint A（Fable QA レポート 2026-07-09 起点）。長期未対応の Fable 5 除外方針を撤回し、Fable モデルの選択・保存経路を第一級として復活。あわせて `normalizeModel` の C-1（`fable[1m]` → `sonnet-1m` 誤変換）と C-2（fable → opus サイレント書き換え）を修正。加えて HIGH-1（description 保存されないバグ）と HIGH-2（allowedTools 固定 12 種問題）を修正した。

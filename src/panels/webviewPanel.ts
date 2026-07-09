@@ -7,6 +7,7 @@ import { ParsedSession, SimpleMessage, MemoryFile } from '../models/types';
 import { loadSessionFull } from '../utils/sessionLoader';
 import * as dataStore from '../models/dataStore';
 import { generateModelCss } from '../models/modelCatalog';
+import { translateWorkDirPath } from '../utils/agentUtils';
 
 // ガバナンスイベントの型
 interface GovernanceEvent {
@@ -215,6 +216,29 @@ export async function showSessionPreview(session: ParsedSession, context: vscode
 				vscode.commands.executeCommand('claudeManager.editAgentBySessionId', sid);
 			} else if (message.type === 'editRuleFile') {
 				vscode.commands.executeCommand('claudeManager.editRuleFileBySessionId', sid);
+			} else if (message.type === 'openInClaude') {
+				// v0.5.15: セッションを Claude Code の新規ターミナルで再開する。
+				//   ⚠ 最重要: `--resume` は **セッション作成時と同じ cwd** で起動しないと
+				//   "No conversation found" で失敗する（実証済み既知問題）。
+				//   ParsedSession.cwd は JSONL 内 cwd フィールドから抽出した生の値。
+				//   translateWorkDirPath で Windows / dev-lamp / HGFS を整合させる。
+				//   cwd 不明時: ボタン無効化ではなくワークスペースルートで起動して "試行" させる
+				//   （tooltip 側で失敗の可能性を明示済み）。
+				const rawCwd = currentFullSession.cwd;
+				let cwd: string | undefined;
+				if (rawCwd) {
+					try { cwd = translateWorkDirPath(rawCwd); } catch { cwd = rawCwd; }
+				}
+				if (!cwd) {
+					cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				}
+				const displayLabel = currentSession.customName || currentSession.claudeTitle || currentSession.firstMessage;
+				const terminalName = `▶ ${(displayLabel || 'Claude').substring(0, 40)}`;
+				const terminal = vscode.window.createTerminal({ name: terminalName, cwd });
+				terminal.show();
+				// sessionId は自前生成の hex UUID なのでシェルインジェクションは想定外だが、
+				// 念のため二重引用符で括る（PowerShell / bash 共通）。
+				terminal.sendText(`claude --resume "${sid}"`);
 			} else if (message.type === 'openLink') {
 				if (message.linkType === 'url') {
 					vscode.env.openExternal(vscode.Uri.parse(message.href));
@@ -327,6 +351,32 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 	}
 	.info-main { flex: 1; }
 	.info-main h2 { font-size: 1.1em; margin-bottom: 4px; }
+	/* v0.5.15: タイトル行にアクションボタンを並べるレイアウト */
+	.title-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 4px;
+	}
+	.title-row h2 { margin-bottom: 0; flex: 1; min-width: 0; }
+	.header-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+	/* v0.5.15: 「Claudeで開く」ボタン
+	   VS Code のテーマ変数で標準ボタンと同じ配色。既存 UI と調和させる */
+	.action-btn {
+		font-size: 0.8em;
+		padding: 3px 10px;
+		border-radius: 3px;
+		background: var(--vscode-button-background);
+		color: var(--vscode-button-foreground);
+		border: 1px solid transparent;
+		cursor: pointer;
+		font-family: inherit;
+		white-space: nowrap;
+		line-height: 1.3;
+	}
+	.action-btn:hover { background: var(--vscode-button-hoverBackground); }
+	.action-btn:active { transform: translateY(1px); }
+	.action-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
 	.meta-grid {
 		display: flex;
 		gap: 16px;
@@ -582,7 +632,17 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 		${agentHeaderHtml}
 		<div class="session-info">
 			<div class="info-main">
-				<h2>${escapeHtml(displayName)}</h2>
+				${/* v0.5.15: h2 タイトル横に「Claudeで開く」ボタン。
+				   ツールチップは cwd 判明時と不明時で切り替え、後者は失敗の可能性を明示。 */''}
+				<div class="title-row">
+					<h2>${escapeHtml(displayName)}</h2>
+					<div class="header-actions">
+						<button type="button" class="action-btn" id="openInClaudeBtn"
+							title="${session.cwd
+								? 'このセッションをClaude Codeで再開します'
+								: 'このセッションをClaude Codeで再開します（cwd 不明のためワークスペースルートで起動。作成時と cwd が異なると『No conversation found』で失敗する場合があります）'}">▶ Claudeで開く</button>
+					</div>
+				</div>
 				<div class="meta-grid">
 					<span class="meta-item">📁 ${escapeHtml(session.project)}</span>
 					<span class="meta-item">💬 ${formatBytes(session.fileSize)}</span>
@@ -688,6 +748,15 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 		if (editRuleFileBtn) {
 			editRuleFileBtn.addEventListener('click', () => {
 				vscode.postMessage({ type: 'editRuleFile' });
+			});
+		}
+
+		// v0.5.15: 「Claudeで開く」ボタン
+		// 拡張側で作成時 cwd を使って createTerminal + \`claude --resume <id>\` を実行する
+		const openInClaudeBtn = document.getElementById('openInClaudeBtn');
+		if (openInClaudeBtn) {
+			openInClaudeBtn.addEventListener('click', () => {
+				vscode.postMessage({ type: 'openInClaude' });
 			});
 		}
 

@@ -46,6 +46,10 @@ export interface ParsedSession {
 	gitBranch?: string;
 	claudeTitle?: string;  // Claude Codeの /rename で設定された名前
 	customName?: string;   // Session Managerで設定した名前
+	// v0.5.15: セッション作成時の実 cwd（JSONL 内の cwd フィールドから抽出）。
+	//   `--resume` は作成時と同じ cwd でないと "No conversation found" で失敗する
+	//   （実証済み既知問題）ため、生値を保持しておいて Claude 再開時にそのまま cwd 指定する。
+	cwd?: string;
 	messages: SimpleMessage[];
 	// サブエージェント関連
 	isSidechain?: boolean;       // subagents/ 配下の子エージェントか

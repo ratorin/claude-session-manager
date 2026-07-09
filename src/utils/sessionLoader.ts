@@ -516,6 +516,8 @@ export async function parseSessionFile(filePath: string, includeThinking: boolea
 			model,
 			gitBranch,
 			claudeTitle,
+			// v0.5.15: 生の cwd（Claude --resume の起動 cwd に使用）
+			cwd,
 			messages,
 		};
 	} catch {
@@ -842,6 +844,8 @@ async function parseSessionQuick(filePath: string): Promise<ParsedSession | null
 			model,
 			gitBranch: headState.gitBranch,
 			claudeTitle,
+			// v0.5.15: 生の cwd（Claude --resume の起動 cwd に使用）
+			cwd: headState.cwd,
 			messages: [], // 軽量版では空
 			isSidechain,
 			agentId,
