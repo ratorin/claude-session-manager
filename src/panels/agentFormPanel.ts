@@ -5,6 +5,7 @@ import * as dataStore from '../models/dataStore';
 import { getDescendants } from '../agents/parentChildSync';
 import { shouldShowInOrgChart } from '../utils/agentUtils';
 import { showSnippetPicker } from './snippetPickerPanel';
+import { MODEL_CATALOG, CSM_MODELS, type CsmModel } from '../models/modelCatalog';
 
 // フォームパネルの参照
 let formPanel: vscode.WebviewPanel | undefined;
@@ -79,18 +80,9 @@ export function showAgentFormPanel(
 				if (info) {
 					const session = await loadSessionFull(info.filePath);
 					if (session) {
-						// モデルを内部名に変換（日付付きモデルID対応: includes で部分一致）
-						function resolveModelName(rawModel: string): string {
-							if (rawModel.includes('[1m]')) {
-								if (rawModel.includes('sonnet')) { return 'sonnet-1m'; }
-								return 'opus-1m'; // opus[1m]
-							}
-							if (rawModel.includes('opus')) { return 'opus'; }
-							if (rawModel.includes('sonnet')) { return 'sonnet'; }
-							if (rawModel.includes('haiku')) { return 'haiku'; }
-							return rawModel;
-						}
-						const model = session.model ? resolveModelName(session.model) : undefined;
+						// v0.5.14: modelCatalog.normalizeModel に集約（fable 判定を [1m] より前へ）
+						const { normalizeModel } = await import('../models/modelCatalog');
+						const model = session.model ? normalizeModel(session.model) : undefined;
 						formPanel?.webview.postMessage({
 							type: 'sessionDataLoaded',
 							model,
@@ -586,8 +578,11 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 
 <div class="form-group">
 	<label class="form-label">説明（description）</label>
-	<div class="form-desc">CLIが使用するエージェントの説明文</div>
-	<textarea id="description" rows="2" placeholder="Handles code review and quality assurance">${escapeHtml(v.displayDescription || v.role || '')}</textarea>
+	<div class="form-desc">CLIが使用するエージェントの英語説明文。Claude Code の自動委譲（sub-agent 選択）判定で参照される。空にすると保存時に消去。</div>
+	${/* v0.5.14 レビュー修正 (2): displayDescription/role へのフォールバックを廃止。
+		toAgentConfig で def.description が渡るようになったため、既存 description をそのまま復元する。
+		旧フォールバックは「翻訳ボタンで英語descriptionが日本語roleに置換される」HIGH-1の根本原因だった。 */''}
+	<textarea id="description" rows="2" placeholder="Handles code review and quality assurance">${escapeHtml(v.description ?? '')}</textarea>
 </div>
 
 <div class="form-group">
@@ -603,28 +598,19 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 
 <div class="form-group">
 	<label class="form-label">モデル選択<span class="required">*</span></label>
-	<div class="form-desc">使用するClaudeモデル</div>
+	<div class="form-desc">使用するClaudeモデル（v0.5.14 で Fable 5 を追加）</div>
+	${/* v0.5.14 レビュー修正 (8): モデル一覧を MODEL_CATALOG から動的生成。
+	   旧: 7 モデル分の HTML をハードコード（追加時にラベル・description の重複更新が必要）
+	   新: MODEL_CATALOG に追記するだけで自動反映。default 判定（!v.model → opus）は互換維持。 */''}
 	<div class="radio-group">
-		<div class="radio-option">
-			<input type="radio" name="model" id="model-opus" value="opus" ${v.model === 'opus' || !v.model ? 'checked' : ''}>
-			<label for="model-opus">Opus<div class="radio-sub">Opus 4.8 — 最高度の判断・複雑な開発（デフォルト high effort）</div></label>
-		</div>
-		<div class="radio-option">
-			<input type="radio" name="model" id="model-opus-1m" value="opus-1m" ${v.model === 'opus-1m' ? 'checked' : ''}>
-			<label for="model-opus-1m">Opus 1M<div class="radio-sub">Opus 4.8 + 1M 長文コンテキスト（大規模調査・大量ファイル）</div></label>
-		</div>
-		<div class="radio-option">
-			<input type="radio" name="model" id="model-sonnet" value="sonnet" ${v.model === 'sonnet' ? 'checked' : ''}>
-			<label for="model-sonnet">Sonnet<div class="radio-sub">Sonnet 4.6 — 定型作業・補助（コスト効率◎）</div></label>
-		</div>
-		<div class="radio-option">
-			<input type="radio" name="model" id="model-sonnet-1m" value="sonnet-1m" ${v.model === 'sonnet-1m' ? 'checked' : ''}>
-			<label for="model-sonnet-1m">Sonnet 1M<div class="radio-sub">Sonnet 4.6 + 1M 長文コンテキスト・定型作業</div></label>
-		</div>
-		<div class="radio-option">
-			<input type="radio" name="model" id="model-haiku" value="haiku" ${v.model === 'haiku' ? 'checked' : ''}>
-			<label for="model-haiku">Haiku<div class="radio-sub">Haiku 4.5 — 軽量タスク・高速応答</div></label>
-		</div>
+		${CSM_MODELS.map(function(m){
+			const def = MODEL_CATALOG[m];
+			const checked = (v.model === m || (!v.model && m === 'opus')) ? 'checked' : '';
+			return '<div class="radio-option">'
+				+ '<input type="radio" name="model" id="model-' + m + '" value="' + m + '" ' + checked + '>'
+				+ '<label for="model-' + m + '">' + def.label + '<div class="radio-sub">' + def.description + '</div></label>'
+				+ '</div>';
+		}).join('')}
 	</div>
 </div>
 
@@ -655,7 +641,7 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 		</div>
 		<div class="radio-option" id="effort-option-max">
 			<input type="radio" name="effort" id="effort-max" value="max" ${v.effort === 'max' ? 'checked' : ''}>
-			<label for="effort-max">Max<div class="radio-sub">最大（Opus専用）</div></label>
+			<label for="effort-max">Max<div class="radio-sub">最大（Opus / Fable 専用）</div></label>
 		</div>
 	</div>
 </div>
@@ -665,7 +651,23 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	<label class="form-label">許可ツール（allowedTools）</label>
 	<div class="form-desc">チェックしたツールのみ許可。全部オフ = 全ツール継承（無制限）</div>
 	<div style="display:flex;flex-wrap:wrap;">
-		${['Read','Write','Edit','MultiEdit','Bash','Grep','Glob','Agent','WebFetch','WebSearch','Skill','TodoWrite'].map(function(t){return '<label style="display:inline-flex;align-items:center;gap:5px;margin:3px 14px 3px 0;font-size:13px;"><input type="checkbox" name="tool" value="' + t + '" ' + (((v.allowedTools || []).indexOf(t) >= 0) ? 'checked' : '') + '>' + t + '</label>';}).join('')}
+		${(() => {
+			// v0.5.14 HIGH-2 fix: 固定 12 種 → AskUserQuestion 追加 + 既存 frontmatter の未掲載ツールを動的追加
+			//   旧: フォームに無いツール（例: AskUserQuestion）が保存で消去されていた
+			// レビュー修正 (4)(5): extraTools を [...new Set(current)] で重複除去 + value/label 双方を escapeHtml
+			const KNOWN_TOOLS = ['Read','Write','Edit','MultiEdit','Bash','Grep','Glob','Agent','WebFetch','WebSearch','Skill','TodoWrite','AskUserQuestion'];
+			const current = v.allowedTools || [];
+			// 既存の allowedTools のうち KNOWN_TOOLS に無いものを追加（順番は既知→未知、重複は除去）
+			const extraTools = [...new Set(current)].filter(t => !KNOWN_TOOLS.includes(t));
+			const allTools = KNOWN_TOOLS.concat(extraTools);
+			return allTools.map(function(t){
+				const checked = current.indexOf(t) >= 0 ? 'checked' : '';
+				const isExtra = extraTools.includes(t);
+				const safe = escapeHtml(t);
+				const badge = isExtra ? '<span style="font-size:10px;opacity:.6;margin-left:2px;" title="frontmatter に既存のツール（フォーム標準リスト外）">＋</span>' : '';
+				return '<label style="display:inline-flex;align-items:center;gap:5px;margin:3px 14px 3px 0;font-size:13px;"><input type="checkbox" name="tool" value="' + safe + '" ' + checked + '>' + safe + badge + '</label>';
+			}).join('');
+		})()}
 	</div>
 </div>
 
@@ -802,11 +804,15 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	}
 
 	function getFormData() {
+		// v0.5.14 HIGH-1 fix: description を送信する（旧: 未送信で role 値が description に代入されるバグ）
+		const descriptionEl = document.getElementById('description');
+		const descriptionVal = descriptionEl ? descriptionEl.value.trim() : '';
 		return {
 			name: document.getElementById('name').value.trim(),
 			displayName: document.getElementById('displayName').value.trim() || undefined,
 			sessionId: sessionId,
 			role: document.getElementById('role').value.trim(),
+			description: descriptionVal,
 			model: document.querySelector('input[name="model"]:checked')?.value || 'opus',
 			effort: document.querySelector('input[name="effort"]:checked')?.value || 'high',
 			permissionMode: document.getElementById('permissionMode').value || 'acceptEdits',
@@ -961,9 +967,15 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	});
 
 	// モデル変更時のグレーアウト連動
+	// v0.5.14: Fable 5 も Max effort を許可（Opus と同格の最上位モデル）
+	// v0.5.14 レビュー修正 (8): allowsMax 判定を MODEL_CATALOG から生成。
+	//   旧: "model === opus" 等のリテラル羅列（新モデル追加時に忘れやすい）
+	//   新: MODEL_CATALOG[m].allowsMaxEffort=true のモデル集合を webview に埋め込む
+	const ALLOWS_MAX_MODELS = ${JSON.stringify(CSM_MODELS.filter(function(m){ return MODEL_CATALOG[m].allowsMaxEffort; }))};
 	function onModelChange(model) {
 		const maxOption = document.getElementById('effort-option-max');
-		if (model === 'opus' || model === 'opus-1m') {
+		const allowsMax = ALLOWS_MAX_MODELS.indexOf(model) >= 0;
+		if (allowsMax) {
 			maxOption.classList.remove('disabled');
 		} else {
 			maxOption.classList.add('disabled');

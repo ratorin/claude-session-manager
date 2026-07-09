@@ -850,9 +850,15 @@
 
 	}
 
+	/* v0.5.14: Fable 5 対応（金 #ffd54f）+ 1M モデルの CSS 補修 */
+	.badge-fable { background: rgba(255,213,79,0.15);  color: #ffd54f; border: 1px solid rgba(255,213,79,0.3); }
+	.badge-fable-1m { background: rgba(255,213,79,0.15);  color: #ffd54f; border: 1px solid rgba(255,213,79,0.3); }
+
 	.badge-opus { background: rgba(179,136,255,0.15); color: #b388ff; border: 1px solid rgba(179,136,255,0.3); }
+	.badge-opus-1m { background: rgba(179,136,255,0.15); color: #b388ff; border: 1px solid rgba(179,136,255,0.3); }
 
 	.badge-sonnet { background: rgba(100,181,246,0.15); color: #64b5f6; border: 1px solid rgba(100,181,246,0.3); }
+	.badge-sonnet-1m { background: rgba(100,181,246,0.15); color: #64b5f6; border: 1px solid rgba(100,181,246,0.3); }
 
 	.badge-haiku { background: rgba(129,199,132,0.15); color: #81c784; border: 1px solid rgba(129,199,132,0.3); }
 
@@ -1342,7 +1348,7 @@
 
 			<div style="color: #888; font-size: 11px; margin-top: 8px;">
 
-				Ｏ=Opus　Ｓ=Sonnet　Ｈ=Haiku　｜　件数は5桁右揃え　｜　リネーム時は元メッセージをdescriptionに表示
+				Ｆ=Fable 5　Ｏ=Opus　Ｓ=Sonnet　Ｈ=Haiku　１=1M コンテキスト　｜　件数は5桁右揃え　｜　リネーム時は元メッセージをdescriptionに表示
 
 			</div>
 
@@ -1802,25 +1808,31 @@
 
 			<h4>モデル（CLI標準）</h4>
 
-			<p><code>model</code> フィールド。選択肢：</p>
+			<p><code>model</code> フィールド。選択肢（v0.5.14 で Fable 5 を解禁、エイリアス方式に統一）：</p>
 
 			<ul style="font-size: 12px; margin: 6px 0 0 16px; line-height: 1.8;">
 
-				<li><span class="badge badge-opus">opus</span> — Claude Opus 4.6</li>
+				<li><span class="badge badge-fable">fable</span> — Claude Fable 5（最上位、Opus と同格）</li>
 
-				<li><span class="badge badge-sonnet">sonnet</span> — Claude Sonnet 4.6</li>
+				<li><span class="badge badge-fable-1m">fable-1m</span> — Fable 5 + 1M コンテキスト（frontmatter は <code>fable[1m]</code>）</li>
 
-				<li><span class="badge badge-haiku">haiku</span> — Claude Haiku 4.5</li>
+				<li><span class="badge badge-opus">opus</span> — Claude Opus 4.8</li>
 
-				<li><code>claude-sonnet-4-6[1m]</code> — Sonnet 4.6（1Mコンテキスト）</li>
+				<li><span class="badge badge-opus-1m">opus-1m</span> — Opus 4.8 + 1M コンテキスト（frontmatter は <code>opus[1m]</code>）</li>
 
-				<li><code>claude-opus-4-6[1m]</code> — Opus 4.6（1Mコンテキスト）</li>
+				<li><span class="badge badge-sonnet">sonnet</span> — Claude Sonnet（最新世代）</li>
+
+				<li><span class="badge badge-sonnet-1m">sonnet-1m</span> — Sonnet + 1M コンテキスト（frontmatter は <code>sonnet[1m]</code>）</li>
+
+				<li><span class="badge badge-haiku">haiku</span> — Claude Haiku（最新世代）</li>
 
 				<li><code>inherit</code> — 親セッションのモデルを継承</li>
 
 			</ul>
 
-			<p style="margin-top: 8px; color: #e57373; font-size: 12px;">⚠️ <code>sonnet[1m]</code> は使わないこと（Sonnet 4.5 旧版になるため）。1M使用時はフル IDで指定。</p>
+			<p style="margin-top: 8px; color: var(--muted); font-size: 12px;">💡 frontmatter にはエイリアス（<code>fable</code>, <code>opus[1m]</code> 等）を書けば、Claude Code が起動時に最新世代のフルモデルIDへ解決します。</p>
+
+			<p style="margin-top: 8px; color: #e57373; font-size: 12px;">⚠️ v0.5.14 変更: 旧「Sonnet 4.5 の旧 <code>sonnet[1m]</code> 回避」ガイダンスは撤回。Sonnet の世代が更新されたため <code>sonnet[1m]</code> エイリアスは最新の Sonnet に解決されます。</p>
 
 		</div>
 
@@ -2571,7 +2583,7 @@
 
 	<div class="tip">
 
-		<strong>モデルの使い分け:</strong> 重要な判断・設計 → <code>opus</code> / 通常の開発・調査 → <code>sonnet</code> / 定型・軽量タスク → <code>haiku</code>（コスト効率◎）。大規模文脈が必要な場合は <code>claude-sonnet-4-6[1m]</code> / <code>claude-opus-4-6[1m]</code>（1Mコンテキスト）も利用可能
+		<strong>モデルの使い分け:</strong> 最上位の判断・複雑な設計 → <code>fable</code>（v0.5.14〜） / <code>opus</code> / 通常の開発・調査 → <code>sonnet</code> / 定型・軽量タスク → <code>haiku</code>（コスト効率◎）。大規模文脈が必要な場合は <code>&lt;model&gt;[1m]</code>（例: <code>fable[1m]</code> / <code>opus[1m]</code> / <code>sonnet[1m]</code>）でエイリアス指定できます
 
 	</div>
 
@@ -3101,7 +3113,7 @@
 
 			<h4>推論努力レベル（Effort）</h4>
 
-			<p>Low / Medium / High / Max の4段階。<br>MaxはOpus専用（他モデルではグレーアウト）。</p>
+			<p>Low / Medium / High / XHigh / Max の5段階。<br>Max は <strong>Opus / Fable 系専用</strong>（他モデルではグレーアウト、v0.5.14 で Fable 5 を追加）。</p>
 
 		</div>
 
@@ -3136,7 +3148,7 @@
 
 	<div class="tip">
 
-		<strong>モデル別UI連動：</strong>モデルを変更すると、使えない項目が自動的にグレーアウトします。Opus: 全項目有効（Effort Maxを含む） / Sonnet: Effort Maxのみ無効 / Haiku: Effort Maxが無効。
+		<strong>モデル別UI連動：</strong>モデルを変更すると、使えない項目が自動的にグレーアウトします。Fable / Opus: 全項目有効（Effort Max を含む） / Sonnet: Effort Max のみ無効 / Haiku: Effort Max が無効。(v0.5.14 で Fable 5 を追加)
 
 	</div>
 

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { AgentConfig } from '../models/types';
+import { getModelCliMap } from '../models/modelCatalog';
 import { isContainedIn, normalize } from './pathUtils';
 
 // CLI コマンドの構造体
@@ -13,14 +14,10 @@ export interface CliCommand {
 // 案A: 具体的なモデルIDではなくエイリアスを書き込む。
 // Claude Code が起動時に最新モデルへ解決するため、リリース毎の更新が不要。
 // 例: 'opus' → フロントマターに 'opus' → CC が claude-opus-4-8 等へ解決
-export const modelCliMap: Record<string, string> = {
-	'opus': 'opus',
-	'opus-1m': 'opus[1m]',     // Opus 4.8 + 1M コンテキスト
-	'sonnet': 'sonnet',
-	'sonnet-1m': 'sonnet[1m]',
-	'haiku': 'haiku',
-	// 注: 'fable'(Fable 5) は意図的に非対応（選択肢に出さない）
-};
+//
+// v0.5.14: modelCatalog.ts を単一真実源とし、そこから生成する
+//          （旧: 'fable' 意図的非対応 → Fable 5 解禁により 'fable':'fable', 'fable-1m':'fable[1m]' 追加）
+export const modelCliMap: Record<string, string> = getModelCliMap();
 
 // AgentConfig から CLI コマンドを組み立てる
 // --agent でフロントマター（model, effort等）が自動適用されるため個別指定は不要

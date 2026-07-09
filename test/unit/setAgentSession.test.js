@@ -46,7 +46,12 @@ function setupTmpHome() {
 
 function loadFresh(tmpHome) {
     // HOME を一時ディレクトリに向け、モジュールキャッシュをクリアして再ロード
+    // ⚠️ Windows の os.homedir() は USERPROFILE を参照するため両方差し替え、失敗時は即中断する
     process.env.HOME = tmpHome;
+    process.env.USERPROFILE = tmpHome;
+    if (path.resolve(os.homedir()) !== path.resolve(tmpHome)) {
+        throw new Error(`FATAL: home isolation failed (os.homedir()=${os.homedir()}) — 実 ~/.claude 保護のため中断`);
+    }
     const dataStorePath = require.resolve('../../out/models/dataStore');
     delete require.cache[dataStorePath];
     return require(dataStorePath);

@@ -1,5 +1,86 @@
 # 更新履歴
 
+## v0.5.14 (2026-07-09) — Fable 5 解禁 + normalizeModel 判定順序修正 + フォーム保存バグ修正
+
+Sprint A（Fable QA レポート 2026-07-09 起点）。長期未対応の Fable 5 除外方針を撤回し、Fable モデルの選択・保存経路を第一級として復活。あわせて `normalizeModel` の C-1（`fable[1m]` → `sonnet-1m` 誤変換）と C-2（fable → opus サイレント書き換え）を修正。加えて HIGH-1（description 保存されないバグ）と HIGH-2（allowedTools 固定 12 種問題）を修正した。
+
+### ➕ Fable 5 解禁（オーナー承認 2026-07-09）
+
+- **`fable` / `fable-1m`** を第一級モデルとして追加。表示文字 **Ｆ**、色 **金 #ffd54f**、TreeView は `star-full` + `charts.yellow`。
+- effort=`max` を **Opus 系のみ** から **Opus 系 + Fable 系** に拡張（`onModelChange` のグレーアウト連動）。
+- 旧「組織方針で非選択」コメント（`agentUtils.ts` / `cliBuilder.ts` / README）を撤廃。
+
+### 🐛 C-1 修正: `normalizeModel` の判定順序
+
+`agentUtils.ts` の判定順序が `[1m] → fable` だったため、`claude-fable-5[1m]` が `sonnet-1m` に化けていた（"opus を含まない" 分岐で誤判定）。フォームで他項目を編集して保存 or セッション紐づけ操作をすると frontmatter が恒久的に `sonnet[1m]` に書き換わっていた。
+
+- 判定順序を **fable → [1m] → opus → haiku → sonnet** に修正（`modelCatalog.ts` に一元化）。
+- `agentFormPanel.ts` の `resolveModelName` も同一ロジックに統一（コピペ実装を撤去）。
+
+### 🐛 C-2 修正: `fable → opus` のサイレント書き換え撤廃
+
+`normalizeModel` の `if (lower.includes('fable')) { return 'opus'; }` を削除。過去に CSM 経由で保存済みのファイルは既に opus に書き換わっており復元不能なため、**Fable 利用エージェントはモデル選択を再度おこなってください**。
+
+### 🐛 HIGH-1 修正: description 欄の編集が保存されない
+
+- 症状: `agentFormPanel.getFormData` が description 欄を送信せず、`saveAgentConfig` が `description: config.role || existing?.description` で上書き。翻訳ボタンを押すと英語 description が日本語 role 文に置換され、Claude Code の自動委譲判定を破壊。
+- 修正: `getFormData` に `description` フィールドを追加、`AgentConfig` に `description?: string` を拡張、`saveAgentConfig` は「フォームから送られた description を尊重、未送信なら既存値保持、空文字は明示的な消去として尊重」に変更。role とは独立して扱う。
+
+### 🐛 HIGH-2 修正: allowedTools 固定 12 種問題
+
+- 症状: フォームのチェックボックスが固定 12 種で、`AskUserQuestion`（例: director.md）などフォームに無いツールは保存で削除されていた。
+- 修正: 固定リストに `AskUserQuestion` を追加。加えて既存 frontmatter に載っているが固定リストにないツールは**動的にチェックボックスを追加**（＋バッジで既存要素を示す）。
+
+### 🏛️ modelCatalog.ts 新設（恒久対策）
+
+モデルリテラルが 13 ファイル以上に分散し、色は 4 ファイルに同色直書き、tagTreeProvider は sessionTreeProvider の完全コピペになっていた問題を解消。`src/models/modelCatalog.ts` を単一真実源として新設し、モデル追加は 1 か所編集で全 UI・CLI・正規化に反映される構造にした（`getModelCliMap`, `getModelChar`, `getModelLabel`, `getModelIconAndColor`, `generateModelCss`）。
+
+### 🎨 CSS 補修（副次修正）
+
+- `webviewPanel.ts`: `.badge-fable` / `.badge-fable-1m` 追加 + 既存欠落バグ（`.badge-opus-1m` / `.badge-sonnet-1m`）を補修。
+- `guide.html`: 同上 + モデルリスト・凡例・effort 連動記述を更新。
+- `orgChartPanel.ts` / `projectDetailPanel.ts` / `mainTabPanel.ts`: fable 用の色ルールを追加。
+
+### 🧪 テスト（`test/unit/agent-hooks-qa.test.js`）
+
+- G1 を書き換え: `n('fable') === 'fable'` / `n('fable[1m]') === 'fable-1m'` / `n('claude-fable-5[1m]') === 'fable-1m'` を追加（C-1/C-2 検証）。
+- G2 を書き換え: `modelCliMap['fable'] === 'fable'` / `modelCliMap['fable-1m'] === 'fable[1m]'` を追加。
+- B4 を **拡張**: `fable` / `fable-1m` / `opus-1m` を追加（往復モデル検証。旧・sonnet 系のみ → Fable 系・Opus 1M を含む網羅へ）。
+- **G4 / G5 を新規追加**: fable / fable-1m の frontmatter 書き込み → 復元往復テスト。
+
+### 🔧 テストハーネス修正（Windows 隔離バグ）
+
+- `agent-hooks-qa.test.js` / `setAgentSession.test.js` の `loadFresh` / `runHook` が **`process.env.HOME` だけを差し替えていた**ため、Node の `os.homedir()` が Windows で優先的に見る `process.env.USERPROFILE` を経由して実 `~/.claude` を書き換えていた（A/E/G3/C1 系および G4/G5 が実ホーム汚染のリスクで環境依存的に落ちていた）。
+- 修正: **`USERPROFILE` も同時に差し替え** + 失敗時に即 throw する fail-fast ガードを追加（隔離漏れを本番環境事故に発展させない）。
+- 結果: **35/35 pass**（Sprint A 追加前 baseline 30 → G4/G5 + A9 追加後の baseline 35 が全通過）。
+
+### 📚 ドキュメント
+
+- README / SPEC / CONTRIBUTING / guide.html を更新。旧「Fable 非選択」記述を撤回し、旧フルID表記（`claude-sonnet-4-6[1m]` / `claude-opus-4-6[1m]`）をエイリアス方式（`<model>[1m]`、例: `fable[1m]` / `opus[1m]` / `sonnet[1m]`）に統一。Max effort 対応表を「Opus / Fable 系」に更新。
+
+### 🔍 コードレビュー修正ラウンド（Sprint A レビュー時点）
+
+Sprint A 実装後のセルフレビューで検出した以下 8 件を追い込み修正（本 v0.5.14 に含める）。
+
+- **HIGH (1)**: `toAgentConfig` に `description` マッピング欠落 → 編集経路で `v.description` が undefined になり、フォームプレフィル式が `displayDescription || role` にフォールバックし、保存で英語 description が日本語 role 文に恒久置換されていた（HIGH-1 が編集経路で機能しない）。`description: def.description` を追加。
+- **HIGH (2)**: フォーム description の `<textarea>` プレフィルが `v.description ?? v.displayDescription ?? v.role` のフォールバックだった → v.description の欠落を隠して「日本語 role が保存される」状態を成立させていた。`v.description ?? ''` に修正（正しい復元）。
+- **HIGH (3)**: `saveAgentConfig` の description 処理を再設計 — 既存更新は「フォームから来た description を尊重（空文字も明示的な消去として尊重）」、**新規作成 & 空の場合のみ role をフォールバックとして書き出す**（CC の自動委譲は description 行が必須のため）。非フォーム経路は既存値を保持。
+- **HIGH (4)**: 動的追加チェックボックス（extraTools）の `value` 属性のみエスケープされていた（label テキストは未エスケープ）→ frontmatter に細工されたツール名で XSS 経路になり得る。**value / label 双方に `escapeHtml` 適用**。
+- **MEDIUM (5)**: extraTools の重複除去なし → 同名ツールが複数チェックボックスとして描画され得る。`[...new Set(current)].filter(...)` で dedup。
+- **LOW (6)**: `guide.html` の「モデルの使い分け」Tip が旧フル ID 表記（`claude-sonnet-4-6[1m]`）だった → エイリアス表記（`<model>[1m]`、例: `fable[1m]` / `opus[1m]` / `sonnet[1m]`）に統一。Fable 5 も「最上位判断」候補として追記。
+- **LOW (7)**: モデル頭文字が画面間で不整合（`agentTreeProvider` は `sonnet-1m` → `'１'` を維持していたのに対し `agentPreviewPanel` は catalog char `'Ｓ'` を使用 → 画面間で `sonnet-1m` の頭文字が食い違い）。`agentTreeProvider` / `sessionTreeProvider` / `tagTreeProvider` を **`modelCatalog.getModelChar()` 呼び出しに統一**（1M 情報はラベル / tooltip で担保）。**表示変更**: `sonnet-1m` / `opus-1m` の頭文字が `Ｓ` / `Ｏ` に統一され、以前 `'１'` を表示していた場所も母体モデル頭文字（`Ｆ` / `Ｏ` / `Ｓ` / `Ｈ`）で表示。
+- **MEDIUM (8)**: `modelCatalog.ts` の未接続シンボルを配線 — `sessionTreeProvider.getModelIcon` は `getModelIconAndColor` を呼ぶだけの薄いラッパに置換、`agentWatcher.prefixMap` は `MODEL_CATALOG[m].idPrefix` から自動生成、`agentFormPanel` のモデルラジオ HTML は `CSM_MODELS.map` で `MODEL_CATALOG` から動的生成、client-side `allowsMax` 判定は `MODEL_CATALOG[m].allowsMaxEffort=true` の集合を webview に埋め込む方式へ、`webviewPanel` / `mainTabPanel` / `projectDetailPanel` の badge / model / dot CSS は `generateModelCss()` の一括出力に置換。**これで modelCatalog の "1 か所編集で全 UI に反映" が実態と一致**。
+
+### ⚠️ 見送り事項（Sprint A 対象外）
+
+- **§2.4 任意項目**: usageMonitor の Fable 5d 利用率枠（Anthropic ヘッダ実機確認要）、director プリセットの Fable 格上げ、フォーム既定値 `opus` の変更 — Sprint B 以降で判断。
+- **MEDIUM 以下（M-4〜M-11 / L-12〜L-15）** — Sprint B 以降で対応。
+
+### 📊 テスト状況（本 v0.5.14 最終）
+
+- `npx tsc --noEmit` クリーン。
+- `npm test`: **35 / 35 pass**（Sprint A 追加分の G4 / G5、A9 マイグレーション、B4 拡張、E1〜E4 を含む）。テストハーネス修正（USERPROFILE 差し替え + fail-fast）により Windows 上で `~/.claude` 汚染リスクなしで安定的に全通過することを確認。
+
 ## v0.5.13 (2026-06-27) — エージェントフォームに maxTurns を追加（現行 CC 追従）
 
 現行 Claude Code(2.1.19x)のサブエージェント frontmatter に合わせ、`maxTurns` をフォームから設定可能に。

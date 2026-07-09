@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { ParsedSession } from '../models/types';
 import { loadAllSessions, invalidateSessionCache } from '../utils/sessionLoader';
+import { getModelChar, getModelIconAndColor } from '../models/modelCatalog';
 import * as dataStore from '../models/dataStore';
 
 // 日付グループヘッダー
@@ -438,14 +439,10 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 	}
 }
 
-// モデル名からアイコンと色を決定
+// v0.5.14 レビュー修正 (8): modelCatalog.getModelIconAndColor に一本化。
+// 旧ローカル実装は撤去し、単一真実源からアイコン/色を取得する（fable→[1m]→opus... の順序も一致）。
 function getModelIcon(model?: string): { icon: string; color: string } {
-	if (!model) { return { icon: 'comment-discussion', color: 'foreground' }; }
-	if (model.includes('[1m]')) { return { icon: 'zap', color: 'charts.orange' }; } // 1Mは専用色
-	if (model.includes('opus')) { return { icon: 'sparkle', color: 'charts.purple' }; }
-	if (model.includes('sonnet')) { return { icon: 'zap', color: 'charts.blue' }; }
-	if (model.includes('haiku')) { return { icon: 'flame', color: 'charts.green' }; }
-	return { icon: 'comment-discussion', color: 'foreground' };
+	return getModelIconAndColor(model);
 }
 
 // サブエージェントタイプ別のアイコン
@@ -502,15 +499,10 @@ export class SessionItem extends vscode.TreeItem {
 		}
 
 		// モデル頭文字（全角で等幅）— 親セッションのみ
-		// [1m] を含む場合は専用文字で区別
-		const modelChar = isSub ? '' : (
-			session.model?.includes('[1m]') ? '１'
-			: session.model?.includes('opus') ? 'Ｏ'
-			: session.model?.includes('sonnet') ? 'Ｓ'
-			: session.model?.includes('haiku') ? 'Ｈ'
-			: session.model ? '？'  // 未知のモデル
-			: '\u3000'              // モデル情報なし
-		);
+		// v0.5.14 レビュー修正 (7): modelCatalog.getModelChar() に統一（agentTree/tag/preview と揃える）。
+		//   旧: 1M を '１' で表示していたが、agentPreview（catalog char=Ｓ/Ｏ）と食い違い。
+		//   新: 母体モデル頭文字（Ｆ/Ｏ/Ｓ/Ｈ）に統一。1M 情報はラベル/tooltip で担保。
+		const modelChar = isSub ? '' : getModelChar(session.model);
 		// ファイルサイズを5桁右揃え（Figure Space U+2007 で等幅パディング）
 		const figureSpace = '\u2007';
 		const sizeLabel = formatFileSize(session.fileSize);

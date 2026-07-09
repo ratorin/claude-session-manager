@@ -32,6 +32,7 @@ import { loadMemoryFiles, loadGlobalMemoryFiles } from '../utils/memoryManager';
 import { loadAllSessions } from '../utils/sessionLoader';
 import { buildMiniOrgChartData } from './orgChartPanel';
 import { showProjectDetail } from './projectDetailPanel';
+import { generateModelCss } from '../models/modelCatalog';
 
 // -------------------------------------------------------------------
 // MainTabPanel — WebviewViewProvider 実装
@@ -1106,9 +1107,8 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			border-radius: 3px;
 			font-weight: 600;
 		}
-		.model-opus { background: rgba(179,136,255,0.15); color: #b388ff; border: 1px solid rgba(179,136,255,0.3); }
-		.model-sonnet { background: rgba(100,181,246,0.15); color: #64b5f6; border: 1px solid rgba(100,181,246,0.3); }
-		.model-haiku { background: rgba(129,199,132,0.15); color: #81c784; border: 1px solid rgba(129,199,132,0.3); }
+		/* v0.5.14 レビュー修正 (8): modelCatalog.generateModelCss() から一括生成（[1m] 分も含む） */
+		${generateModelCss('model')}
 		.scope-badge {
 			font-size: 9px;
 			padding: 1px 4px;
@@ -1323,9 +1323,8 @@ export class MainTabPanel implements vscode.WebviewViewProvider {
 			flex-shrink: 0;
 			margin-top: 4px;
 		}
-		.dot-opus   { background: #b388ff; }
-		.dot-sonnet { background: #64b5f6; }
-		.dot-haiku  { background: #81c784; }
+		/* v0.5.14 レビュー修正 (8): modelCatalog.generateModelCss() から一括生成 */
+		${generateModelCss('dot')}
 		.dot-other  { background: var(--vscode-descriptionForeground); }
 
 		/* ---- 折りたたみセクション (details/summary) ---- */

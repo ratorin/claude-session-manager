@@ -10,6 +10,7 @@ import { AgentWatcherState } from '../models/types';
 import * as dataStore from '../models/dataStore';
 import * as agentFileManager from '../agents/agentFileManager';
 import { detectSubagents } from '../utils/subagentDetector';
+import { MODEL_CATALOG, CSM_MODELS } from '../models/modelCatalog';
 
 // 検知モードの型定義（Phase 4: fswatch のみ残す）
 type DetectionMode = 'fswatch';
@@ -245,13 +246,12 @@ export class AgentWatcher implements vscode.Disposable {
 		if (cfg === act) { return true; }
 
 		// 短縮名 → 正式IDプレフィックスのマッピング（バージョン番号は問わない）
-		const prefixMap: Record<string, string> = {
-			'opus':     'claude-opus-',
-			'opus-1m':  'claude-opus-',
-			'sonnet':   'claude-sonnet-',
-			'haiku':    'claude-haiku-',
-			'sonnet-1m': 'claude-sonnet-',
-		};
+		// v0.5.14 レビュー修正 (8): modelCatalog（単一真実源）から生成。
+		//   旧: ハードコード（新モデル追加時に prefixMap も更新する必要があった）
+		//   新: MODEL_CATALOG に追記するだけで自動で反映される
+		const prefixMap: Record<string, string> = Object.fromEntries(
+			CSM_MODELS.map(m => [m, MODEL_CATALOG[m].idPrefix])
+		);
 		const prefix = prefixMap[cfg];
 		if (prefix) {
 			// 短縮名「opus」→「claude-opus-」で始まるなら一致
@@ -263,6 +263,8 @@ export class AgentWatcher implements vscode.Disposable {
 		if (!cfg.endsWith('-1m') && act.includes(cfg)) { return true; }
 
 		// 1Mコンテキスト: <model>-1m ↔ claude-<model>-*[1m]
+		// v0.5.14: fable-1m 追加
+		if (cfg === 'fable-1m' && act.includes('fable') && act.includes('[1m]')) { return true; }
 		if (cfg === 'sonnet-1m' && act.includes('sonnet') && act.includes('[1m]')) { return true; }
 		if (cfg === 'opus-1m' && act.includes('opus') && act.includes('[1m]')) { return true; }
 

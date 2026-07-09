@@ -79,9 +79,11 @@ export interface AgentConfig {
 	displayName?: string;        // 日本語表示名（UI表示用）
 	sessionId: string;           // 紐づけセッションID
 	role: string;                // 役割（例: デバッグ・品質確認）
+	description?: string;        // 英語 description（CC の自動委譲判定用。role とは別項目）
 	displayRole?: string;        // 日本語役割説明（UI表示用）
 	displayDescription?: string; // 日本語説明（UI表示用）
-	model: 'opus' | 'opus-1m' | 'sonnet' | 'sonnet-1m' | 'haiku'; // -1m = 1M 長文コンテキスト対応（opus-1m: Opus 4.8 + 1M）
+	// v0.5.14: fable / fable-1m を第一級モデルとして追加（Fable 5 解禁）
+	model: 'fable' | 'fable-1m' | 'opus' | 'opus-1m' | 'sonnet' | 'sonnet-1m' | 'haiku'; // -1m = 1M 長文コンテキスト対応（opus-1m: Opus 4.8 + 1M）
 	sessionMode?: 'fixed' | 'disposable'; // セッション運用（固定 / 使い捨て）
 	ruleFile?: string;           // ルールファイルパス
 	parentAgent?: string;        // 親エージェント名（班の場合）

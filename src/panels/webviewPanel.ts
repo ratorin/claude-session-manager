@@ -6,6 +6,7 @@ import * as os from 'os';
 import { ParsedSession, SimpleMessage, MemoryFile } from '../models/types';
 import { loadSessionFull } from '../utils/sessionLoader';
 import * as dataStore from '../models/dataStore';
+import { generateModelCss } from '../models/modelCatalog';
 
 // ガバナンスイベントの型
 interface GovernanceEvent {
@@ -502,9 +503,10 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 		font-weight: 700;
 		letter-spacing: 0.5px;
 	}
-	.badge-opus { background: rgba(179,136,255,0.15); color: #b388ff; border: 1px solid rgba(179,136,255,0.3); }
-	.badge-sonnet { background: rgba(100,181,246,0.15); color: #64b5f6; border: 1px solid rgba(100,181,246,0.3); }
-	.badge-haiku { background: rgba(129,199,132,0.15); color: #81c784; border: 1px solid rgba(129,199,132,0.3); }
+	/* v0.5.14 レビュー修正 (8): モデル色を modelCatalog.generateModelCss() から一括生成。
+	   旧: 7 モデル分の CSS をハードコード（追加時に 4 ファイルの CSS を同期更新する必要があった）
+	   新: MODEL_CATALOG に追記するだけで自動反映 */
+	${generateModelCss('badge')}
 	.agent-badge .agent-name { font-weight: 600; font-size: 0.85em; color: #e27e4a; }
 	.agent-badge .agent-role { font-size: 0.75em; opacity: 0.6; }
 	.agent-badge .agent-actions { margin-left: auto; display: flex; gap: 8px; }

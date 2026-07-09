@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { AgentConfig } from '../models/types';
+import { getModelChar, getModelLabel } from '../models/modelCatalog';
 import * as dataStore from '../models/dataStore';
 
 // プレビューパネルの参照
@@ -217,16 +218,10 @@ async function readAgentFile(agentName: string, fileName: string): Promise<strin
 
 async function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle: string | undefined): Promise<string> {
 	const displayName = agent.displayName ? `${agent.displayName}（${agent.name}）` : agent.name;
-	const modelChar = agent.model === 'sonnet-1m' ? '１'
-		: agent.model === 'opus-1m' ? 'Ｏ'
-		: agent.model === 'opus' ? 'Ｏ'
-		: agent.model === 'haiku' ? 'Ｈ'
-		: 'Ｓ';
-	const modelLabel = agent.model === 'opus' ? 'Opus'
-		: agent.model === 'opus-1m' ? 'Opus 1M'
-		: agent.model === 'sonnet-1m' ? 'Sonnet 1M'
-		: agent.model === 'haiku' ? 'Haiku'
-		: 'Sonnet';
+	// v0.5.14: modelCatalog に一元化。1M の全角『１』は sessionTreeProvider が使う
+	//          "Ｓ +『１』" のペアで意味を持つため、agent プレビューは母体モデル頭文字のみ表示。
+	const modelChar = getModelChar(agent.model);
+	const modelLabel = getModelLabel(agent.model);
 	const statusLabel = isLive ? '🟢 稼働中' : '⚪ 停止中';
 
 	// 役割（日本語優先）

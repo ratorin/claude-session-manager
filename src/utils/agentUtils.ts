@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { normalizeModel as normalizeModelFromCatalog, CsmModel } from '../models/modelCatalog';
 
 /**
  * Windows形式のworkDirパスを実行環境のパスに変換する。
@@ -55,20 +56,13 @@ export async function moveToTrash(srcPath: string, trashDir: string): Promise<vo
 }
 
 // L-1: モデル名正規化（短縮名・正式ID両対応）
-export function normalizeModel(raw: string): 'opus' | 'opus-1m' | 'sonnet' | 'sonnet-1m' | 'haiku' {
-	const lower = raw.toLowerCase();
-	// 短縮名（エイリアス）
-	if (lower === 'opus') { return 'opus'; }
-	if (lower === 'opus-1m') { return 'opus-1m'; }
-	if (lower === 'haiku') { return 'haiku'; }
-	if (lower === 'sonnet-1m') { return 'sonnet-1m'; }
-	// 正式ID / CLI 値（フロントマターに書き込まれた値からの逆変換）
-	if (lower.includes('[1m]')) { return lower.includes('opus') ? 'opus-1m' : 'sonnet-1m'; }
-	// fable(Fable 5) は選択不可。最上位枠なので opus にフォールバック（禁止モデルを保持しない）
-	if (lower.includes('fable')) { return 'opus'; }
-	if (lower.includes('opus')) { return 'opus'; }
-	if (lower.includes('haiku')) { return 'haiku'; }
-	return 'sonnet';
+//
+// v0.5.14 変更（C-1 / C-2 修正 + Fable 5 解禁）:
+//  - fable 判定を [1m] 判定より **前** に置く（旧: `claude-fable-5[1m]` が sonnet-1m に化けた）
+//  - fable → opus のサイレント丸めを削除（Fable 5 は第一級モデル）
+//  - 実装は modelCatalog.ts の normalizeModel に一元化
+export function normalizeModel(raw: string): CsmModel {
+	return normalizeModelFromCatalog(raw);
 }
 
 // L-1: ステータス正規化（agentFileManager.ts から移動）

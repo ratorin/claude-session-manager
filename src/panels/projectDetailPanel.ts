@@ -8,6 +8,7 @@
  */
 
 import * as vscode from 'vscode';
+import { generateModelCss } from '../models/modelCatalog';
 
 // -----------------------------------------------------------------------
 // 型定義
@@ -395,9 +396,8 @@ body {
 .mini-org-indent { color: var(--vscode-descriptionForeground); font-size: 10px; }
 .mini-org-name { font-weight: 500; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .model-badge { font-size: 9px; padding: 1px 4px; border-radius: 3px; font-weight: 600; flex-shrink: 0; }
-.model-opus   { background: rgba(179,136,255,0.15); color: #b388ff; border: 1px solid rgba(179,136,255,0.3); }
-.model-sonnet { background: rgba(100,181,246,0.15); color: #64b5f6; border: 1px solid rgba(100,181,246,0.3); }
-.model-haiku  { background: rgba(129,199,132,0.15); color: #81c784; border: 1px solid rgba(129,199,132,0.3); }
+/* v0.5.14 レビュー修正 (8): modelCatalog.generateModelCss() から一括生成（[1m] 分も含む） */
+${generateModelCss('model')}
 </style>
 </head>
 <body>
@@ -576,7 +576,9 @@ function renderMiniOrg() {
 	const roots   = nodes.filter(n => !n.parent);
 	const children = nodes.filter(n => n.parent);
 
+	// v0.5.14: Fable 5 対応
 	function modelClass(model) {
+		if (model === 'fable' || model === 'fable-1m') return 'model-fable';
 		if (model === 'opus' || model === 'opus-1m')  return 'model-opus';
 		if (model === 'haiku') return 'model-haiku';
 		return 'model-sonnet';

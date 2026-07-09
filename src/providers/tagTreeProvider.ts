@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ParsedSession } from '../models/types';
 import * as dataStore from '../models/dataStore';
+import { getModelChar } from '../models/modelCatalog';
 
 export class TagTreeProvider implements vscode.TreeDataProvider<TagItem | TagSessionItem>, vscode.Disposable {
 	private _onDidChangeTreeData = new vscode.EventEmitter<TagItem | TagSessionItem | undefined>();
@@ -61,13 +62,9 @@ export class TagSessionItem extends vscode.TreeItem {
 		public readonly tagName: string
 	) {
 		// モデル頭文字（会話一覧・ブックマークと統一）
-		const modelChar =
-			session.model?.includes('[1m]') ? '１'
-			: session.model?.includes('opus') ? 'Ｏ'
-			: session.model?.includes('sonnet') ? 'Ｓ'
-			: session.model?.includes('haiku') ? 'Ｈ'
-			: session.model ? '？'
-			: '\u3000';
+		// v0.5.14 レビュー修正 (7): modelCatalog.getModelChar() に統一。
+		//   1M も母体モデル頭文字（Ｆ/Ｏ/Ｓ/Ｈ）に統一（agentTree/sessionTree/preview と揃える）。
+		const modelChar = getModelChar(session.model);
 		const displayName = session.customName || session.firstMessage;
 		super(`${modelChar}\u2007${displayName}`, vscode.TreeItemCollapsibleState.None);
 

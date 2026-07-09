@@ -410,8 +410,11 @@ let cy = null;
 let currentMode = 'tree';
 let activeFilters = { model: '', parent: '' };
 
+// v0.5.14: Fable 5 対応（#ffd54f 金）
 function modelColor(model) {
 	switch (model) {
+		case 'fable':
+		case 'fable-1m': return '#ffd54f';
 		case 'opus':
 		case 'opus-1m': return '#b388ff';
 		case 'haiku':   return '#81c784';

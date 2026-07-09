@@ -47,8 +47,17 @@ function setupTmpHome() {
 }
 
 // HOME を切り替え、out/ 配下モジュールを全てキャッシュクリアして再ロード
+// ⚠️ Windows の os.homedir() は HOME ではなく USERPROFILE を参照するため両方差し替える。
+//    差し替えに失敗したまま進むと実ユーザーの ~/.claude を破壊するので、必ず検証して即失敗させる。
 function loadFresh(tmpHome) {
 	process.env.HOME = tmpHome;
+	process.env.USERPROFILE = tmpHome;
+	if (path.resolve(os.homedir()) !== path.resolve(tmpHome)) {
+		throw new Error(
+			`FATAL: home isolation failed (os.homedir()=${os.homedir()} != tmpHome=${tmpHome}). ` +
+			'実ユーザーの ~/.claude への書き込みを防ぐためテストを中断します。'
+		);
+	}
 	for (const key of Object.keys(require.cache)) {
 		if (key.includes(`${path.sep}out${path.sep}`)) { delete require.cache[key]; }
 	}
@@ -67,10 +76,13 @@ function readData(tmpHome) {
 }
 
 function runHook(scriptName, input, env) {
+	// hookテンプレートは os.homedir() でホームを解決するため、HOME 指定時は USERPROFILE も揃える（Windows対策）
+	const isolatedEnv = { ...process.env, ...env };
+	if (env && env.HOME) { isolatedEnv.USERPROFILE = env.HOME; }
 	const out = execFileSync('node', [path.join(TEMPLATES, scriptName)], {
 		input: typeof input === 'string' ? input : JSON.stringify(input),
 		encoding: 'utf-8',
-		env: { ...process.env, ...env },
+		env: isolatedEnv,
 	});
 	return out;
 }
@@ -207,14 +219,16 @@ test('B3 YAML クォート: role に " や改行が含まれても壊れない',
 	assert.match(def.role, /say "hi"/, 'role の " が保持される');
 });
 
-test('B4 モデル往復: opus/sonnet-1m/haiku が正規化往復する', async () => {
+test('B4 モデル往復: fable/fable-1m/opus/sonnet-1m/haiku が正規化往復する', async () => {
+	// v0.5.14: fable / fable-1m を第一級モデルとして追加（Fable 5 解禁）
 	const home = setupTmpHome();
 	const { afm } = loadFresh(home);
-	for (const m of ['opus', 'sonnet', 'sonnet-1m', 'haiku']) {
+	const models = ['fable', 'fable-1m', 'opus', 'opus-1m', 'sonnet', 'sonnet-1m', 'haiku'];
+	for (const m of models) {
 		await afm.writeAgentFile({ name: `m-${m}`, model: m, role: 'r' });
 	}
 	afm.invalidateCache();
-	for (const m of ['opus', 'sonnet', 'sonnet-1m', 'haiku']) {
+	for (const m of models) {
 		const def = await afm.getAgentByName(`m-${m}`);
 		assert.equal(def.model, m, `${m} が往復で保持される`);
 	}
@@ -413,27 +427,38 @@ test('F1 translateWorkDirPath: Windows workDir を Linux HGFS パスへ変換（
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// G. モデル更新（opus-1m 追加 / Fable は非選択・opus フォールバック）
+// G. モデル正規化 / CLI マップ
+//    v0.5.14: Fable 5 解禁（旧 v0.5.6〜v0.5.13 は「組織方針で非選択」として除外）
+//             + C-1（fable[1m] が sonnet-1m に化ける）/ C-2（fable→opus 丸め）修正
 // ════════════════════════════════════════════════════════════════════════════
 
-test('G1 normalizeModel: opus-1m / opus[1m] / sonnet[1m] / 正式ID / fable を正規化', () => {
+test('G1 normalizeModel: fable / fable-1m / opus-1m / [1m] 判定順序が正しい', () => {
 	const { agentUtils } = loadFresh(setupTmpHome());
 	const n = agentUtils.normalizeModel;
+	// 短縮名エイリアス
+	assert.equal(n('fable'), 'fable', 'fable エイリアス');
+	assert.equal(n('fable-1m'), 'fable-1m', 'fable-1m エイリアス');
 	assert.equal(n('opus-1m'), 'opus-1m', 'opus-1m エイリアス');
+	// CLI 値からの逆変換
 	assert.equal(n('opus[1m]'), 'opus-1m', 'CLI 値 opus[1m] → opus-1m');
 	assert.equal(n('sonnet[1m]'), 'sonnet-1m', 'sonnet[1m] → sonnet-1m');
+	// C-1: fable 判定は [1m] 判定より前 → `claude-fable-5[1m]` が fable-1m へ
+	assert.equal(n('fable[1m]'), 'fable-1m', 'C-1 対策: fable[1m] が sonnet-1m に化けない');
+	assert.equal(n('claude-fable-5[1m]'), 'fable-1m', 'C-1 対策: claude-fable-5[1m] が fable-1m');
+	// C-2: fable → opus 丸めを削除
+	assert.equal(n('claude-fable-5'), 'fable', 'C-2 対策: fable 正式ID → fable（旧: opus）');
+	// 正式 ID
 	assert.equal(n('claude-opus-4-8'), 'opus', '正式ID opus');
 	assert.equal(n('claude-sonnet-4-6'), 'sonnet', '正式ID sonnet');
-	// Fable は禁止 → opus にフォールバック（選択肢には出さない）
-	assert.equal(n('fable'), 'opus', 'fable → opus フォールバック');
-	assert.equal(n('claude-fable-5'), 'opus', 'fable 正式ID → opus');
 });
 
-test('G2 modelCliMap: opus-1m=opus[1m] / fable キーは存在しない', () => {
+test('G2 modelCliMap: fable / fable-1m がエイリアスとして登録される', () => {
 	const { cliBuilder } = loadFresh(setupTmpHome());
 	assert.equal(cliBuilder.modelCliMap['opus-1m'], 'opus[1m]', 'opus-1m → opus[1m]');
 	assert.equal(cliBuilder.modelCliMap['sonnet-1m'], 'sonnet[1m]');
-	assert.equal(cliBuilder.modelCliMap['fable'], undefined, 'fable は意図的に非対応');
+	// v0.5.14: Fable 5 解禁
+	assert.equal(cliBuilder.modelCliMap['fable'], 'fable', 'fable → fable');
+	assert.equal(cliBuilder.modelCliMap['fable-1m'], 'fable[1m]', 'fable-1m → fable[1m]');
 });
 
 test('G3 opus-1m 往復: frontmatter に opus[1m] と書かれ opus-1m で復元', async () => {
@@ -445,6 +470,29 @@ test('G3 opus-1m 往復: frontmatter に opus[1m] と書かれ opus-1m で復元
 	assert.equal(def.model, 'opus-1m', 'opus-1m 往復');
 	const md = fs.readFileSync(path.join(home, '.claude', 'agents', 'big.md'), 'utf-8');
 	assert.match(md, /model: opus\[1m\]/, 'frontmatter は CLI 値 opus[1m]');
+});
+
+// v0.5.14 追加: Fable 5 の往復も往復で保持されることを確認（旧: fable→opus 丸め）
+test('G4 fable 往復: frontmatter に fable と書かれ fable で復元（C-2 対策）', async () => {
+	const home = setupTmpHome();
+	const { afm } = loadFresh(home);
+	await afm.writeAgentFile({ name: 'lead', model: 'fable', role: 'r' });
+	afm.invalidateCache();
+	const def = await afm.getAgentByName('lead');
+	assert.equal(def.model, 'fable', 'fable が opus に丸められず往復する');
+	const md = fs.readFileSync(path.join(home, '.claude', 'agents', 'lead.md'), 'utf-8');
+	assert.match(md, /model: fable$/m, 'frontmatter は CLI 値 fable');
+});
+
+test('G5 fable-1m 往復: frontmatter に fable[1m] と書かれ fable-1m で復元（C-1 対策）', async () => {
+	const home = setupTmpHome();
+	const { afm } = loadFresh(home);
+	await afm.writeAgentFile({ name: 'big-lead', model: 'fable-1m', role: 'r' });
+	afm.invalidateCache();
+	const def = await afm.getAgentByName('big-lead');
+	assert.equal(def.model, 'fable-1m', 'fable-1m が sonnet-1m に化けず往復する');
+	const md = fs.readFileSync(path.join(home, '.claude', 'agents', 'big-lead.md'), 'utf-8');
+	assert.match(md, /model: fable\[1m\]/, 'frontmatter は CLI 値 fable[1m]');
 });
 
 // ════════════════════════════════════════════════════════════════════════════

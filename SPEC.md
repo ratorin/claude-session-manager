@@ -116,11 +116,11 @@ src/
 |---|---|---|---|
 | 部署名 | InputBox | ✅ | エージェントの名前（例: CSM開発部） |
 | 役割の説明 | InputBox | | 担当業務（例: デバッグ・品質確認） |
-| モデル選択 | QuickPick | ✅ | `opus` / `sonnet` / `haiku`（短縮名）/ `claude-sonnet-4-6[1m]` / `claude-opus-4-6[1m]`（1M）/ `inherit` |
+| モデル選択 | QuickPick | ✅ | `fable` / `fable-1m` / `opus` / `opus-1m` / `sonnet` / `sonnet-1m` / `haiku`（v0.5.14 で fable 追加、frontmatter には `fable[1m]` / `opus[1m]` / `sonnet[1m]` を書く） |
 | セッション運用 | QuickPick | ✅ | 固定 / 使い捨て |
 | 親エージェント | QuickPick | | 既存エージェントから選択 / なし |
 | 作業フォルダ | FolderPicker | | フォルダ選択ダイアログ / なし |
-| 推論努力（Effort） | カードラジオ | | Low / Medium / High / Max（v0.3.0追加） |
+| 推論努力（Effort） | カードラジオ | | Low / Medium / High / XHigh / Max（Max は Opus / Fable 系専用） |
 
 ### 共通フォーム関数
 `showAgentForm(existing?: AgentConfig): Promise<AgentConfig | undefined>`
@@ -227,7 +227,8 @@ export interface AgentConfig {
     name: string;                // 部署名（例: CSM開発部）
     sessionId: string;           // 紐づけセッションID
     role: string;                // 役割（例: デバッグ・品質確認）
-    model: 'opus' | 'sonnet' | 'haiku' | 'claude-sonnet-4-6[1m]' | 'claude-opus-4-6[1m]' | 'inherit';
+    // v0.5.14: fable / fable-1m を追加（旧: 'fable' 意図的除外 → 現行 CC で解禁）
+    model: 'fable' | 'fable-1m' | 'opus' | 'opus-1m' | 'sonnet' | 'sonnet-1m' | 'haiku' | 'inherit';
     sessionMode?: 'fixed' | 'disposable';
     ruleFile?: string;           // ルールファイルパス
     parentAgent?: string;        // 親エージェント名
@@ -236,7 +237,7 @@ export interface AgentConfig {
     scope?: 'global' | 'project'; // ルールファイルのスコープ（v0.2.8追加）
     status?: 'active' | 'idle' | 'archived';
     // v0.3.0 追加: モデル制御
-    effort?: 'low' | 'medium' | 'high' | 'max'; // 推論努力レベル（max は Opus のみ）
+    effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; // 推論努力レベル（max は Opus / Fable 系のみ）
 }
 ```
 
@@ -369,15 +370,16 @@ export interface AgentConfig {
 | スコープ | ラジオボタン（プロジェクト/グローバル） | ✅ |
 | 親エージェント | セレクトボックス | |
 | 作業フォルダ | テキスト + フォルダ選択ダイアログ | |
-| 推論努力（Effort） | カードラジオ（Low/Medium/High/Max） | |
+| 推論努力（Effort） | カードラジオ（Low/Medium/High/XHigh/Max） | |
 
 ### メッセージフロー
 - Webview → Extension: `save`, `cancel`, `browseFolder`
 - Extension → Webview: `folderSelected`
 
-### モデル別UI連動
-- **Opus**: 全項目有効
-- **Sonnet**: Effort Max がグレーアウト
+### モデル別UI連動（v0.5.14 更新）
+- **Fable / Fable 1M**: 全項目有効（Max effort 可）
+- **Opus / Opus 1M**: 全項目有効（Max effort 可）
+- **Sonnet / Sonnet 1M**: Effort Max がグレーアウト
 - **Haiku**: Effort Max がグレーアウト
 
 ### 新規ファイル
@@ -901,7 +903,7 @@ Windows固有のtasklist依存を排除し、PC負荷を軽減する。
 - プロジェクトをVS Codeで開く: openProjectInVSC コマンド
 
 ### Phase 4: フォーム拡張
-- Effort 4段階（low/medium/high/max）、max=Opus専用グレーアウト
+- Effort 5段階（low/medium/high/xhigh/max）、max は Opus / Fable 系専用グレーアウト（v0.5.14）
 - Thinkingトグル、Haiku時グレーアウト
 - モデル変更時のUI連動（onModelChange）
 

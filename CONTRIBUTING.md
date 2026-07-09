@@ -61,7 +61,8 @@ CSMはこのファイルをSingle Source of Truthとして利用し、フォー�
 # CLI標準フィールド
 name: CSM開発部                    # エージェント表示名
 description: CSM拡張機能の開発      # 説明
-model: sonnet                      # opus / sonnet / sonnet-1m / haiku
+model: sonnet                      # fable / fable-1m / opus / opus-1m / sonnet / sonnet-1m / haiku
+                                   # 1M は `<model>[1m]` として書き出される (v0.5.14)
 memory: project                    # user / project / local
 tools: ["Read", "Edit", "Write", "Bash", "Grep", "Glob"]
 permissionMode: default            # default / acceptEdits / plan / auto

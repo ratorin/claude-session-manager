@@ -6,6 +6,7 @@ import * as dataStore from '../models/dataStore';
 import { getRuleFileInfo, resolveRuleFilePath } from '../agents/agentManager';
 import { isLegacyAutoFormat, hasFrontmatter } from '../utils/frontmatterUtils';
 import { shouldShowInOrgChart, translateWorkDirPath } from '../utils/agentUtils';
+import { getModelChar } from '../models/modelCatalog';
 import { resolveExternalSessionTitles } from '../utils/sessionLoader';
 import { isBookmarked, addBookmark, removeBookmark } from '../services/bookmarkService';
 
@@ -412,11 +413,11 @@ export class AgentItem extends vscode.TreeItem {
 		public readonly isOtherProject: boolean = false,
 		mtimeMs?: number,
 	) {
-		// モデル頭文字（会話一覧と同じ全角表記）
-		const modelChar = agent.model === 'opus' || agent.model === 'opus-1m' ? 'Ｏ'
-			: agent.model === 'sonnet-1m' ? '１'
-			: agent.model === 'haiku' ? 'Ｈ'
-			: 'Ｓ';
+		// v0.5.14 レビュー修正 (7): modelCatalog.getModelChar() に統一。
+		//   旧: sonnet-1m を '１' 表示していたが、プレビュー（catalog char='Ｓ'）と食い違い。
+		//   新: 母体モデルの頭文字を表示（1M情報はラベル/tooltipで担保）。
+		//       これで agentTree / sessionTree / tagTree / agentPreview の頭文字が完全一致。
+		const modelChar = getModelChar(agent.model);
 
 		// 使い捨てラベル
 		const disposableLabel = agent.sessionMode === 'disposable' ? ' 使い捨て' : '';

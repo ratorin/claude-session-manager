@@ -7,6 +7,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as vscode from 'vscode';
 import { AgentConfig } from '../models/types';
+import { CsmModel } from '../models/modelCatalog';
 import { sanitizeForYaml, parseFrontmatterExtended } from '../utils/frontmatterUtils';
 import { modelCliMap } from '../utils/cliBuilder';
 import { normalizeModel, normalizeStatus } from '../utils/agentUtils';
@@ -21,8 +22,8 @@ export interface AgentDefinition {
 	description: string;
 	/** CSM独自: 日本語説明（UI表示用） */
 	displayDescription?: string;
-	/** CLI標準: モデル */
-	model: 'opus' | 'opus-1m' | 'sonnet' | 'sonnet-1m' | 'haiku';
+	/** CLI標準: モデル（v0.5.14: fable / fable-1m を追加） */
+	model: CsmModel;
 	/** CLI標準: メモリモード */
 	memory?: string;
 	/** CLI標準: 利用可能ツール */
@@ -289,6 +290,12 @@ export function toAgentConfig(def: AgentDefinition): AgentConfig {
 		displayName: def.displayName,
 		sessionId: '', // agents/*.md にはセッションID情報はない
 		role: def.role || def.description,
+		// v0.5.14 レビュー修正 (1): description を独立に渡す。
+		//   旧: マッピング欠落 → フォーム表示時に v.description が undefined
+		//        → プレフィル式 (v.displayDescription || v.role) にフォールバックし、
+		//          保存で英語descriptionが日本語role文に恒久置換される（HIGH-1 が編集経路で機能しない）。
+		//   orgBuilder の reassign（remove→add）で description が消えるのも同根。
+		description: def.description,
 		displayRole: def.displayRole,
 		displayDescription: def.displayDescription,
 		model: def.model,
@@ -473,10 +480,32 @@ export async function saveAgentConfig(config: AgentConfig, body?: string): Promi
 	// 既存ファイルがあればそれを更新
 	const existing = await getAgentByName(config.name);
 
+	// v0.5.14 HIGH-1 fix + レビュー修正 (3):
+	//   旧: `description: config.role || existing?.description || ''`
+	//     → role を description に上書き。フォームで description 編集不能。
+	//       role 翻訳（日本語化）で英語 description が消え CC の自動委譲判定が壊れる。
+	//   新:
+	//     - 既存エージェント更新: フォームから送られた description を尊重。空文字は明示的な消去として尊重。
+	//     - 新規作成 & description 空: role をフォールバックとして frontmatter に書き出す
+	//       （CC の自動委譲は description 行が必須。空だと sub-agent 選択で無視される）。
+	//     - 非フォーム経路（description 未指定）: 既存値を保持。
+	const explicitDescription = typeof config.description === 'string';
+	const descriptionValue = (() => {
+		if (explicitDescription) {
+			const trimmed = (config.description ?? '').trim();
+			// 新規作成 (existing なし) & 空 → role にフォールバックして必ず 1 行埋める
+			if (!existing && trimmed === '') {
+				return (config.role || '').trim();
+			}
+			return trimmed;
+		}
+		return existing?.description || '';
+	})();
+
 	const def: Partial<AgentDefinition> & { name: string } = {
 		name: config.name,
 		displayName: config.displayName || existing?.displayName,
-		description: config.role || existing?.description || '', // roleが更新されたらdescriptionも更新
+		description: descriptionValue,
 		displayDescription: config.displayDescription || existing?.displayDescription,
 		model: config.model,
 		memory: existing?.memory || 'project',

@@ -15,9 +15,9 @@
 > Claude Code のバージョン確認: `claude --version`
 > アップデート: `npm install -g @anthropic-ai/claude-code`
 
-**現行 Claude Code への追従状況（2.1.19x / 2026-06 時点）**
-- モデル: `opus`(Opus 4.8) / `opus-1m` / `sonnet`(4.6) / `sonnet-1m` / `haiku`(4.5) を選択可。最上位の **Fable 5(`fable`) は組織方針で非選択**（`normalizeModel` で `fable→opus` フォールバック）。新規モデル/エイリアスの追加は無し。
-- effort: `low`〜`max` に対応。`ultracode`（= xhigh + 動的ワークフロー）はセッション専用設定のため per-agent フォームには出さない。
+**現行 Claude Code への追従状況（2.1.19x / 2026-07 時点）**
+- モデル: **`fable`(Fable 5)** / `fable-1m` / `opus`(4.8) / `opus-1m` / `sonnet`(最新世代) / `sonnet-1m` / `haiku`(最新世代) を選択可。frontmatter にはエイリアス（例: `fable`, `opus[1m]`）を書き込み、Claude Code が起動時に最新モデルへ解決する。
+- effort: `low`〜`max` に対応。`max` は **Opus / Fable 系のみ**。`ultracode`（= xhigh + 動的ワークフロー）はセッション専用設定のため per-agent フォームには出さない。
 - hook: `SubagentStart`/`SubagentStop` を利用（サブエージェント可視化）。`permissionDecision` 等の出力契約は現行どおり。
 - subagent frontmatter: `model`/`effort`/`permissionMode`/`allowedTools`/`isolation`/`background` をフォームから編集可。`initialPrompt` 等の新規フィールドは未対応（CSM の初期プロンプト注入と競合しうるため意図的に見送り）。
 
@@ -34,11 +34,18 @@
 - **追加分（overage）をステータスバーに別表示** — 使用量%はそのまま、`… ｜ 追加 0%` の形で追加分の利用率を併記（API は利用率%のみ提供。ドル金額は claude.ai/settings/usage で確認）
 - モデル表示の整合（opus-1m 等）・hook ライフサイクルの QA 修正・frontmatter クォート修正・設定バックアップの世代管理 など安定化
 
+### v0.5.14 新機能（Fable 5 解禁 + normalizeModel 判定順序修正）
+
+- **Fable 5 解禁** — 旧 v0.5.6〜v0.5.13 で「組織方針で非選択」として除外していた最上位モデル `fable` / `fable-1m` を第一級モデルとして復活（オーナー承認 2026-07-09）。表示文字 **Ｆ**、色 **金 #ffd54f**。effort=`max` も選択可。
+- **C-1 修正**: `claude-fable-5[1m]` が `sonnet-1m` に化けるバグを解消（`normalizeModel` の判定順序を fable→[1m]→opus→haiku→sonnet に変更）
+- **C-2 修正**: `fable → opus` へのサイレント書き換えを削除。既存の Fable エージェントは opus に書き換わったまま復元不能のため、モデルを再選択してください
+- **modelCatalog.ts 新設** — 従来 13 ファイル以上に分散していたモデルリテラルを単一真実源に集約
+
 ### v0.5.6 新機能（モデル選択の現行追従）
 
 - **Opus 1M 追加** — `opus-1m`（Opus 4.8 + 1M 長文コンテキスト）をエージェントのモデル選択に追加。大規模調査・大量ファイル向け（Sonnet 1M と対）
-- **Fable は非選択** — 最上位の `fable`（Fable 5）は組織で無効化のため選択肢に出さない（`normalizeModel` は `fable→opus` フォールバック）
-- モデルラベルを現行版に更新（Opus 4.8 / Sonnet 4.6 / Haiku 4.5）
+- モデルラベルを現行版に更新（Opus 4.8 / Sonnet 最新世代 / Haiku 最新世代）
+- 注: v0.5.6〜v0.5.13 で導入されていた「Fable 非選択」ポリシーは **v0.5.14 で撤回**しました
 
 ### v0.5.5 修正（新規セッション作成のクロスOS cwd）
 
@@ -93,7 +100,7 @@
 ### 会話管理
 
 - **会話一覧** — 全プロジェクトの会話を日付別（今日/昨日/今週/今月/それ以前）に自動分類
-- **モデル表示** — モデル頭文字（Ｏ=Opus / Ｓ=Sonnet / Ｈ=Haiku）とメッセージ件数を表示
+- **モデル表示** — モデル頭文字（**Ｆ=Fable** / Ｏ=Opus / Ｓ=Sonnet / Ｈ=Haiku、`１`=1M コンテキスト）とメッセージ件数を表示
 - **プレビュー** — チャット形式で会話内容を表示。Markdownレンダリング対応（コードブロック・テーブル・見出し・リスト）
 - **リンクのクリック対応** — プレビュー内のURLはブラウザ、Windowsファイルパスはエディタで開く（行番号ジャンプ付き）
 - **ブックマーク** — 大事な会話をお気に入り登録。専用セクションに一覧表示
@@ -214,11 +221,12 @@ v0.4.0 より、エージェント定義は `~/.claude/agents/*.md` に格納さ
 ```yaml
 ---
 name: csm-dev                    # CLI識別子（英数字）
-description: CSM開発部のエンジニア  # 役割説明
-model: sonnet                    # 短縮名: opus / sonnet / haiku
-                                 # 1M: claude-sonnet-4-6[1m] / claude-opus-4-6[1m]
+description: CSM開発部のエンジニア  # 役割説明（英語、CC の自動委譲判定用）
+model: sonnet                    # v0.5.14 で fable 追加。エイリアス方式:
+                                 #   fable / fable-1m / opus / opus-1m
+                                 #   sonnet / sonnet-1m / haiku
+                                 # 1M は `<model>[1m]` 形式（例: fable[1m], opus[1m], sonnet[1m]）
                                  # 継承: inherit（親セッションのモデルを引き継ぐ）
-                                 # ※ sonnet[1m] は使わない（Sonnet 4.5 旧版になるため）
 memory: project                  # セッション跨ぎ記憶（user/project/local）
 tools: ["Read", "Edit", "Write", "Bash", "Grep", "Glob"]
 permissionMode: default          # default / acceptEdits / plan / auto
@@ -269,7 +277,7 @@ workDir: c:/xampp/Project/csm    # 作業ディレクトリ（CSM独自フィー
 
 ### エージェントフォーム拡張
 
-- **推論努力レベル（Effort）** — Low / Medium / High / Max の4段階（MaxはOpus専用でグレーアウト連動）
+- **推論努力レベル（Effort）** — Low / Medium / High / XHigh / Max の5段階（Max は **Opus / Fable 系専用**でグレーアウト連動）
 - **モデル別UI連動** — モデル選択に応じてEffort Max のグレーアウトが自動切替
 - **役割フィールド複数行対応** — textarea で複数行入力が可能（全体が見えるよう拡張）
 - **紐づけ変更確認ダイアログ** — セッション紐づけ変更時に既存紐づけの確認を表示
@@ -295,7 +303,7 @@ VS Code 左のアクティビティバーに 💬 アイコンが表示されま
 3. フォームに従って入力:
    - **部署名** — エージェントの識別名（例: CSM開発部）
    - **役割** — 担当業務（例: TypeScript開発・品質管理）
-   - **モデル** — `opus` / `sonnet` / `haiku`（短縮名）、1Mコンテキストは `claude-sonnet-4-6[1m]` / `claude-opus-4-6[1m]`（フルIDで指定）、`inherit`（親セッション継承）
+   - **モデル** — `fable` / `opus` / `sonnet` / `haiku`（短縮名）、1Mコンテキストは `fable-1m` / `opus-1m` / `sonnet-1m`（frontmatter には `fable[1m]` / `opus[1m]` / `sonnet[1m]` を書く）、`inherit`（親セッション継承）
    - **セッション運用** — 固定（同じセッションを使い続ける）/ 使い捨て（タスクごとに新セッション）
    - **スコープ** — プロジェクト（ワークスペース内）/ グローバル（~/.claude/配下）
    - **親エージェント** — 階層構造がある場合に親を選択
@@ -353,7 +361,7 @@ VS Code 左のアクティビティバーに 💬 アイコンが表示されま
 | アイコン | 意味 |
 |---|---|
 | ・ primitive-dot | 通常の会話 |
-| ★ star-full（黄） | ブックマーク済み |
+| ★ star-full（黄） | ブックマーク済み **/ Fable 5 モデル**（v0.5.14〜） |
 | ● circle-filled（緑） | Claude Codeで利用中 |
 | 👁 eye | プレビュー中 |
 | 🎯 target（緑） | プレビュー中 かつ 利用中 |
@@ -361,6 +369,16 @@ VS Code 左のアクティビティバーに 💬 アイコンが表示されま
 | 📋 notebook（紫） | 子エージェント（Plan） |
 | 🔧 tools（橙） | 子エージェント（general-purpose） |
 | 📖 book（緑） | 子エージェント（claude-code-guide） |
+
+### モデル頭文字（会話一覧・エージェント一覧）
+
+| 頭文字 | モデル | 色 |
+|---|---|---|
+| **Ｆ** | Fable 5 / Fable 1M | 金 #ffd54f |
+| Ｏ | Opus 4.8 / Opus 1M | 紫 #b388ff |
+| Ｓ | Sonnet（最新世代） | 青 #64b5f6 |
+| Ｈ | Haiku（最新世代） | 緑 #81c784 |
+| １ | 1M コンテキスト（母体モデルと組み合わせ） | 橙 #f97316 |
 
 ### タスクステータスアイコン
 
