@@ -9,6 +9,7 @@ import { spawnSync } from 'child_process';
 import { AgentConfig } from '../models/types';
 import { addToIndex } from '../utils/memoryManager';
 import { filterCsmHooks, trashCsmHookScripts, RemovalCount, CSM_HOOK_MARKERS, pruneOldSettingsBackups } from '../utils/csmHookCleanup';
+import { encodeCwdToProjectDir as encodeCwdToProjectDirShared } from '../utils/agentUtils';
 
 // ─── settings.json 排他書き込みキュー ────────────────────────────────────────
 // 複数の ensure*Hook が並行起動しても、read→modify→write が直列に実行されるよう
@@ -27,15 +28,44 @@ async function modifySettingsJson(
 	modifier: (settings: Record<string, unknown>) => boolean,
 	log: (msg: string) => void = () => { /* noop */ }
 ): Promise<void> {
-	// Promise チェーンに連結して直列化
-	settingsWriteQueue = settingsWriteQueue.then(async () => {
+	// v0.5.16 M-4:
+	//   旧: settingsWriteQueue.then(...).catch(() => {}) で握りつぶし、
+	//       呼び出し元は成功したように見える + 常に「登録完了」ログを出していた。
+	//   新: 直列化を維持しつつ、op ごとの Promise を分離して呼び出し元へ例外を伝播する。
+	//       キュー本体（settingsWriteQueue）は失敗しても継続する（後続 op を止めない）
+	//       ため .catch(() => {}) をチェーン維持用に別途持つ。
+	//
+	// v0.5.16 M-5:
+	//   旧: settings.json が ENOENT / parse 失敗ならサイレント return（クリーン環境で
+	//       全 ensure*Hook が黙って no-op になる）。
+	//   新: ENOENT は `{}` で続行（新規作成 + 親ディレクトリ作成）。parse 失敗は明示的に
+	//       ログ + 例外を投げる（バックアップされていない破損 settings.json への上書きを防止）。
+	const opPromise = settingsWriteQueue.then(async () => {
 		// 1. 読み込み
 		let settings: Record<string, unknown> = {};
 		try {
 			const raw = await fs.promises.readFile(settingsPath, 'utf-8');
-			settings = JSON.parse(raw);
-		} catch {
-			return; // ファイルが存在しない or パース失敗 → スキップ
+			try {
+				const parsed = JSON.parse(raw);
+				if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+					settings = parsed as Record<string, unknown>;
+				} else {
+					log(`[CSM] settings.json が JSON オブジェクトではありません: ${settingsPath}`);
+					throw new Error('settings.json is not an object');
+				}
+			} catch (parseErr) {
+				log(`[CSM] settings.json のパースに失敗しました: ${settingsPath} (${(parseErr as Error).message})`);
+				throw parseErr;
+			}
+		} catch (readErr: unknown) {
+			const code = (readErr as NodeJS.ErrnoException).code;
+			if (code === 'ENOENT') {
+				// 新規作成 — 親ディレクトリを保証してから空 {} で続行
+				await fs.promises.mkdir(path.dirname(settingsPath), { recursive: true });
+				settings = {};
+			} else {
+				throw readErr;
+			}
 		}
 
 		// 2. 変更適用（no-op なら早期 return）
@@ -43,26 +73,38 @@ async function modifySettingsJson(
 		if (!changed) { return; }
 
 		// 3. バックアップ（書き込み前）+ 古いバックアップの世代管理（最新5件のみ保持）
+		//    新規作成時は元ファイルが無いのでバックアップスキップ
 		const backupPath = `${settingsPath}.bak.${Date.now()}`;
-		try { await fs.promises.copyFile(settingsPath, backupPath); } catch { /* */ }
-		pruneOldSettingsBackups(settingsPath);
+		let backupCreated = false;
+		try {
+			await fs.promises.copyFile(settingsPath, backupPath);
+			backupCreated = true;
+		} catch { /* 新規作成 or copy 失敗 */ }
+		if (backupCreated) { pruneOldSettingsBackups(settingsPath); }
 
 		// 4. 書き込み
 		const serialized = JSON.stringify(settings, null, '\t');
 		await fs.promises.writeFile(settingsPath, serialized, 'utf-8');
 
-		// 5. JSON 検証 — 失敗したらバックアップから復元して例外
+		// v0.5.16 M-4: 旧 55-62 行の JSON 検証は自前 stringify の再 parse でデッドコード
+		//   （JSON.stringify が有効 JSON を返さないケースは循環参照くらいで、既に例外送出済み）
+		//   → 削除。書き込み後の検証はディスクからの読み戻しでしか意味を成さないため、
+		//   その形式にする。失敗時はバックアップから復元。
 		try {
-			JSON.parse(serialized);
-		} catch {
-			// 書き込み内容が不正 → バックアップから復元
-			try { await fs.promises.copyFile(backupPath, settingsPath); } catch { /* */ }
-			log(`[CSM] settings.json 書き込み後の検証に失敗しました。バックアップを復元しました: ${backupPath}`);
-			throw new Error('settings.json JSON validation failed after write');
+			const readBack = await fs.promises.readFile(settingsPath, 'utf-8');
+			JSON.parse(readBack);
+		} catch (validationErr) {
+			if (backupCreated) {
+				try { await fs.promises.copyFile(backupPath, settingsPath); } catch { /* */ }
+			}
+			log(`[CSM] settings.json 書き込み後の検証に失敗しました。${backupCreated ? 'バックアップを復元しました: ' + backupPath : ''}`);
+			throw new Error(`settings.json JSON validation failed after write: ${(validationErr as Error).message}`);
 		}
-	}).catch(() => { /* キュー内の例外を握りつぶしてチェーンを維持 */ });
+	});
 
-	return settingsWriteQueue;
+	// キュー本体は失敗しても後続 op を止めないよう分離（呼び出し元には正確な結果を返す）
+	settingsWriteQueue = opPromise.catch(() => { /* キュー継続用 */ });
+	return opPromise;
 }
 
 // ─── exec-form サポート (Claude Code 2.1.139+) ────────────────────────────────
@@ -70,23 +112,44 @@ async function modifySettingsJson(
 
 let _execFormSupported: boolean | null = null;
 
-/** Claude Code バージョンを取得し exec-form (args[]) が使えるか判定（初回のみ実行） */
+// v0.5.16 L-12:
+//   旧: `spawnSync('claude', ['--version'])` は Windows 上で `claude.cmd`（バッチファイル）を
+//        直接実行できず ENOENT で false 固定 → exec-form 移行が Windows で恒久無効化されていた。
+//   新: 1) shell:true で PATH 上の claude.cmd/claude.exe/claude 全てを試行
+//        2) それでもダメなら `claude.cmd` の明示コマンドをフォールバック（Windows のみ）
+//        3) 全て失敗した場合はキャッシュせず（true/false どちらも書き込まない）、
+//           次回呼び出しでリトライさせる（一時的な PATH 障害を恒久的な false 判定にしない）。
 function supportsExecForm(): boolean {
 	if (_execFormSupported !== null) { return _execFormSupported; }
-	try {
-		const result = spawnSync('claude', ['--version'], { encoding: 'utf-8', timeout: 3000 });
-		const output = (result.stdout || '').trim();
-		const m = output.match(/(\d+)\.(\d+)\.(\d+)/);
-		if (!m) { _execFormSupported = false; return false; }
-		const [major, minor, patch] = [Number(m[1]), Number(m[2]), Number(m[3])];
-		_execFormSupported = (
-			major > 2 ||
-			(major === 2 && minor > 1) ||
-			(major === 2 && minor === 1 && patch >= 139)
-		);
-	} catch {
-		_execFormSupported = false;
+	function tryVersion(cmd: string, useShell: boolean): string | null {
+		try {
+			const result = spawnSync(cmd, ['--version'], {
+				encoding: 'utf-8',
+				timeout: 3000,
+				shell: useShell,
+			});
+			const output = (result.stdout || '').trim();
+			return output || null;
+		} catch { return null; }
 	}
+	// 試行順: 直接 → shell 経由 → Windows なら .cmd を明示
+	let out: string | null = tryVersion('claude', false);
+	if (!out) { out = tryVersion('claude', true); }
+	if (!out && process.platform === 'win32') { out = tryVersion('claude.cmd', true); }
+	if (!out) {
+		// キャッシュせず false を返す（次回リトライ可）。呼び出し元は shell-form にフォールバック。
+		// eslint-disable-next-line no-console
+		try { console.warn('[CSM] supportsExecForm: claude --version が取得できませんでした（shell-form にフォールバックし次回再試行します）'); } catch { /* */ }
+		return false;
+	}
+	const m = out.match(/(\d+)\.(\d+)\.(\d+)/);
+	if (!m) { _execFormSupported = false; return false; }
+	const [major, minor, patch] = [Number(m[1]), Number(m[2]), Number(m[3])];
+	_execFormSupported = (
+		major > 2 ||
+		(major === 2 && minor > 1) ||
+		(major === 2 && minor === 1 && patch >= 139)
+	);
 	return _execFormSupported;
 }
 
@@ -118,6 +181,77 @@ function buildHookDef(
 function hookMatchesMarker(hh: Record<string, unknown>, marker: string): boolean {
 	if (typeof hh.command === 'string' && hh.command.includes(marker)) { return true; }
 	if (Array.isArray(hh.args) && (hh.args as string[]).some((a) => a.includes(marker))) { return true; }
+	return false;
+}
+
+/**
+ * v0.5.16 M-6: hook が「特定のスクリプトファイル名」を実行しているか判定する。
+ *   旧 hookMatchesMarker は `includes(marker)` の部分一致だったため、
+ *   marker='csm-precompact' が csm-precompact-summary.js にヒットしてしまい、
+ *   PreCompact hook の自己修復ループが誤ってサマリ用エントリを書き換えていた。
+ *
+ * @param hh          hook 定義（shell-form / exec-form 両対応）
+ * @param baseName    スクリプトのベース名。拡張子は自動で `.js`/`.cjs`/`.mjs`/`.sh` を試す。
+ *                    例: 'csm-precompact' → csm-precompact.js / csm-precompact.sh 等に一致
+ */
+export function hookMatchesScriptName(hh: Record<string, unknown>, baseName: string): boolean {
+	if (!baseName) { return false; }
+	// 単語境界 or パス区切り + ベース名 + 拡張子で終わる or それに続く空白/クォートで終わる
+	// 例: `csm-precompact.js"` `csm-precompact.js ` `csm-precompact.sh"` `csm-precompact.cjs`
+	const re = new RegExp(`(?:^|[\\s"'/\\\\])${escapeRegex(baseName)}\\.(?:js|cjs|mjs|sh)(?:$|[\\s"'])`);
+	if (typeof hh.command === 'string' && re.test(hh.command)) { return true; }
+	if (Array.isArray(hh.args)) {
+		for (const a of hh.args as unknown[]) {
+			if (typeof a !== 'string') { continue; }
+			// args は個々のトークンが独立しているので basename 一致で判定
+			const bn = path.basename(a.replace(/\\/g, '/'));
+			if (bn === `${baseName}.js` || bn === `${baseName}.cjs` || bn === `${baseName}.mjs` || bn === `${baseName}.sh`) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+function escapeRegex(s: string): string {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * v0.5.16 M-7: 旧 bash 版 hook のみを判定（マーカー一致 + .sh 参照）。
+ *   - shell-form: command 文字列に .sh を含む
+ *   - exec-form:  args[0]（スクリプトパス）が .sh で終わる or command=='bash'
+ *   → node 版と bash 版が併存している状態で bash 版だけを撤去できる。
+ */
+function isOldBashCsmHook(hh: Record<string, unknown>, marker: string): boolean {
+	if (!hookMatchesMarker(hh, marker)) { return false; }
+	if (typeof hh.command === 'string') {
+		if (hh.command.startsWith('bash ') || hh.command.includes('.sh')) { return true; }
+	}
+	if (hh.command === 'bash') { return true; }
+	if (Array.isArray(hh.args)) {
+		for (const a of hh.args as unknown[]) {
+			if (typeof a === 'string' && a.endsWith('.sh')) { return true; }
+		}
+	}
+	return false;
+}
+
+/**
+ * v0.5.16 M-7: 既存 node 版が任意の event 配列内に存在するか判定。
+ * push 前の二重登録防止に使用。
+ */
+function hasNewNodeHook(entries: unknown, marker: string): boolean {
+	if (!Array.isArray(entries)) { return false; }
+	for (const entry of entries) {
+		const inner = (entry as Record<string, unknown>).hooks as Array<Record<string, unknown>> | undefined;
+		if (!Array.isArray(inner)) { continue; }
+		for (const hh of inner) {
+			if (!hookMatchesMarker(hh, marker)) { continue; }
+			if (isOldBashCsmHook(hh, marker)) { continue; }
+			return true; // マーカー一致で bash でない = node 版
+		}
+	}
 	return false;
 }
 
@@ -415,16 +549,15 @@ export async function ensureSessionAgentInjectHook(extensionPath: string, output
 				if (alreadyNodeInstalled && !needsMigration) { return migratedToExecForm; }
 
 				if (needsMigration) {
+					// v0.5.16 M-7: migration filter を hookMatchesMarker + .sh 判定に修正。
+					//   旧: `command.includes(CSM_MARKER)` で node/bash 両方を撤去 → node 版まで消えた
+					//   新: isOldBashCsmHook（マーカー一致 + .sh 参照）で bash 版だけを撤去
 					hooksObj['SessionStart'] = (sessionStart as Array<Record<string, unknown>>).map((entry) => {
 						const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
 						if (!Array.isArray(innerHooks)) { return entry; }
-						const hasOldHook = innerHooks.some((hh) =>
-							typeof hh.command === 'string' && hh.command.includes(CSM_MARKER) && hh.command.includes('.sh')
-						);
+						const hasOldHook = innerHooks.some((hh) => isOldBashCsmHook(hh, CSM_MARKER));
 						if (!hasOldHook) { return entry; }
-						const filtered = innerHooks.filter((hh) =>
-							!(typeof hh.command === 'string' && hh.command.includes(CSM_MARKER))
-						);
+						const filtered = innerHooks.filter((hh) => !isOldBashCsmHook(hh, CSM_MARKER));
 						return filtered.length === 0 ? null : { ...entry, hooks: filtered };
 					}).filter(Boolean);
 					outputChannel.appendLine(`[${new Date().toISOString()}] csm-session-agent-inject: bash版→Node.js版へ自動マイグレーション`);
@@ -433,6 +566,11 @@ export async function ensureSessionAgentInjectHook(extensionPath: string, output
 
 			if (!Array.isArray(hooksObj['SessionStart'])) {
 				hooksObj['SessionStart'] = [];
+			}
+			// v0.5.16 M-7: 二重登録防止のガード。migration 後の状態を再チェックし、
+			//   既に node 版が存在する場合は push しない（並行走行や他ソースからの登録に対する防御）。
+			if (hasNewNodeHook(hooksObj['SessionStart'], CSM_MARKER)) {
+				return true;
 			}
 			(hooksObj['SessionStart'] as Array<Record<string, unknown>>).push({
 				matcher: '*',
@@ -528,26 +666,36 @@ export async function ensurePreCompactHook(extensionPath: string, outputChannel:
 			const hooksObj = settings.hooks as Record<string, unknown>;
 			const preCompact = hooksObj['PreCompact'];
 			let updatedOldEntry = false;
+			// v0.5.16 M-6:
+			//   旧: `hookMatchesMarker(hh, 'csm-precompact')` の部分一致で
+			//        `csm-precompact-summary.js` にもヒットしてしまい、サマリー hook を
+			//        誤って PreCompact 用に書き換える恐れ + return で早期打ち切って
+			//        後続 entry の点検が行われなかった。
+			//   新: hookMatchesScriptName で「csm-precompact.js / .sh 等」の完全形のみ一致。
+			//        ループ内 return は撤廃し、フラグ(existsNewNodeEntry)で状態集約する。
+			let existsNewNodeEntry = false;
+			let migratedAny = false;
 
 			if (Array.isArray(preCompact)) {
 				for (const entry of preCompact as Array<Record<string, unknown>>) {
 					const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
 					if (!Array.isArray(innerHooks)) { continue; }
 					for (const hh of innerHooks) {
-						if (!hookMatchesMarker(hh, CSM_MARKER)) { continue; }
+						if (!hookMatchesScriptName(hh, CSM_MARKER)) { continue; }
 						if (typeof hh.command === 'string' && hh.command.startsWith('bash ')) {
 							// 旧 bash → node exec-form に更新
 							Object.assign(hh, buildHookDef(hookScript, 15));
 							updatedOldEntry = true;
 						} else {
-							// 既に node 形式 → exec-form へマイグレーション試行して終了
-							return migrateHookToExecForm(hh);
+							// 既に node 形式 → exec-form へマイグレーション試行（走査は継続）
+							existsNewNodeEntry = true;
+							if (migrateHookToExecForm(hh)) { migratedAny = true; }
 						}
 					}
 				}
 			}
 
-			if (!updatedOldEntry) {
+			if (!updatedOldEntry && !existsNewNodeEntry) {
 				if (!Array.isArray(hooksObj['PreCompact'])) {
 					hooksObj['PreCompact'] = [];
 				}
@@ -555,8 +703,9 @@ export async function ensurePreCompactHook(extensionPath: string, outputChannel:
 					matcher: '*',
 					hooks: [buildHookDef(hookScript, 15)]
 				});
+				return true;
 			}
-			return true;
+			return updatedOldEntry || migratedAny;
 		}, (msg) => outputChannel.appendLine(msg));
 
 		outputChannel.appendLine(`[${new Date().toISOString()}] PreCompact hookを settings.json に登録しました`);
@@ -777,6 +926,8 @@ export async function ensureGovernanceHook(extensionPath: string, outputChannel:
 				if (!Array.isArray(hooksObj[eventKey])) {
 					hooksObj[eventKey] = [];
 				}
+				// v0.5.16 M-7: 二重登録防止のガード（並行呼び出し・他ソース由来の登録に対する防御）
+				if (hasNewNodeHook(hooksObj[eventKey], CSM_MARKER)) { continue; }
 				(hooksObj[eventKey] as Array<Record<string, unknown>>).push({
 					matcher: 'Bash|Write|Edit|MultiEdit',
 					hooks: [buildHookDef(hookScript, 10)]
@@ -1120,14 +1271,11 @@ export async function removeAllCsmHooks(outputChannel: vscode.OutputChannel): Pr
 	return { removed: count.removed, trashed: moved };
 }
 
-// cwd を Claude Code のプロジェクトフォルダ名形式にエンコード
-// 例: C:\My Project → c--my-project
+// v0.5.16 M-9: cwd → project フォルダ名エンコードは agentUtils に集約。
+//   旧: `/^([a-z]):/ → '$1-'` + `[\s/] → '-'` のみで '.'/'_' 系記号が残り、CC 実装と乖離。
+//   新: 非英数字/ハイフン以外は全て '-'（agentUtils.encodeCwdToProjectDir を再エクスポート）。
 function encodeCwdToProjectDir(cwd: string): string {
-	return cwd
-		.toLowerCase()
-		.replace(/\\/g, '/')
-		.replace(/^([a-z]):/, '$1-')
-		.replace(/[\s/]/g, '-');
+	return encodeCwdToProjectDirShared(cwd);
 }
 
 // MEMORY.mdに組織情報を書き込む（メモリファイル＋ポインタ方式）

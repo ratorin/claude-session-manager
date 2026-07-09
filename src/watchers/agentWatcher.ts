@@ -11,6 +11,7 @@ import * as dataStore from '../models/dataStore';
 import * as agentFileManager from '../agents/agentFileManager';
 import { detectSubagents } from '../utils/subagentDetector';
 import { MODEL_CATALOG, CSM_MODELS } from '../models/modelCatalog';
+import { computeJsonlPathForSession, computeJsonlPathForSessionAsync, FallbackScanCache } from '../utils/agentUtils';
 
 // 検知モードの型定義（Phase 4: fswatch のみ残す）
 type DetectionMode = 'fswatch';
@@ -47,6 +48,9 @@ export class AgentWatcher implements vscode.Disposable {
 	private signalLiveSessions = new Map<string, boolean>();
 	private enabled = false;
 	private updating = false; // 二重実行防止
+	// v0.5.16 L-14: update 実行中に届いたイベントを記憶し、finally で再スケジュールする。
+	//   旧: updating=true の間のイベントは黙って破棄され、直後の状態変化が反映されないタイムラグが発生。
+	private pendingUpdate = false;
 
 	// 検知モード
 	private detectionMode: DetectionMode = 'fswatch';
@@ -179,29 +183,42 @@ export class AgentWatcher implements vscode.Disposable {
 
 	// メイン更新ロジック（完全非同期）
 	private async updateAsync(): Promise<void> {
-		// 二重実行防止
-		if (this.updating) { return; }
+		// v0.5.16 L-14: 二重実行中に来たイベントは pending としてマーク、finally で再スケジュール。
+		if (this.updating) {
+			this.pendingUpdate = true;
+			return;
+		}
 		this.updating = true;
 		try {
 			await this.update();
 		} finally {
 			this.updating = false;
+			if (this.pendingUpdate) {
+				this.pendingUpdate = false;
+				// scheduleUpdate はデバウンスで最新変化を集約する
+				this.scheduleUpdate();
+			}
 		}
 	}
 
 	// cwdからJSONLファイルパスを算出
-	// Claude Code は cwd をエンコードしてプロジェクトフォルダ名にする
-	// 例: C:\My Project → c--my-project
-	// v0.4.6: ドライブレター小文字化・空白→'-' を追加して Claude Code の実装と対称化
+	// v0.5.16 M-9: agentUtils.computeJsonlPathForSession に集約。
+	//   旧: `[\s/] → '-'` のみで '.'/'_' が残っていた（例: /path/my.app 沈黙）。
+	//   新: agentUtils.encodeCwdToProjectDir が CC 実装（非英数字→'-'）に追従し、
+	//       それでも見つからないときは projects/* の走査でフォールバックする。
+	// v0.5.16 レビュー修正 (1): update() ループから呼ぶ際は Async 版 + FallbackScanCache 共有版を使うこと。
+	//   本 sync 版は tryAutoLinkSession などの単発呼び出しのため保持。
 	private getJsonlPath(sessionId: string, cwd: string): string | null {
-		if (!cwd || !sessionId) { return null; }
-		// cwdをClaude Code形式のフォルダ名にエンコード（lowercase + 空白も変換）
-		const encoded = cwd
-			.toLowerCase()
-			.replace(/\\/g, '/')
-			.replace(/^([a-z]):/, '$1-')
-			.replace(/[\s/]/g, '-');
-		return path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+		return computeJsonlPathForSession(sessionId, cwd);
+	}
+
+	/**
+	 * v0.5.16 レビュー修正 (1): update() ループ内で共有するメモ付き版。
+	 * cache を渡さないと 1 呼び出しごとに projects/* を readdir し直すため、必ず update() スコープで
+	 * new FallbackScanCache() したものを引き回すこと。
+	 */
+	private async getJsonlPathAsync(sessionId: string, cwd: string, cache: FallbackScanCache): Promise<string | null> {
+		return computeJsonlPathForSessionAsync(sessionId, cwd, cache);
 	}
 
 	// JSONL末尾から実際のモデル名を読み取る（末尾32KBのみ）
@@ -341,6 +358,12 @@ export class AgentWatcher implements vscode.Disposable {
 		const prevStates = new Map(this.states);
 		this.states.clear();
 
+		// v0.5.16 レビュー修正 (1): projects/* の readdir/stat を 1 サイクル内で共有。
+		//   旧: getJsonlPath (sync) が direct match 外の場合、全エージェント分の readdirSync +
+		//        統計をブロッキング実行 → デバウンス更新のたびに拡張ホストが固まっていた。
+		//   新: FallbackScanCache を全エージェントで共有し、readdir は 1 回・sid 探索も並列で awaited。
+		const scanCache = new FallbackScanCache();
+
 		// ライブエージェントのサブエージェント検出を並列実行
 		await Promise.allSettled(agents.map(async (agent) => {
 			const isLive = agent.sessionId
@@ -353,7 +376,7 @@ export class AgentWatcher implements vscode.Disposable {
 			if (agent.sessionId) {
 				const cwd = this.sessionCwdMap.get(agent.sessionId);
 				if (cwd) {
-					const jsonlPath = this.getJsonlPath(agent.sessionId, cwd);
+					const jsonlPath = await this.getJsonlPathAsync(agent.sessionId, cwd, scanCache);
 					if (jsonlPath) {
 						if (isLive) {
 							try {
@@ -499,6 +522,11 @@ export class AgentWatcher implements vscode.Disposable {
 			if (!p) { return true; }
 			if (p.isLive !== state.isLive) { return true; }
 			if (p.sessionId !== state.sessionId) { return true; }
+			// v0.5.16 M-8: actualModel / modelMismatch の変化も検出。
+			//   旧: これらを比較しないため、セッション中の /model 切替（例: opus→sonnet）が
+			//        JSONL に反映されても UI（バッジ・アイコン）に反映されず陳腐化していた。
+			if (p.actualModel !== state.actualModel) { return true; }
+			if (p.modelMismatch !== state.modelMismatch) { return true; }
 			// activeSubagentIds の変更も検出
 			if (p.activeSubagentIds.length !== state.activeSubagentIds.length) { return true; }
 			if (p.activeSubagentIds.some((id, i) => id !== state.activeSubagentIds[i])) { return true; }

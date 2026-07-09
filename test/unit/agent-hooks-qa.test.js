@@ -68,6 +68,8 @@ function loadFresh(tmpHome) {
 		agentUtils: require(path.join(REPO, 'out', 'utils', 'agentUtils')),
 		cliBuilder: require(path.join(REPO, 'out', 'utils', 'cliBuilder')),
 		usageMonitor: require(path.join(REPO, 'out', 'utils', 'usageMonitor')),
+		pathUtils: require(path.join(REPO, 'out', 'utils', 'pathUtils')),
+		hookService: require(path.join(REPO, 'out', 'services', 'hookService')),
 	};
 }
 
@@ -531,5 +533,196 @@ test('I1 formatOverageText: 追加分の利用率を表示 / データ無しは�
 	assert.equal(usageMonitor.formatOverageText({ ...base, overageUtilization: 0, overageStatus: 'allowed', overageReset: 0 }), '追加 0%');
 	assert.equal(usageMonitor.formatOverageText({ ...base, overageUtilization: 12.5, overageStatus: 'allowed', overageReset: 0 }), '追加 12.5%');
 	assert.equal(usageMonitor.formatOverageText({ ...base, overageUtilization: -1, overageStatus: '', overageReset: 0 }), '', 'データ無しは空');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// J. Sprint B (v0.5.16) 追加テスト
+// ════════════════════════════════════════════════════════════════════════════
+
+test('J1 M-9/レビュー修正(2) encodeCwdToProjectDir: CC 実装（大文字保持・非英数字→"-"）に追従', () => {
+	const { agentUtils } = loadFresh(setupTmpHome());
+	const enc = agentUtils.encodeCwdToProjectDir;
+	// レビュー修正 (2): 実在フォルダ列挙で検証済み → CC は大文字保持
+	assert.equal(enc('C:\\GDrive'), 'C--GDrive', 'ドライブレター大文字保持');
+	assert.equal(enc('c:\\GDrive'), 'c--GDrive', 'ドライブレター小文字保持');
+	assert.equal(enc('C:\\xampp\\Project\\LouverForge'),
+		'C--xampp-Project-LouverForge', 'キャメルケース保持');
+	// 日本語混じり: 1 文字 = 1 個の "-"（`:` + `\` + 個 + 人 + 用 = 5 non-alphanumeric）
+	assert.equal(enc('C:\\個人用'), 'C-----', 'マルチバイト日本語 1文字=1個の "-"');
+	// M-9 バグの復帰確認: '.'/'_' も - に変換される
+	assert.equal(enc('/home/x/my.app'), '-home-x-my-app', 'ドット系記号も - に変換');
+	assert.equal(enc('/home/x/my_pkg'), '-home-x-my-pkg', 'アンダースコアも - に変換');
+	// 空
+	assert.equal(enc(''), '', '空文字は空');
+	// 数字は保持
+	assert.equal(enc('/tmp/2026-07-09'), '-tmp-2026-07-09', '数字とハイフンは保持');
+});
+
+test('J1b レビュー修正(2) encodeCwdToProjectDirLegacyLowercase: 旧小文字化版（後方互換）', () => {
+	const { agentUtils } = loadFresh(setupTmpHome());
+	assert.equal(agentUtils.encodeCwdToProjectDirLegacyLowercase('C:\\GDrive'), 'c--gdrive', 'legacy版は小文字化');
+});
+
+test('J2 M-9/レビュー修正(2) computeJsonlPathForSession: 大文字 primary + legacy 小文字 fallback + scan', () => {
+	const home = setupTmpHome();
+	const { agentUtils } = loadFresh(home);
+	// primary（大文字保持）でのヒット
+	const projDirPrimary = path.join(home, '.claude', 'projects', 'C--GDrive');
+	fs.mkdirSync(projDirPrimary, { recursive: true });
+	const jsonlPrimary = path.join(projDirPrimary, 'sid-primary.jsonl');
+	fs.writeFileSync(jsonlPrimary, '{}\n');
+	assert.equal(
+		path.normalize(agentUtils.computeJsonlPathForSession('sid-primary', 'C:\\GDrive')),
+		path.normalize(jsonlPrimary),
+		'大文字保持の primary パスでヒット');
+
+	// legacy 小文字版でのヒット（過去バージョンで小文字化されたレガシーフォルダに残っているケース）
+	// Windows は case-insensitive ファイルシステムのため、この分岐は POSIX のみ検証。
+	// （Windows では primary の大文字パスが legacy と同一ファイルとして見つかってしまうため、
+	//    ヒットする挙動そのものは同じ = ユーザ実害はないが、テストの意図は表現できない）
+	if (process.platform !== 'win32') {
+		const projDirLegacy = path.join(home, '.claude', 'projects', 'c--legacy-app');
+		fs.mkdirSync(projDirLegacy, { recursive: true });
+		const jsonlLegacy = path.join(projDirLegacy, 'sid-legacy.jsonl');
+		fs.writeFileSync(jsonlLegacy, '{}\n');
+		assert.equal(
+			path.normalize(agentUtils.computeJsonlPathForSession('sid-legacy', 'C:\\Legacy\\App')),
+			path.normalize(jsonlLegacy),
+			'primary で外れても legacy 小文字版でヒット');
+	}
+
+	// 完全 fallback: cwd 不明でも projects/* 走査で拾う
+	const projDirScan = path.join(home, '.claude', 'projects', '-home-x-my-app');
+	fs.mkdirSync(projDirScan, { recursive: true });
+	const jsonlScan = path.join(projDirScan, 'sid-scan.jsonl');
+	fs.writeFileSync(jsonlScan, '{}\n');
+	assert.equal(
+		path.normalize(agentUtils.computeJsonlPathForSession('sid-scan', '')),
+		path.normalize(jsonlScan),
+		'cwd 空でも fallback スキャンでヒット');
+
+	// 存在しない sid は null
+	assert.equal(agentUtils.computeJsonlPathForSession('nope-xyz', 'C:\\GDrive'), null, '存在しない → null');
+});
+
+test('J2b レビュー修正(1) computeJsonlPathForSessionAsync + FallbackScanCache: 共有 readdir で複数 sid 探索', async () => {
+	const home = setupTmpHome();
+	const { agentUtils } = loadFresh(home);
+	// 3 セッション分の JSONL を配置
+	const projDir = path.join(home, '.claude', 'projects', '-repo-a');
+	fs.mkdirSync(projDir, { recursive: true });
+	for (const sid of ['sid-a', 'sid-b', 'sid-c']) {
+		fs.writeFileSync(path.join(projDir, `${sid}.jsonl`), '{}\n');
+	}
+	const cache = new agentUtils.FallbackScanCache();
+	// cwd 空 → 全て fallback 経路。共有 cache で readdir は 1 回だけ実行される（結果 3 件全ヒット）
+	const [a, b, c] = await Promise.all([
+		agentUtils.computeJsonlPathForSessionAsync('sid-a', '', cache),
+		agentUtils.computeJsonlPathForSessionAsync('sid-b', '', cache),
+		agentUtils.computeJsonlPathForSessionAsync('sid-c', '', cache),
+	]);
+	assert.ok(a && a.endsWith('sid-a.jsonl'), 'a ヒット');
+	assert.ok(b && b.endsWith('sid-b.jsonl'), 'b ヒット');
+	assert.ok(c && c.endsWith('sid-c.jsonl'), 'c ヒット');
+	// 存在しない sid はキャッシュに null として残る
+	const none = await agentUtils.computeJsonlPathForSessionAsync('nope', '', cache);
+	assert.equal(none, null, '存在しない sid は null');
+	// 再照会もキャッシュヒットで null（副作用なし）
+	assert.equal(await agentUtils.computeJsonlPathForSessionAsync('nope', '', cache), null);
+});
+
+test('J3 M-6 hookMatchesScriptName: csm-precompact が csm-precompact-summary.js に**誤ヒットしない**', () => {
+	const { hookService } = loadFresh(setupTmpHome());
+	// shell-form: precompact-summary スクリプトを実行する hook
+	const summaryShell = { command: 'node "/h/.claude/hooks/csm-precompact-summary.js"', timeout: 15 };
+	assert.equal(hookService.hookMatchesScriptName(summaryShell, 'csm-precompact'), false, 'summary を precompact と誤認しない');
+	assert.equal(hookService.hookMatchesScriptName(summaryShell, 'csm-precompact-summary'), true, 'summary は summary と一致する');
+	// exec-form: precompact 本体
+	const precompactExec = { command: 'node', args: ['/h/.claude/hooks/csm-precompact.js'], timeout: 15 };
+	assert.equal(hookService.hookMatchesScriptName(precompactExec, 'csm-precompact'), true, 'precompact 本体は precompact と一致');
+	assert.equal(hookService.hookMatchesScriptName(precompactExec, 'csm-precompact-summary'), false, 'precompact 本体は summary と誤ヒットしない');
+	// .sh 版も認識
+	const shBash = { command: 'bash', args: ['/h/.claude/hooks/csm-precompact.sh'], timeout: 15 };
+	assert.equal(hookService.hookMatchesScriptName(shBash, 'csm-precompact'), true, '.sh 拡張子も認識');
+	// 別マーカーは非一致
+	assert.equal(hookService.hookMatchesScriptName(precompactExec, 'csm-injection-detect'), false, '別マーカーは非一致');
+});
+
+test('J4 新規バグ isContainedIn によるワークスペース内判定', () => {
+	const { pathUtils } = loadFresh(setupTmpHome());
+	// Windows 風 workspace vs POSIX 風 project → normalize で吸収
+	if (process.platform === 'win32') {
+		// 同一パス
+		assert.equal(pathUtils.isContainedIn('C:\\xampp\\Project\\csm', 'C:\\xampp\\Project\\csm'), true, '同一');
+		// project が workspace のサブフォルダ
+		assert.equal(pathUtils.isContainedIn('C:\\xampp\\Project\\csm\\src', 'C:\\xampp\\Project\\csm'), true, 'サブフォルダ');
+		// 区切り違い（'/' vs '\'）
+		assert.equal(pathUtils.isContainedIn('c:/xampp/Project/csm/src', 'C:\\xampp\\Project\\csm'), true, '区切り違いで一致');
+		// 兄弟パスは非一致
+		assert.equal(pathUtils.isContainedIn('C:\\xampp\\Project\\other', 'C:\\xampp\\Project\\csm'), false, '兄弟は非一致');
+	} else {
+		assert.equal(pathUtils.isContainedIn('/repo/pkg/a', '/repo'), true, 'サブフォルダ');
+		assert.equal(pathUtils.isContainedIn('/repo', '/repo'), true, '同一');
+		assert.equal(pathUtils.isContainedIn('/other', '/repo'), false, '兄弟は非一致');
+	}
+});
+
+test('J5 M-10/M-11 saveAgentConfig: effort/permissionMode 未指定は既存値を尊重、memory はデフォルト注入しない', async () => {
+	const home = setupTmpHome();
+	const { afm } = loadFresh(home);
+	// 1. 既存を low effort / bypassPermissions で作成
+	await afm.writeAgentFile({ name: 'ins', model: 'opus', role: 'r', effort: 'low', permissionMode: 'bypassPermissions' });
+	afm.invalidateCache();
+	// 2. effort/permissionMode を **省略** して saveAgentConfig（フォーム inherit 経路のシミュレーション）
+	await afm.saveAgentConfig({ name: 'ins', sessionId: '', role: 'r', model: 'opus' });
+	afm.invalidateCache();
+	const def = await afm.getAgentByName('ins');
+	assert.equal(def.effort, 'low', 'M-10: 未指定 effort は既存値 low を維持');
+	assert.equal(def.permissionMode, 'bypassPermissions', 'M-10: 未指定 permissionMode は既存値を維持');
+	// 3. 新規（既存なし）で memory 未指定 → frontmatter に memory: project を書かない
+	await afm.saveAgentConfig({ name: 'newone', sessionId: '', role: 'r', model: 'sonnet' });
+	afm.invalidateCache();
+	const md = fs.readFileSync(path.join(home, '.claude', 'agents', 'newone.md'), 'utf-8');
+	assert.doesNotMatch(md, /^memory:/m, 'M-11: memory はデフォルト注入されない');
+});
+
+test('J6 M-11 thinkingEnabled: 未指定なら既存値を維持', async () => {
+	const home = setupTmpHome();
+	const { afm } = loadFresh(home);
+	await afm.writeAgentFile({ name: 'thk', model: 'opus', role: 'r', thinkingEnabled: true });
+	afm.invalidateCache();
+	// thinkingEnabled 未指定で保存 → 既存の true が維持されるべき
+	await afm.saveAgentConfig({ name: 'thk', sessionId: '', role: 'r', model: 'opus' });
+	afm.invalidateCache();
+	const def = await afm.getAgentByName('thk');
+	assert.equal(def.thinkingEnabled, true, 'thinkingEnabled が保存で消失しない');
+});
+
+test('J7 レビュー修正(3) isSessionInAnyWorkspace: projectFilter/decoration 共通判定', () => {
+	// sessionTreeProvider は vscode モジュール依存が濃いのでロードせず、
+	// pathUtils.isContainedIn の組み合わせ挙動で等価な判定ができることを検証。
+	const { pathUtils } = loadFresh(setupTmpHome());
+	// 共通ヘルパーの本質的動作を pathUtils レベルで再現テスト
+	function isInAnyWs(project, wsFolders) {
+		if (!project || wsFolders.length === 0) { return false; }
+		return wsFolders.some((ws) => pathUtils.isContainedIn(project, ws) || pathUtils.isContainedIn(ws, project));
+	}
+	if (process.platform === 'win32') {
+		// 灰色化バグ再現ケース: workspace = fsPath ('\'), project = JSONL 由来 ('/')
+		const ws = ['C:\\xampp\\Project\\csm'];
+		assert.equal(isInAnyWs('c:/xampp/Project/csm', ws), true, '区切り違い同一パスで一致');
+		assert.equal(isInAnyWs('c:/xampp/Project/csm/src', ws), true, 'サブフォルダで一致');
+		assert.equal(isInAnyWs('C:\\xampp\\Project\\other', ws), false, '兄弟は非一致');
+		// マルチルート対応
+		const multi = ['C:\\xampp\\Project\\csm', 'C:\\other\\repo'];
+		assert.equal(isInAnyWs('c:/other/repo/pkg', multi), true, 'マルチルートで 2 番目のフォルダにヒット');
+	} else {
+		const ws = ['/repo/csm'];
+		assert.equal(isInAnyWs('/repo/csm', ws), true);
+		assert.equal(isInAnyWs('/repo/csm/src', ws), true);
+		assert.equal(isInAnyWs('/other', ws), false);
+	}
+	// 空 workspace は常に非一致（filter 経路では旧挙動と同じ「全表示」に上位で切替される）
+	assert.equal(isInAnyWs('/any/project', []), false, '空 workspaceFolders では非一致（呼び出し元で全表示にフォールバック）');
 });
 

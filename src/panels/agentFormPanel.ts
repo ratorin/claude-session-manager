@@ -619,10 +619,17 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	以下の設定はセッション内には保存されません。<code>/ask-agent</code> や「ターミナルで開く」で起動する際のCLIオプションとして使用されます。
 </div>
 
+${/* v0.5.16 M-10: effort に「未設定（継承）」を追加。
+   旧: v.effort が空でも high が自動 checked → 保存で effort:high が黙って書き込まれた
+   新: 既存値が空なら inherit を選択状態にし、getFormData で inherit → undefined（frontmatter に書かない） */''}
 <div class="form-group">
 	<label class="form-label">推論努力レベル（Effort）</label>
 	<div class="form-desc">モデルの推論にどれだけ努力させるか</div>
 	<div class="radio-group" id="effortGroup">
+		<div class="radio-option" id="effort-option-inherit">
+			<input type="radio" name="effort" id="effort-inherit" value="__inherit__" ${!v.effort ? 'checked' : ''}>
+			<label for="effort-inherit">未設定（継承）<div class="radio-sub">frontmatter に書かず CC 側の既定/呼出コンテキストを継承</div></label>
+		</div>
 		<div class="radio-option" id="effort-option-low">
 			<input type="radio" name="effort" id="effort-low" value="low" ${v.effort === 'low' ? 'checked' : ''}>
 			<label for="effort-low">Low<div class="radio-sub">最小限の推論</div></label>
@@ -632,7 +639,7 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 			<label for="effort-medium">Medium<div class="radio-sub">標準的な推論</div></label>
 		</div>
 		<div class="radio-option" id="effort-option-high">
-			<input type="radio" name="effort" id="effort-high" value="high" ${!v.effort || v.effort === 'high' ? 'checked' : ''}>
+			<input type="radio" name="effort" id="effort-high" value="high" ${v.effort === 'high' ? 'checked' : ''}>
 			<label for="effort-high">High<div class="radio-sub">深い推論（Opus 4.8 デフォルト・推奨）</div></label>
 		</div>
 		<div class="radio-option" id="effort-option-xhigh">
@@ -682,8 +689,12 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 <div class="form-group">
 	<label class="form-label">権限モード（Permission Mode）</label>
 	<div class="form-desc">/ask-agent で呼び出す時の権限レベル。-p モードでは acceptEdits か auto を推奨</div>
+	${/* v0.5.16 M-10: permissionMode に「未設定（継承）」を追加。
+	   旧: 既定が acceptEdits で自動 selected → CSM 経由起動が「毎回確認」→「編集自動許可」に権限拡大
+	   新: 既存値が空なら inherit を選択状態にし、getFormData で inherit → undefined（frontmatter に書かない） */''}
 	<select id="permissionMode">
-		<option value="acceptEdits" ${(v as any).permissionMode === 'acceptEdits' || !(v as any).permissionMode ? 'selected' : ''}>acceptEdits（編集自動許可・推奨）</option>
+		<option value="__inherit__" ${!(v as any).permissionMode ? 'selected' : ''}>未設定（継承） — CC 側/呼出コンテキストに委ねる</option>
+		<option value="acceptEdits" ${(v as any).permissionMode === 'acceptEdits' ? 'selected' : ''}>acceptEdits（編集自動許可・推奨）</option>
 		<option value="auto" ${(v as any).permissionMode === 'auto' ? 'selected' : ''}>auto（ほぼ全自動）</option>
 		<option value="plan" ${(v as any).permissionMode === 'plan' ? 'selected' : ''}>plan（計画のみ・対話用）</option>
 		<option value="default" ${(v as any).permissionMode === 'default' ? 'selected' : ''}>default（毎回確認・対話用）</option>
@@ -807,6 +818,12 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 		// v0.5.14 HIGH-1 fix: description を送信する（旧: 未送信で role 値が description に代入されるバグ）
 		const descriptionEl = document.getElementById('description');
 		const descriptionVal = descriptionEl ? descriptionEl.value.trim() : '';
+		// v0.5.16 M-10: effort / permissionMode は「未設定（継承）」を明示送信できるように。
+		//   '__inherit__' → undefined（frontmatter に書き出さない）
+		const effortRaw = document.querySelector('input[name="effort"]:checked')?.value;
+		const effortVal = (!effortRaw || effortRaw === '__inherit__') ? undefined : effortRaw;
+		const pmRaw = document.getElementById('permissionMode').value;
+		const permissionModeVal = (!pmRaw || pmRaw === '__inherit__') ? undefined : pmRaw;
 		return {
 			name: document.getElementById('name').value.trim(),
 			displayName: document.getElementById('displayName').value.trim() || undefined,
@@ -814,8 +831,8 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 			role: document.getElementById('role').value.trim(),
 			description: descriptionVal,
 			model: document.querySelector('input[name="model"]:checked')?.value || 'opus',
-			effort: document.querySelector('input[name="effort"]:checked')?.value || 'high',
-			permissionMode: document.getElementById('permissionMode').value || 'acceptEdits',
+			effort: effortVal,
+			permissionMode: permissionModeVal,
 			historyEnabled: document.getElementById('historyEnabled').checked,
 			historyScope: (() => {
 				const val = document.getElementById('historyScope').value;

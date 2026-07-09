@@ -3,6 +3,7 @@ import * as path from 'path';
 import { ParsedSession } from '../models/types';
 import { loadAllSessions, invalidateSessionCache } from '../utils/sessionLoader';
 import { getModelChar, getModelIconAndColor } from '../models/modelCatalog';
+import { isContainedIn } from '../utils/pathUtils';
 import * as dataStore from '../models/dataStore';
 
 // 日付グループヘッダー
@@ -153,13 +154,16 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 		this.allParentSessions = parentSessions;
 
 		// プロジェクトフィルター適用
+		// v0.5.16 レビュー修正 (3):
+		//   旧: workspaceFolders[0] 固定 + basename の生 includes 比較（Windows は '\'、
+		//        session.project は JSONL 由来 '/' で永遠に不一致 → 灰色表示と同根）。
+		//        マルチルート・サブフォルダも取りこぼしていた。
+		//   新: DecorationProvider と同じ isSessionInAnyWorkspace(project, workspaceFolders)
+		//        （normalize + isContainedIn）を全ワークスペースフォルダで走査。
 		if (this.projectFilterEnabled) {
-			const currentProject = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath?.toLowerCase() || '';
-			if (currentProject) {
-				this.sessions = parentSessions.filter((s) =>
-					s.project.toLowerCase().includes(path.basename(currentProject).toLowerCase()) ||
-					currentProject.includes(s.project.toLowerCase().replace(/\\/g, '/'))
-				);
+			const wsFolders = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) || [];
+			if (wsFolders.length > 0) {
+				this.sessions = parentSessions.filter((s) => isSessionInAnyWorkspace(s.project, wsFolders));
 			} else {
 				this.sessions = parentSessions;
 			}
@@ -619,7 +623,9 @@ export class SessionDecorationProvider implements vscode.FileDecorationProvider 
 	private _onDidChangeFileDecorations = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
 	readonly onDidChangeFileDecorations = this._onDidChangeFileDecorations.event;
 
-	private currentProject: string = '';
+	// v0.5.16 新規バグ修正: 単一 workspaceFolders[0] 固定を撤廃し、
+	//   全 workspaceFolders を候補に持つ。マルチルート・サブフォルダ配下も一致扱いにする。
+	private workspaceFolders: string[] = [];
 
 	constructor() {
 		this.updateCurrentProject();
@@ -627,9 +633,7 @@ export class SessionDecorationProvider implements vscode.FileDecorationProvider 
 
 	updateCurrentProject(): void {
 		const folders = vscode.workspace.workspaceFolders;
-		if (folders && folders.length > 0) {
-			this.currentProject = folders[0].uri.fsPath;
-		}
+		this.workspaceFolders = folders ? folders.map(f => f.uri.fsPath) : [];
 	}
 
 	refresh(): void {
@@ -645,13 +649,37 @@ export class SessionDecorationProvider implements vscode.FileDecorationProvider 
 		const params = new URLSearchParams(uri.query);
 		const project = params.get('project') || '';
 
-		// 現在のプロジェクトと一致しない場合は薄く表示
-		if (this.currentProject && !this.currentProject.toLowerCase().includes(project.toLowerCase()) && !project.toLowerCase().includes(this.currentProject.toLowerCase())) {
+		// v0.5.16 新規バグ修正:
+		//   旧: `currentProject.toLowerCase().includes(project.toLowerCase())` の相互 includes 判定。
+		//       currentProject は fsPath なので Windows で '\' 区切り、project は JSONL 由来で '/' 区切り
+		//       のためどれだけ同一パスでも文字列比較が一致せず、ワークスペース内セッションまで
+		//       disabledForeground（灰色）で表示されていた。
+		//   新: pathUtils の normalize() + isContainedIn() で正規化して包含判定。
+		//       - project === workspaceFolder（同一ディレクトリ）→ 一致
+		//       - project が workspaceFolder のサブフォルダ → 一致（例: workspace=/repo, project=/repo/pkg/a）
+		//       - workspaceFolder が project のサブフォルダ → 一致（1つ上を workspace で開いているケース）
+		//       cliBuilder.ts の isWorkDirCompatible と同じ流儀。
+		// v0.5.16 レビュー修正 (3): projectFilter と共通のヘルパーで判定
+		if (!isSessionInAnyWorkspace(project, this.workspaceFolders)) {
 			return {
 				color: new vscode.ThemeColor('disabledForeground'),
 			};
 		}
-
 		return undefined;
 	}
 }
+
+// v0.5.16 新規バグ修正 + レビュー修正 (3):
+//   セッションの project パスが workspaceFolders のいずれかと同一 or 包含関係にあるか判定。
+//   ワークスペース側は fsPath（Windows なら '\' 区切り）、project は JSONL 由来（'/' 区切り）で
+//   来ることが多いため、pathUtils.normalize() で正規化してから isContainedIn で判定する。
+//
+//   DecorationProvider の灰色化判定と、SessionTreeProvider の projectFilter 絞り込み双方で
+//   同じヘルパーを使うことで表示ズレを排除。
+export function isSessionInAnyWorkspace(project: string, workspaceFolders: string[]): boolean {
+	if (workspaceFolders.length === 0 || !project) { return false; }
+	return workspaceFolders.some((ws) => isContainedIn(project, ws) || isContainedIn(ws, project));
+}
+
+// v0.5.16 レビュー修正 (3) 後方互換: 旧テスト等の名前もそのまま export で残す
+export const _isSessionInAnyWorkspace = isSessionInAnyWorkspace;

@@ -1,5 +1,153 @@
 # 更新履歴
 
+## v0.5.16 (2026-07-09) — Sprint B: MEDIUM/LOW 12 件 + 新規バグ 1 件（ワークスペース内セッション灰色表示）修正
+
+### 🔍 コードレビュー修正ラウンド（Sprint B レビュー時点）
+
+Sprint B 実装後のコードレビュー（CRITICAL/HIGH ゼロ、MEDIUM 2件 + 関連バグ 1件）で検出した以下 3 件を追い込み修正（本 v0.5.16 に含める）。
+
+#### レビュー修正 (1) [MEDIUM/パフォーマンス] — agentUtils の同期 I/O が拡張ホストをブロック
+
+- **症状**: `computeJsonlPathForSession` / `findJsonlByFallbackScan` が `existsSync` / `readdirSync` / `statSync` の完全同期実装。`agentWatcher.update()` から全ライブエージェント分ループで呼ばれるため、direct match が外れ続けるケース（セッション開始直後・エンコード不一致・レガシー小文字ディレクトリ）ではデバウンス更新のたびに `~/.claude/projects` 全走査が複数エージェント分連鎖して拡張ホストがブロックされる。
+- **修正**:
+  - `agentUtils.ts` に **`FallbackScanCache`** クラスを新設。`getDirs()` は projects/ の readdir 結果を Promise キャッシュ、`findJsonl(sid)` は sid ごとに stat 結果を Map メモ化。
+  - **`computeJsonlPathForSessionAsync(sid, cwd, cache?)`** を追加（`fs.promises.stat` ベース、cache 共有で 1 サイクル内の readdir/stat 重複を排除）。
+  - `agentWatcher.getJsonlPathAsync(sid, cwd, cache)` を追加、`update()` 冒頭で `const scanCache = new FallbackScanCache()` を宣言し、全エージェント並列ループから共有。既存の同期版 `computeJsonlPathForSession` / `getJsonlPath` は単発呼び出し互換 API として保持（`tryAutoLinkSession` / `orchestrationViewModel` 等）。
+- **テスト**: J2b 追加（3 セッション分の並列探索で cache 経由の readdir 1 回 + null キャッシュ副作用なしを確認）。
+
+#### レビュー修正 (2) [MEDIUM/要検証] — encodeCwdToProjectDir の CC 実装追従を実在フォルダで検証
+
+- **検証**: `~/.claude/projects/` の実在 19 フォルダを読み取り専用で列挙し、対応 cwd との突き合わせを実施。判明した CC 実装:
+  - **大文字を保持する**（`C:\GDrive` → `C--GDrive`、`c:\GDrive` → `c--GDrive`）。Sprint B 実装は `.toLowerCase()` してから置換していたため、大文字保持で作成された CC フォルダに対して cwd が `C:\...` の場合、`c--...` を探して沈黙していた。
+  - 英字（`a-zA-Z`）/ 数字（`0-9`）/ ハイフン以外の**全ての文字を 1 文字 = 1 個の `-`** に置換（実例: `C:\Users\taro\OneDrive - 個人用` → `c--Users-taro-OneDrive-------` の末尾 7 個の `-` は「`\` ` ` `-` ` ` `個` `人` `用`」の 7 文字それぞれ 1 個）。
+  - `\` を `/` に事前変換していた実装も CC には無い（`\` そのものが 1 文字 = 1 個の `-`）。
+- **修正**:
+  - `encodeCwdToProjectDir(cwd)` を `cwd.replace(/[^a-zA-Z0-9-]/g, '-')` に修正（**大文字保持**）。
+  - 過去バージョンで小文字化されたレガシーフォルダ（`c--gdrive-forest` など）が実在するため、`encodeCwdToProjectDirLegacyLowercase(cwd)` を新設。
+  - `computeJsonlPathForSession` / `computeJsonlPathForSessionAsync` を **primary（大文字保持） → legacy（小文字化） → fallback scan** の 3 段構成に。
+  - 関数コメントに実在フォルダ検証結果と CC の非公開 200 文字ハッシュ切り詰め仕様への追従は行っていない旨を明記（未対応記号・大パス長は fallback scan でカバー）。
+- **テスト**: J1（大文字保持・日本語 1 文字 = 1 個の `-`・数字保持）/ J1b（legacy 小文字版）/ J2（primary/legacy/fallback 3 段ヒット）追加。J2 の legacy テストは Windows の case-insensitive ファイルシステムでは検証意図を表現できないため POSIX 分岐にした（判断: ユーザ実害はないため）。
+
+#### レビュー修正 (3) [関連バグ] — projectFilter が灰色化バグと同根で灰色 → 全消え
+
+- **症状**: `sessionTreeProvider.ts:158-162` の `projectFilterEnabled` 時の絞り込みが `workspaceFolders[0]` 固定 + `basename` の生 `includes()` 比較。Windows で `\` 区切り fsPath vs JSONL 由来 `/` 区切りが永遠に不一致となり、フィルタ ON で「ワークスペース配下のセッションが一覧から消える」バグ。灰色化バグ（`SessionDecorationProvider`）と全く同根。
+- **修正**:
+  - `SessionDecorationProvider` 内にあった判定を **`isSessionInAnyWorkspace(project, workspaceFolders)` 共通ヘルパー**として extract（`normalize + isContainedIn` + 全ワークスペースフォルダ走査）。
+  - `SessionTreeProvider` の projectFilter も同ヘルパー呼び出しに置換し、`workspaceFolders[0]` 固定を廃止（マルチルート対応）。旧 export 名 `_isSessionInAnyWorkspace` は後方互換で維持。
+- **テスト**: J7 追加（Windows: 区切り違い同一パス・サブフォルダ・マルチルートで一致、兄弟で非一致 / POSIX: 同等ケース）。
+
+### 検証（レビュー修正含む v0.5.16 最終）
+
+- `npx tsc --noEmit` クリーン。
+- `npm test`: **44 / 44 pass**（Sprint B 41/41 → レビュー修正 J1b / J2b / J7 で +3、内部で J1/J2 拡張）。
+- テストハーネスは修正済み USERPROFILE 隔離 + fail-fast ガードの流儀を維持。
+
+### レビュー修正の判断・見送り事項
+
+- **同期版 API の保持**: `computeJsonlPathForSession` / `findJsonlByFallbackScan` の同期版は撤去せず、単発呼び出し（`tryAutoLinkSession`・`orchestrationViewModel`・`hookService.writeOrgInfoToMemory`）用に残した。パフォーマンス上のホットパスは `update()` ループのみで、そこは async + cache 経路に切替済み。
+- **CC 側 200 文字ハッシュ切り詰め**: 公式仕様未公開のため引き続き未実装。fallback scan で実務カバー。
+- **J2 legacy テストの Windows スキップ**: Windows は case-insensitive fs で `C--Legacy-App` と `c--legacy-app` を同一視するため、legacy 経由でヒットしたのか primary で偶然ヒットしたのかテストで区別不能。ユーザ挙動は同じ（見つかる）ため実害なしと判断。
+
+
+
+Sprint B。仕様書 `docs/v0.5.x-fable-qa-20260709.md §3 MEDIUM/LOW` の全 12 件と、新規検出したセッション一覧の灰色化バグを一括で修正した。
+
+### 🐛 【新規バグ最優先】ワークスペース内セッションが灰色（disabledForeground）表示される
+
+- 症状: `SessionDecorationProvider.provideFileDecoration` の一致判定が `currentProject.toLowerCase().includes(project.toLowerCase())` の相互 includes 文字列比較で、Windows では `fsPath` が `\` 区切り、`project`（JSONL 由来）が `/` 区切りのためどれだけ同一パスでも一致せず、ワークスペース配下（サブフォルダ含む）のセッションまで灰色になっていた。
+- 修正: `pathUtils.normalize()` + `isContainedIn()` で正規化して包含判定に変更（`cliBuilder.ts:isWorkDirCompatible` と同じ流儀）。`workspaceFolders[0]` 固定を廃止し、全ワークスペースフォルダを走査。マルチルート・サブフォルダも一致扱いにする。
+- テスト: J4 追加（isContainedIn のプラットフォーム別ケース）。
+
+### 🐛 M-4 hookService.ts: settings.json 書き込みキュー例外の握りつぶし
+
+- 症状: `settingsWriteQueue.then(...).catch(() => {})` で全例外を握りつぶし、呼び出し元は失敗しても成功したように見え、常に「登録完了」ログを出していた。書き込み後の JSON 検証は「自前 stringify を re-parse」でデッドコード。
+- 修正: op ごとの `Promise` を分離し、呼び出し元へ例外を伝播。キュー本体（`settingsWriteQueue`）は失敗しても後続 op を止めないよう `.catch()` は残す。デッドコードの再 parse をディスク読み戻し検証に置換（実際の書き込み内容を検証）。
+
+### 🐛 M-5 hookService.ts: settings.json 不在/破損時の黙殺
+
+- 症状: ENOENT/parse 失敗で全 `ensure*Hook` が黙って no-op（クリーン環境で hook が一切登録されない）。
+- 修正: ENOENT は親ディレクトリ作成 + `{}` で続行して新規作成。parse 失敗は明示ログ + 例外送出（バックアップされていない破損 settings.json への上書きを防止）。
+
+### 🐛 M-6 hookService.ts: マーカー部分一致誤ヒット（csm-precompact ⇔ csm-precompact-summary）
+
+- 症状: `hookMatchesMarker(hh, 'csm-precompact')` が `csm-precompact-summary.js` に部分一致し、`ensurePreCompactHook` の自己修復ループがサマリー用エントリを誤って書き換えるリスク。加えてループ内 `return` で後続 entry の点検が打ち切られていた。
+- 修正: `hookMatchesScriptName(hh, baseName)` を新設。`baseName + .{js|cjs|mjs|sh}` の**ファイル名境界一致**で判定。`ensurePreCompactHook` はこの新関数に切替、ループ内 `return` はフラグ（`existsNewNodeEntry` / `migratedAny`）に置換して全走査してから集約結果を返す。
+- テスト: J3 追加（summary が precompact と誤ヒットしないことを保証）。
+
+### 🐛 M-7 hookService.ts: 旧 bash 版と新 node 版の二重登録
+
+- 症状: SessionStart / Governance hook の登録処理で、既存 node 版があっても migration filter が `command.includes(CSM_MARKER)` の粗い判定で bash も node もまとめて撤去 → その後末尾で無条件 `push` → 二重登録を招くケースがあった。
+- 修正: `isOldBashCsmHook(hh, marker)`（マーカー一致 + `.sh` 参照/`bash` コマンド）を新設し bash 版だけを filter で撤去。push 前に `hasNewNodeHook(entries, marker)` で再チェックし、既に node 版があれば push しない（並行呼び出し・他ソース登録への防御）。
+
+### 🐛 M-8 agentWatcher.ts: /model 切替が UI に反映されない
+
+- 症状: `hasChanged(prev)` が `actualModel` / `modelMismatch` を比較しないため、セッション中の `/model` 切替（例: opus→sonnet）が JSONL に反映されても UI（バッジ・アイコン）で陳腐化。
+- 修正: `hasChanged` に `actualModel` / `modelMismatch` の比較を追加。
+
+### 🐛 M-9 cwd → プロジェクトフォルダ名エンコードが CC 実装と乖離（`my.app` 系で沈黙）
+
+- 症状: エンコード規則が `/^([a-z]):/ → '$1-'` + `[\s/] → '-'` のみで `.`/`_` などが残っていたため、`my.app` 系のパスで JSONL 逆引きが常に沈黙（実モデル読取・ライブ自動紐づけ無効化）。同一ロジックが 3 か所（`hookService.ts:1125` / `orchestrationViewModel.ts:64-73` / `agentWatcher.ts:198`）に複製。
+- 修正: `agentUtils.ts` に単一真実源として以下を新設し、3 か所の複製を集約：
+  - **`encodeCwdToProjectDir(cwd)`**: CC 本体互換の「非英数字/ハイフン → `-`」置換。`toLowerCase()` 後に `replace(/[^a-z0-9-]/g, '-')`。
+  - **`computeJsonlPathForSession(sessionId, cwd)`**: エンコード規則でパス組み立て → 実在すれば採用 → 見つからなければ `projects/*` を走査してフォールバック（CC の 200 文字ハッシュ切詰・未対応記号への追従漏れをカバー、`scanProjectsForAutoLink` と同じ方式）。
+  - **`findJsonlByFallbackScan(sessionId)`**: `projects/*/<sid>.jsonl` の全走査（同期）。
+- CC 側の 200 文字超ハッシュ切詰仕様は公式ドキュメント未公開でリスクがあるため実装せず、上記フォールバック走査でカバー（判断）。
+- テスト: J1（エンコード規則）/ J2（fallback スキャン）追加。
+
+### 🐛 M-10 agentFormPanel.ts: フォームが effort / permissionMode を黙って注入
+
+- 症状: フォームの effort ラジオが `!v.effort` で自動 high 選択、permissionMode select は既定 acceptEdits selected。既存値が空でもフォームを開いて保存すると `effort:high` / `permissionMode:acceptEdits` が黙って frontmatter に書き込まれ、CSM 起動パス（`agentCommands.ts:149他`）で「毎回確認」→「編集自動許可」への権限拡大が発生していた。
+- 修正: effort ラジオに「未設定（継承）」オプションを追加し、既存値が空なら inherit を選択状態にする。permissionMode select も先頭に「未設定（継承）」を追加。`getFormData` で `__inherit__` を `undefined` に変換して送信、`saveAgentConfig` は `undefined` 時に `existing?.effort` / `existing?.permissionMode` を維持する（既存値の意図を尊重）。
+- テスト: J5 追加（低 effort / bypassPermissions の既存が未指定保存で維持されることを保証）。
+
+### 🐛 M-11 agentFileManager.ts: thinkingEnabled 消失 + memory:project の黙注入
+
+- 症状: `saveAgentConfig` の def 構築で `thinkingEnabled: config.thinkingEnabled`（existing フォールバックなし）→ フォーム保存のたびに `thinkingEnabled` が消失。`memory: existing?.memory || 'project'` → 新規保存で常に `memory:project` が黙って追加され、グローバルメモリ運用のエージェントを暗黙にプロジェクトメモリに切り替えていた。
+- 修正: `thinkingEnabled` に既存値フォールバックを追加、`memory` はデフォルト注入を撤廃（`existing?.memory` のみ、無ければ書かない）。
+- テスト: J5（memory デフォルト注入されないこと）/ J6（thinkingEnabled 未指定で既存値維持）追加。
+
+### 🐛 L-12 hookService.ts: supportsExecForm が Windows で恒久 false
+
+- 症状: `spawnSync('claude', ['--version'])` は Windows の `claude.cmd`（バッチファイル）を直接実行できず ENOENT で false 固定 → exec-form 移行が Windows で恒久無効化されていた。
+- 修正: 試行順を「直接 → `shell:true` → Windows なら `claude.cmd` を明示」に変更。全て失敗時は `_execFormSupported` にキャッシュせず（次回呼び出しでリトライ可能）ログ出力のみ。
+
+### 🐛 L-13 usageMonitor.ts: Sonnet/Opus 5d 100% 到達で通知なし
+
+- 症状: 5時間/7日枠は 90%/100% で通知するのに Sonnet/Opus 5日枠は色変化のみで沈黙。
+- 修正: `notifiedSonnet5d90/100` / `notifiedOpus5d90/100` フラグを追加し、`data.usageSonnet5d/Opus5d >= 0` のときに `checkAndNotify` を実行。`show5d` 設定に関わらず通知する（沈黙リスク回避）。
+
+### 🐛 L-14 agentWatcher.ts: update 実行中のイベント破棄
+
+- 症状: `updateAsync` が `this.updating` チェックで即 return するため、update 実行中に届いたイベントが黙って破棄され、直後の状態変化が反映されないタイムラグが発生。
+- 修正: `pendingUpdate` フラグを追加。実行中のイベントは pending マークして、`finally` で `scheduleUpdate()` を再呼び出し（デバウンスで最新変化を集約）。
+
+### 🐛 L-15 agentFileManager.ts: 同名新規登録時の上書き前 .trash 退避なし
+
+- 症状: `writeAgentFile` が既存ファイルを無条件で `writeFile` 上書き。frontmatter parse 失敗経路や、`def.body` 未指定 + 既存 body ありのケースで既存本文が消失。
+- 修正: 「(a) parse 失敗（frontmatter 破損）」または「(b) body 未指定 + 既存 body あり + def の role/description 両方欠落（疑わしい上書き）」の場合、上書き前に元ファイルを `.trash/` へ退避。誤爆防止のため (b) の条件は狭く絞ってある。
+
+### 🔧 テスト（Sprint B）
+
+- **35/35 → 41/41 pass** に増加（6 テスト追加、退行なし）。
+- 追加: J1〜J6（M-9 エンコード / J2 fallback スキャン / M-6 マーカー完全一致 / 新規バグ isContainedIn / M-10・M-11 の inherit と memory 非注入 / M-11 thinkingEnabled 保持）。
+- 全て修正済みハーネス（USERPROFILE 隔離 + fail-fast ガード）の流儀を踏襲し、実 `~/.claude` を汚染しないことを確認済み。
+
+### 🏛️ 共通化・設計改善（副次効果）
+
+- cwd → project フォルダ名エンコードが `agentUtils.encodeCwdToProjectDir` に一元化（旧: 3 か所の複製）。
+- 破損 settings.json 上書き事故のリスクを排除（M-5 の parse 失敗時明示ログ + 例外）。
+
+### 検証
+
+- `npx tsc --noEmit` クリーン。
+- `npm test` 41/41 pass。
+
+### 見送り事項
+
+- **M-9 の CC 側 200 文字ハッシュ切詰追従**: 公式仕様未公開のため未実装。projects/* 走査による fallback で実務は補完（判断）。
+- **HIGH-3（sessions/*.json のリッチフィールド未活用 / ロードマップ T6-1.3〜1.5）**: 仕様書上「HIGH」だが Sprint B の指示は MEDIUM/LOW 12 件のみのため対象外。別途 P0 として継続扱い。
+- **CC 追従項目**（Sonnet 4.6 表記の陳腐化・/fast 未対応・claudeAgentsService 死蔵・effort 'max' 表記矛盾）: 仕様書 §3 「CC追従（その他）」の内容で Sprint B スコープ外。
+
 ## v0.5.15 (2026-07-09) — セッション詳細ビューに「Claudeで開く」ボタン追加
 
 セッションをクリックして開く会話ビュー（`webviewPanel.ts`）のヘッダに **▶ Claudeで開く** ボタンを新設。ワンクリックで新規ターミナルが立ち上がり `claude --resume "<sessionId>"` が実行される。

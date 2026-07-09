@@ -10,7 +10,7 @@ import { AgentConfig } from '../models/types';
 import { CsmModel } from '../models/modelCatalog';
 import { sanitizeForYaml, parseFrontmatterExtended } from '../utils/frontmatterUtils';
 import { modelCliMap } from '../utils/cliBuilder';
-import { normalizeModel, normalizeStatus } from '../utils/agentUtils';
+import { normalizeModel, normalizeStatus, moveToTrash } from '../utils/agentUtils';
 
 // agents/*.md から読み取ったエージェント定義
 export interface AgentDefinition {
@@ -377,14 +377,38 @@ export async function writeAgentFile(def: Partial<AgentDefinition> & { name: str
 
 	// 既存ファイルがあれば本文を保持
 	let existingBody = '';
+	let existingRaw: string | undefined;
+	let parseFailed = false;
 	try {
-		const content = await fs.promises.readFile(filePath, 'utf-8');
-		const parsed = parseFrontmatterExtended(content);
+		existingRaw = await fs.promises.readFile(filePath, 'utf-8');
+		const parsed = parseFrontmatterExtended(existingRaw);
 		if (parsed) {
 			existingBody = parsed.body;
+		} else {
+			// v0.5.16 L-15: parse 失敗（frontmatter 破損など） → 上書き前に .trash/ 退避
+			parseFailed = true;
 		}
 	} catch {
 		// 新規作成
+	}
+
+	// v0.5.16 L-15: 既存ファイルの上書きが「意図しない全上書き」になるケースを防ぐため、
+	//   下記いずれかの場合は上書き前に元ファイルを .trash/ へ退避する。
+	//     (a) parse に失敗した（frontmatter 破損）
+	//     (b) 同名の別エージェント登録（body 空指定で新規作成しようとしている）→ 既存本文が消える
+	//   (b) の判定: body 未指定 かつ existingBody あり かつ frontmatter に既存の name フィールドが
+	//                異なる意図で書かれていた… は困難なので、シンプルに「新規作成扱い（def.body 明示的な undefined）
+	//                なのに既存 body が存在」を「疑わしい上書き」として退避対象にする。
+	//   ただし通常の更新（body が undefined で existingBody を継承）は上書きしても既存の本文は保持されるため
+	//   実質的な情報損失はなく、退避不要。誤爆を防ぐため (b) は既存 body が空でない かつ def の他のフィールドが
+	//   ほぼ空（少なくとも role/description 両方欠落）のケースに限定。
+	const suspiciousOverwrite = !parseFailed && existingRaw !== undefined && def.body === undefined
+		&& !!existingBody && !def.role && !def.description;
+	if ((parseFailed || suspiciousOverwrite) && existingRaw !== undefined) {
+		try {
+			const trashDir = path.join(dir, '.trash');
+			await moveToTrash(filePath, trashDir);
+		} catch { /* 退避失敗時も後続で上書きは進む。ここでは blocking しない */ }
 	}
 
 	const body = def.body !== undefined ? def.body : existingBody;
@@ -508,13 +532,20 @@ export async function saveAgentConfig(config: AgentConfig, body?: string): Promi
 		description: descriptionValue,
 		displayDescription: config.displayDescription || existing?.displayDescription,
 		model: config.model,
-		memory: existing?.memory || 'project',
+		// v0.5.16 M-11: memory はデフォルト注入（'project'）を撤廃。既存値のみを尊重（無ければ書かない）。
+		//   旧: `existing?.memory || 'project'` → 新規保存で常に memory:project が黙って追加され、
+		//        グローバル・全体メモリを期待するエージェントを暗黙にプロジェクトメモリ運用に切り替えていた。
+		memory: existing?.memory,
 		// フォーム由来フィールドは「指定があればそれを権威」とする（空配列=制限なし/解除を尊重）
 		tools: config.allowedTools !== undefined ? config.allowedTools : existing?.tools,
 		isolation: config.isolation !== undefined ? (config.isolation || undefined) : existing?.isolation,
 		background: config.background !== undefined ? config.background : existing?.background,
 		maxTurns: config.maxTurns !== undefined ? (config.maxTurns || undefined) : existing?.maxTurns,
-		permissionMode: config.permissionMode || existing?.permissionMode,
+		// v0.5.16 M-10: permissionMode / effort は「未指定なら既存値を継承」に統一。
+		//   旧: `config.permissionMode || existing?.permissionMode` — フォームが常に既定値
+		//       (acceptEdits/high) を送るため existing の意図が上書きされていた。
+		//   新: フォームは inherit で undefined を送るようになったので、undefined 時は existing を維持。
+		permissionMode: config.permissionMode !== undefined ? config.permissionMode : existing?.permissionMode,
 		historyEnabled: config.historyEnabled !== undefined ? config.historyEnabled : existing?.historyEnabled,
 		historyScope: config.historyScope !== undefined ? config.historyScope : existing?.historyScope,
 		todoEnabled: config.todoEnabled !== undefined ? config.todoEnabled : existing?.todoEnabled,
@@ -523,8 +554,9 @@ export async function saveAgentConfig(config: AgentConfig, body?: string): Promi
 		workDir: config.workDir,
 		role: config.role,
 		displayRole: config.displayRole || existing?.displayRole,
-		effort: config.effort,
-		thinkingEnabled: config.thinkingEnabled,
+		effort: config.effort !== undefined ? config.effort : existing?.effort,
+		// v0.5.16 M-11: thinkingEnabled も既存値フォールバックを追加（旧: 常に config.thinkingEnabled=undefined で消失）
+		thinkingEnabled: config.thinkingEnabled !== undefined ? config.thinkingEnabled : existing?.thinkingEnabled,
 		showInOrgChart: config.showInOrgChart !== undefined ? config.showInOrgChart : existing?.showInOrgChart,
 		scope: config.scope || existing?.scope || 'global',
 		body: body,

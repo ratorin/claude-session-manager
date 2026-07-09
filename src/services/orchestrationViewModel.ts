@@ -13,6 +13,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { ClaudeAgentsService, ClaudeAgentEntry } from './claudeAgentsService';
+import { computeJsonlPathForSession } from '../utils/agentUtils';
 import { AgentWatcher } from '../watchers/agentWatcher';
 import { detectSubagents } from '../utils/subagentDetector';
 import * as dataStore from '../models/dataStore';
@@ -61,17 +62,12 @@ export interface OrchestrationViewModel {
 }
 
 // -------------------------------------------------------------------
-// JSONL パス計算 (agentWatcher.getJsonlPath と同ロジック)
+// JSONL パス計算
+// v0.5.16 M-9: agentUtils.computeJsonlPathForSession に集約（旧複製実装は撤去）。
 // -------------------------------------------------------------------
 
 function computeJsonlPath(sessionId: string, cwd: string): string | null {
-	if (!cwd || !sessionId) { return null; }
-	const encoded = cwd
-		.toLowerCase()
-		.replace(/\\/g, '/')
-		.replace(/^([a-z]):/, '$1-')
-		.replace(/[\s/]/g, '-');
-	return path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+	return computeJsonlPathForSession(sessionId, cwd);
 }
 
 // -------------------------------------------------------------------

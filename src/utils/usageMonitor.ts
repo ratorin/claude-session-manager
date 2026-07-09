@@ -253,6 +253,11 @@ export class UsageMonitor implements vscode.Disposable {
 	private notified5h100 = false;
 	private notified7d90 = false;
 	private notified7d100 = false;
+	// v0.5.16 L-13: Sonnet/Opus 5日枠の通知フラグ（旧: 100%到達しても通知なしで沈黙）
+	private notifiedSonnet5d90 = false;
+	private notifiedSonnet5d100 = false;
+	private notifiedOpus5d90 = false;
+	private notifiedOpus5d100 = false;
 
 	constructor() {
 		this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
@@ -287,6 +292,11 @@ export class UsageMonitor implements vscode.Disposable {
 		this.notified5h100 = false;
 		this.notified7d90 = false;
 		this.notified7d100 = false;
+		// v0.5.16 L-13
+		this.notifiedSonnet5d90 = false;
+		this.notifiedSonnet5d100 = false;
+		this.notifiedOpus5d90 = false;
+		this.notifiedOpus5d100 = false;
 	}
 
 	// 手動リフレッシュ
@@ -371,6 +381,18 @@ export class UsageMonitor implements vscode.Disposable {
 			this.checkAndNotify(data.usage7d, r7d, '7日間',
 				() => this.notified7d90, (v) => { this.notified7d90 = v; },
 				() => this.notified7d100, (v) => { this.notified7d100 = v; });
+			// v0.5.16 L-13: Sonnet/Opus 5日枠も通知（>=0 のときのみ = ヘッダ提供時のみ）。
+			//   show5d 設定に関わらず 100% 到達は通知する（沈黙リスク回避）。
+			if (data.usageSonnet5d >= 0) {
+				this.checkAndNotify(data.usageSonnet5d, formatTimeRemaining(data.resetSonnet5d), 'Sonnet 5日',
+					() => this.notifiedSonnet5d90, (v) => { this.notifiedSonnet5d90 = v; },
+					() => this.notifiedSonnet5d100, (v) => { this.notifiedSonnet5d100 = v; });
+			}
+			if (data.usageOpus5d >= 0) {
+				this.checkAndNotify(data.usageOpus5d, formatTimeRemaining(data.resetOpus5d), 'Opus 5日',
+					() => this.notifiedOpus5d90, (v) => { this.notifiedOpus5d90 = v; },
+					() => this.notifiedOpus5d100, (v) => { this.notifiedOpus5d100 = v; });
+			}
 		} finally {
 			this.fetching = false;
 		}
