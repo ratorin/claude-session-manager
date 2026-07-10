@@ -64,6 +64,10 @@ export interface SimpleMessage {
 	content: string;
 	timestamp: Date;
 	model?: string;
+	// v0.5.20: JSONL 内の uuid（全文再取得用）
+	uuid?: string;
+	// v0.5.20: content の元バイト長（切り詰め判定用）
+	fullBytes?: number;
 }
 
 // メモリファイルの型

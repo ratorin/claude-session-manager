@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { ParsedSession, SimpleMessage, MemoryFile } from '../models/types';
-import { loadSessionFull } from '../utils/sessionLoader';
+import { loadSessionFull, loadSessionTail, loadOlderMessages, loadSingleMessageByUuid } from '../utils/sessionLoader';
 import * as dataStore from '../models/dataStore';
 import { generateModelCss } from '../models/modelCatalog';
 import { translateWorkDirPath } from '../utils/agentUtils';
@@ -136,6 +136,11 @@ let previewPanel: vscode.WebviewPanel | undefined;
 // 現在プレビュー中のセッション情報（ハンドラーから参照するためクロージャ外に保持）
 let currentSession: ParsedSession | null = null;
 let currentFullSession: ParsedSession | null = null;
+// v0.5.20: 遅延読み込み用の窓（追加読みで更新）
+let currentTailOffset: number = 0;         // 「以前のメッセージ」取得時の stopAtOffset
+let currentTotalBytes: number = 0;
+let currentHasOlder: boolean = false;
+let currentShowThinking: boolean = false;
 
 // プレビュー中のタブタイトルを更新
 export function updatePreviewTitle(title: string): void {
@@ -146,11 +151,26 @@ export function updatePreviewTitle(title: string): void {
 
 // 会話プレビューパネル
 export async function showSessionPreview(session: ParsedSession, context: vscode.ExtensionContext, showThinking: boolean = false): Promise<void> {
-	const fullSession = await loadSessionFull(session.filePath, showThinking);
-	if (!fullSession) {
-		vscode.window.showErrorMessage('会話の読み込みに失敗しました');
-		return;
+	// v0.5.20: 遅延読み込み — 初期表示は末尾 N 件のみ（既定 200）。設定 claudeManager.preview.initialMessages で変更可。
+	const cfg = vscode.workspace.getConfiguration('claudeManager');
+	const initialMessages = cfg.get<number>('preview.initialMessages', 200);
+	const tailResult = await loadSessionTail(session.filePath, initialMessages, showThinking);
+	if (!tailResult || !tailResult.session) {
+		// フォールバック: tail 経路が失敗 or 極小ファイル → 従来経路
+		const full = await loadSessionFull(session.filePath, showThinking);
+		if (!full) { vscode.window.showErrorMessage('会話の読み込みに失敗しました'); return; }
+		currentFullSession = full;
+		currentTailOffset = 0;
+		currentTotalBytes = full.fileSize;
+		currentHasOlder = false;
+	} else {
+		currentFullSession = tailResult.session;
+		currentTailOffset = tailResult.oldestByteOffset;
+		currentTotalBytes = tailResult.totalBytes;
+		currentHasOlder = tailResult.hasOlder;
 	}
+	const fullSession = currentFullSession!;
+	currentShowThinking = showThinking;
 
 	const note = await dataStore.getNote(session.id);
 	const tags = await dataStore.getTagsForSession(session.id);
@@ -160,7 +180,6 @@ export async function showSessionPreview(session: ParsedSession, context: vscode
 
 	// セッション情報をモジュール変数に保持（ハンドラーから参照）
 	currentSession = session;
-	currentFullSession = fullSession;
 
 	if (previewPanel) {
 		previewPanel.title = title;
@@ -225,6 +244,42 @@ export async function showSessionPreview(session: ParsedSession, context: vscode
 					`${scheme}://anthropic.claude-code/open?session=` + encodeURIComponent(sid)
 				);
 				vscode.env.openExternal(uri);
+			} else if (message.type === 'loadMoreOlder') {
+				// v0.5.20: 「以前のメッセージを読み込む」— 拡張側で追加読み → webview に前置差し込み
+				if (!currentHasOlder) {
+					previewPanel!.webview.postMessage({ type: 'olderMessages', messagesHtml: '', hasOlder: false, remaining: 0 });
+					return;
+				}
+				const cfg2 = vscode.workspace.getConfiguration('claudeManager');
+				const step = cfg2.get<number>('preview.initialMessages', 200);
+				const maxBytes = cfg2.get<number>('preview.maxMessageBytes', 4096);
+				const older = await loadOlderMessages(currentSession.filePath, currentTailOffset, step, currentShowThinking);
+				if (!older) {
+					previewPanel!.webview.postMessage({ type: 'olderMessages', messagesHtml: '', hasOlder: false, remaining: 0 });
+					return;
+				}
+				currentTailOffset = older.newOffset;
+				currentHasOlder = !older.reachedHead;
+				// 既存 currentFullSession.messages の先頭に追加
+				currentFullSession!.messages = [...older.messages, ...currentFullSession!.messages];
+				const html = older.messages.map((m, i) => renderMessage(m, i, maxBytes)).join('\n');
+				previewPanel!.webview.postMessage({
+					type: 'olderMessages',
+					messagesHtml: html,
+					hasOlder: currentHasOlder,
+					remaining: currentHasOlder ? '?' : 0,
+				});
+			} else if (message.type === 'loadFullMessage') {
+				// v0.5.20: 巨大メッセージの全文を取得（uuid ベース）
+				const uuid = String(message.uuid || '');
+				if (!uuid) { return; }
+				const full = await loadSingleMessageByUuid(currentSession.filePath, uuid);
+				if (!full) {
+					previewPanel!.webview.postMessage({ type: 'fullMessage', uuid, contentHtml: '<em>本文の取得に失敗しました</em>' });
+					return;
+				}
+				const contentHtml = renderMarkdown(full.content);
+				previewPanel!.webview.postMessage({ type: 'fullMessage', uuid, contentHtml });
 			} else if (message.type === 'openInClaudeCli') {
 				// v0.5.15/v0.5.19: セッションを CLI（新規ターミナル）で再開する。
 				//   ⚠ 最重要: `--resume` は **セッション作成時と同じ cwd** で起動しないと
@@ -276,6 +331,49 @@ export async function showSessionPreview(session: ParsedSession, context: vscode
 	}
 }
 
+/**
+ * v0.5.20: 1 メッセージを HTML 化する共通ロジック。
+ *   maxBytes を超える content は切り詰めて「全文を表示」ボタンを付ける。
+ *   uuid が無いメッセージは全文取得不能のためボタンを出さず、切り詰めのみ実施。
+ */
+function renderMessage(msg: SimpleMessage, _idx: number, maxBytes: number): string {
+	const isThinking = msg.role === 'system' && msg.content.startsWith('[思考]');
+	const roleClass = isThinking ? 'thinking' : (msg.role === 'user' ? 'user' : 'assistant');
+	const roleLabel = isThinking ? '💭 思考' : (msg.role === 'user' ? 'あなた' : 'Claude');
+	const time = msg.timestamp.toLocaleString('ja-JP');
+	const raw = isThinking ? msg.content.substring(4) : msg.content;
+	// 切り詰め判定は fullBytes（元バイト長）を優先、無ければ raw の文字数長を近似
+	const byteLen = msg.fullBytes ?? Buffer.byteLength(raw, 'utf-8');
+	const truncated = byteLen > maxBytes;
+	// 切り詰めは文字数ベースで安全側に（バイト境界問題を避ける）— maxBytes 文字までカット
+	const displayText = truncated ? raw.substring(0, maxBytes) + '…' : raw;
+	const content = renderMarkdown(displayText);
+	const modelTag = msg.model ? `<span class="model">${escapeHtml(msg.model)}</span>` : '';
+	const isToolMsg = !isThinking && (
+		msg.content.startsWith('📄') || msg.content.startsWith('✏️') ||
+		msg.content.startsWith('📝') || msg.content.startsWith('💻') ||
+		msg.content.startsWith('🔍') || msg.content.startsWith('📂') ||
+		msg.content.startsWith('🤖') || msg.content.startsWith('📋') ||
+		msg.content.startsWith('🌐') || msg.content.startsWith('🔧') ||
+		msg.content.startsWith('✅'));
+	const toolClass = isToolMsg ? ' tool-msg' : '';
+	const showFullBtn = (truncated && msg.uuid)
+		? `<button class="show-full-btn" data-uuid="${escapeHtml(msg.uuid)}" title="オンデマンドで全文を取得します">全文を表示（${formatBytes(byteLen)}）</button>`
+		: (truncated
+			? `<span class="truncated-note" title="uuid が無いため全文取得不可">…以降省略（${formatBytes(byteLen)}）</span>`
+			: '');
+	const uuidAttr = msg.uuid ? ` data-msg-uuid="${escapeHtml(msg.uuid)}"` : '';
+	return `<div class="message ${roleClass}${toolClass}"${uuidAttr}>
+		<div class="message-header">
+			<span class="role">${roleLabel}</span>
+			${modelTag}
+			<span class="time">${time}</span>
+		</div>
+		<div class="message-content">${content}</div>
+		${showFullBtn}
+	</div>`;
+}
+
 function getSessionHtml(session: ParsedSession, note: string, tags: string[], agent?: import('../models/types').AgentConfig, govEvents: GovernanceEvent[] = []): string {
 	// エージェント情報をヘッダに表示
 	const agentHeaderHtml = agent
@@ -290,33 +388,10 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 		</div>`
 		: '';
 
-	const messagesHtml = session.messages.map((msg) => {
-		const isThinking = msg.role === 'system' && msg.content.startsWith('[思考]');
-		const roleClass = isThinking ? 'thinking' : (msg.role === 'user' ? 'user' : 'assistant');
-		const roleLabel = isThinking ? '💭 思考' : (msg.role === 'user' ? 'あなた' : 'Claude');
-		const time = msg.timestamp.toLocaleString('ja-JP');
-		const content = renderMarkdown(isThinking ? msg.content.substring(4) : msg.content);
-		const modelTag = msg.model ? `<span class="model">${msg.model}</span>` : '';
-
-		// ツール操作メッセージは小さくコンパクトに
-		const isToolMsg = !isThinking && (
-			msg.content.startsWith('📄') || msg.content.startsWith('✏️') ||
-			msg.content.startsWith('📝') || msg.content.startsWith('💻') ||
-			msg.content.startsWith('🔍') || msg.content.startsWith('📂') ||
-			msg.content.startsWith('🤖') || msg.content.startsWith('📋') ||
-			msg.content.startsWith('🌐') || msg.content.startsWith('🔧') ||
-			msg.content.startsWith('✅'));
-		const toolClass = isToolMsg ? ' tool-msg' : '';
-
-		return `<div class="message ${roleClass}${toolClass}">
-			<div class="message-header">
-				<span class="role">${roleLabel}</span>
-				${modelTag}
-				<span class="time">${time}</span>
-			</div>
-			<div class="message-content">${content}</div>
-		</div>`;
-	}).join('\n');
+	// v0.5.20: 1メッセージあたりの初期描画バイト上限（超過は「全文を表示」でオンデマンド取得）
+	const cfgRoot = vscode.workspace.getConfiguration('claudeManager');
+	const maxMessageBytes = cfgRoot.get<number>('preview.maxMessageBytes', 4096);
+	const messagesHtml = session.messages.map((msg, idx) => renderMessage(msg, idx, maxMessageBytes)).join('\n');
 
 	const displayName = session.customName || session.claudeTitle || session.firstMessage;
 	const tagsHtml = tags.map((t) => `<span class="tag">${escapeHtml(t)}<span class="tag-remove" data-tag="${escapeHtml(t)}">×</span></span>`).join('');
@@ -490,6 +565,43 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 	.search-bar input:focus {
 		outline: none;
 		border-color: var(--vscode-focusBorder);
+	}
+	/* v0.5.20: 「以前のメッセージを読み込む」バー */
+	.load-older-bar {
+		padding: 4px 16px;
+		background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+		border-bottom: 1px solid var(--vscode-panel-border);
+		flex-shrink: 0;
+		display: flex;
+		justify-content: center;
+	}
+	.load-older-bar .action-btn {
+		font-size: 0.75em;
+		padding: 2px 12px;
+	}
+	/* v0.5.20: 全文表示ボタン */
+	.show-full-btn {
+		display: inline-block;
+		margin-top: 4px;
+		padding: 2px 10px;
+		font-size: 0.75em;
+		background: var(--vscode-button-secondaryBackground, transparent);
+		color: var(--vscode-button-secondaryForeground, var(--vscode-textLink-foreground));
+		border: 1px solid var(--vscode-input-border);
+		border-radius: 3px;
+		cursor: pointer;
+		font-family: inherit;
+	}
+	.show-full-btn:hover {
+		background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+	}
+	.show-full-btn:disabled { opacity: 0.6; cursor: default; }
+	.truncated-note {
+		display: inline-block;
+		margin-top: 4px;
+		font-size: 0.75em;
+		color: var(--vscode-descriptionForeground);
+		font-style: italic;
 	}
 	#messages {
 		flex: 1;
@@ -711,8 +823,14 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 	<!-- 下部: 会話 -->
 	<div class="chat-panel">
 		<div class="search-bar">
-			<input type="text" id="searchInput" placeholder="会話内を検索...">
+			${/* v0.5.20: 検索は読み込み済みメッセージが対象。placeholder / title でその旨を明記 */''}
+			<input type="text" id="searchInput" placeholder="表示中のメッセージから検索" title="表示中のメッセージから検索します（『以前のメッセージを読み込む』で範囲を広げられます）">
 		</div>
+		${currentHasOlder ? `
+		<div class="load-older-bar">
+			<button id="loadOlderBtn" class="action-btn" title="末尾から N 件のみ初期表示中。クリックでさらに ${vscode.workspace.getConfiguration('claudeManager').get<number>('preview.initialMessages', 200)} 件を追加読み">▲ 以前のメッセージを読み込む</button>
+		</div>
+		` : ''}
 		<div id="messages">
 			${messagesHtml}
 		</div>
@@ -808,6 +926,55 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 			const msgs = document.querySelectorAll('.message');
 			if (msgs.length > 0) {
 				msgs[msgs.length - 1].scrollIntoView();
+			}
+		});
+
+		// v0.5.20: 「以前のメッセージを読み込む」ボタン
+		const loadOlderBtn = document.getElementById('loadOlderBtn');
+		if (loadOlderBtn) {
+			loadOlderBtn.addEventListener('click', () => {
+				loadOlderBtn.disabled = true;
+				loadOlderBtn.textContent = '読み込み中...';
+				vscode.postMessage({ type: 'loadMoreOlder' });
+			});
+		}
+
+		// v0.5.20: 「全文を表示」ボタン（イベント委譲）
+		document.getElementById('messages').addEventListener('click', (e) => {
+			const btn = e.target.closest('.show-full-btn');
+			if (!btn) { return; }
+			const uuid = btn.dataset.uuid;
+			if (!uuid) { return; }
+			btn.disabled = true;
+			btn.textContent = '取得中...';
+			vscode.postMessage({ type: 'loadFullMessage', uuid: uuid });
+		});
+
+		// v0.5.20: 拡張側からの追加読み・全文取得結果
+		window.addEventListener('message', (event) => {
+			const m = event.data;
+			if (!m) { return; }
+			if (m.type === 'olderMessages') {
+				const msgsEl = document.getElementById('messages');
+				if (m.messagesHtml) {
+					msgsEl.insertAdjacentHTML('afterbegin', m.messagesHtml);
+				}
+				const btn = document.getElementById('loadOlderBtn');
+				if (btn) {
+					if (m.hasOlder) {
+						btn.disabled = false;
+						btn.textContent = '▲ 以前のメッセージを読み込む';
+					} else {
+						btn.parentElement.remove(); // .load-older-bar ごと消す
+					}
+				}
+			} else if (m.type === 'fullMessage') {
+				const target = document.querySelector('.message[data-msg-uuid="' + m.uuid + '"]');
+				if (!target) { return; }
+				const contentEl = target.querySelector('.message-content');
+				if (contentEl) { contentEl.innerHTML = m.contentHtml; }
+				const btn = target.querySelector('.show-full-btn');
+				if (btn) { btn.remove(); }
 			}
 		});
 	</script>

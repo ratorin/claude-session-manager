@@ -859,3 +859,367 @@ async function parseSessionQuick(filePath: string): Promise<ParsedSession | null
 export async function loadSessionFull(filePath: string, showThinking: boolean = false): Promise<ParsedSession | null> {
 	return parseSessionFile(filePath, showThinking);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v0.5.20: 遅延読み込み用の tail リーダー + 範囲切り出し
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 背景: parseSessionFile は readFile 一括 + 全行 JSON.parse で、276MB/154MB 級の
+//   JSONL をビューワーで開くと数秒〜数十秒ブロックしていた。
+//
+// 方針:
+//   (a) tail リーダー: 末尾から 1MB 単位で逆方向にチャンクを読み、必要な行数
+//       を収集した時点で打ち切る。次の JSON.parse 対象は "必要末尾 N 行" だけ。
+//   (b) 前方走査でメタデータ（cwd/model/gitBranch/sessionId/custom-title 等）
+//       が抜けたら、先頭 64KB を追加読みして補う。
+//   (c) 追加読み込み時（オンデマンド）は「読み込み済みの最古行より前の N 行」
+//       を tail リーダーと同じ骨格で取得。
+//
+// 判断: readline + リングバッファ方式は 276MB 全ストリームを読むためディスク帯域
+//   がボトルネックになる（1MB tail 読みは典型的な NVMe で 数十 ms）。
+//   よって末尾チャンク逆読み方式を採用する。
+
+const TAIL_CHUNK_BYTES = 1024 * 1024; // 1MB
+const HEAD_META_BYTES  = 64 * 1024;   // 64KB（メタデータ補完用）
+
+/**
+ * ファイル末尾から N 個の非空行を効率的に読み取る。
+ * @param filePath JSONL ファイルパス
+ * @param maxLines 取りたい末尾の非空行数
+ * @param stopAtOffset これ以降の offset を無視（オンデマンド追加読み時に使用）
+ * @returns {lines, startOffset, totalSize, reachedHead}
+ *   - lines: 昇順（古→新）の非空行配列
+ *   - startOffset: 最古行のバイトオフセット
+ *   - totalSize: ファイル全体のバイト数
+ *   - reachedHead: 先頭に達したか
+ */
+export async function readTailLines(
+	filePath: string,
+	maxLines: number,
+	stopAtOffset?: number,
+): Promise<{ lines: string[]; startOffset: number; totalSize: number; reachedHead: boolean }> {
+	const handle = await fs.promises.open(filePath, 'r');
+	try {
+		const stat = await handle.stat();
+		const totalSize = stat.size;
+		const upperBound = stopAtOffset !== undefined ? Math.min(stopAtOffset, totalSize) : totalSize;
+		let cursor = upperBound;
+		let residual = ''; // 先頭に切れた部分行を次チャンクの末尾へ持ち越す
+		const collected: string[] = []; // 逆順（新→古）に集める
+		let earlyBreak = false;
+		while (cursor > 0 && collected.length < maxLines) {
+			const chunkSize = Math.min(TAIL_CHUNK_BYTES, cursor);
+			const chunkStart = cursor - chunkSize;
+			const buf = Buffer.alloc(chunkSize);
+			await handle.read(buf, 0, chunkSize, chunkStart);
+			// 前のチャンクと連結（境界の途中で切れた行に対応）
+			const combined = buf.toString('utf-8') + residual;
+			// この chunk の先頭は「行の途中」の可能性がある。先頭改行までを residual として次回に持ち越す。
+			const firstNewline = combined.indexOf('\n');
+			const partial = chunkStart > 0 && firstNewline >= 0 ? combined.substring(0, firstNewline + 1) : '';
+			const usable = chunkStart > 0 && firstNewline >= 0 ? combined.substring(firstNewline + 1) : combined;
+			residual = partial;
+			// usable を改行で分割して逆順に取り込む
+			const parts = usable.split('\n');
+			let overflowFromIndex = -1; // maxLines に到達してカットされた「未処理の残り部分の末尾 index」
+			for (let i = parts.length - 1; i >= 0; i--) {
+				const line = parts[i];
+				if (!line.trim()) { continue; }
+				if (collected.length >= maxLines) {
+					// この parts[i] は未処理 → 次回の cursor 位置に含める必要あり
+					overflowFromIndex = i;
+					break;
+				}
+				collected.push(line);
+			}
+			if (overflowFromIndex >= 0) {
+				// 未処理部分 = parts[0..overflowFromIndex] を '\n' で join し直したバイト長
+				const unprocessedText = parts.slice(0, overflowFromIndex + 1).join('\n');
+				const unprocessedBytes = Buffer.byteLength(unprocessedText, 'utf-8');
+				// 未処理領域の末尾位置 = chunkStart + partial のバイト長 + 未処理バイト長
+				cursor = chunkStart + Buffer.byteLength(partial, 'utf-8') + unprocessedBytes;
+				earlyBreak = true;
+				break;
+			}
+			cursor = chunkStart;
+		}
+		// 先頭に達して residual が残っている場合も含める（chunkStart===0 のとき partial は空になっている）
+		const reachedHead = !earlyBreak && cursor === 0;
+		// 先頭に達した + 残り residual に有効行があれば取り込む（境界処理漏れ対策）
+		if (reachedHead && residual.trim() && collected.length < maxLines) {
+			for (const l of residual.split('\n').reverse()) {
+				if (!l.trim()) { continue; }
+				collected.push(l);
+				if (collected.length >= maxLines) { break; }
+			}
+		}
+		// 昇順にして返す
+		collected.reverse();
+		return { lines: collected, startOffset: cursor, totalSize, reachedHead };
+	} finally {
+		await handle.close();
+	}
+}
+
+/** 先頭 N バイトを読み取る（メタデータ補完用） */
+async function readHeadBytes(filePath: string, bytes: number): Promise<string> {
+	const handle = await fs.promises.open(filePath, 'r');
+	try {
+		const stat = await handle.stat();
+		const size = Math.min(bytes, stat.size);
+		if (size === 0) { return ''; }
+		const buf = Buffer.alloc(size);
+		await handle.read(buf, 0, size, 0);
+		return buf.toString('utf-8');
+	} finally {
+		await handle.close();
+	}
+}
+
+/**
+ * 遅延読み込み用: 末尾 N メッセージだけをパースして ParsedSession を返す。
+ * 全文 readFile を回避するため、大きなファイルでも高速に開ける。
+ *
+ * @param filePath          JSONL ファイル
+ * @param maxInitialMessages 末尾から取りたい **user/assistant** メッセージ件数
+ * @param showThinking      thinking ブロックを分離表示するか
+ * @returns { session, oldestByteOffset, totalBytes, hasOlder }
+ *   - oldestByteOffset: session.messages の最古行のバイト位置（追加読み時に stopAtOffset に渡す）
+ *   - hasOlder:         これ以上古い行があるか
+ */
+export async function loadSessionTail(
+	filePath: string,
+	maxInitialMessages: number,
+	showThinking: boolean = false,
+): Promise<{
+	session: ParsedSession | null;
+	oldestByteOffset: number;
+	totalBytes: number;
+	hasOlder: boolean;
+	totalMessagesEstimate?: number;
+} | null> {
+	try {
+		// user/assistant + thinking を全部拾えるよう、余裕を持って多めに tail 行を確保する。
+		// タイプ以外のメタ行（file-history-snapshot, custom-title 等）が含まれる想定で 4 倍を目安に。
+		const targetLines = Math.max(maxInitialMessages * 4, 100);
+		const tail = await readTailLines(filePath, targetLines);
+		if (tail.lines.length === 0) { return null; }
+		const parsed = parseLinesToMessages(tail.lines, showThinking);
+		let { messages, cwd, model, gitBranch, sessionId, claudeTitle, firstUserMessage } = parsed;
+
+		// 末尾 N 件のメッセージだけを保持
+		if (messages.length > maxInitialMessages) {
+			messages = messages.slice(messages.length - maxInitialMessages);
+		}
+
+		// メタデータが tail だけで揃わないケースは、先頭 64KB を読み足して補う
+		const needsHeadFill = !cwd || !model || !sessionId || !firstUserMessage;
+		if (needsHeadFill) {
+			const head = await readHeadBytes(filePath, HEAD_META_BYTES);
+			const headParsed = parseLinesToMessages(head.split('\n').filter(l => l.trim()), false);
+			if (!cwd) { cwd = headParsed.cwd; }
+			if (!model) { model = headParsed.model; }
+			if (!gitBranch) { gitBranch = headParsed.gitBranch; }
+			if (!sessionId) { sessionId = headParsed.sessionId; }
+			if (!claudeTitle) { claudeTitle = headParsed.claudeTitle; }
+			if (!firstUserMessage) { firstUserMessage = headParsed.firstUserMessage; }
+		}
+
+		if (messages.length === 0) { return null; }
+
+		const projectDir = path.basename(path.dirname(filePath));
+		const project = translateWorkDirPath(cwd || decodeProjectName(projectDir));
+		const id = sessionId || path.basename(filePath, '.jsonl');
+
+		const session: ParsedSession = {
+			id,
+			filePath,
+			project,
+			firstMessage: firstUserMessage || '(内容なし)',
+			firstTimestamp: messages[0].timestamp,
+			lastTimestamp: messages[messages.length - 1].timestamp,
+			fileSize: tail.totalSize,
+			model,
+			gitBranch,
+			claudeTitle,
+			cwd,
+			messages,
+		};
+
+		return {
+			session,
+			oldestByteOffset: tail.startOffset,
+			totalBytes: tail.totalSize,
+			hasOlder: !tail.reachedHead,
+		};
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * オンデマンド追加読み込み: 指定 offset より前の範囲を tail 方式で読み、
+ * 追加のメッセージ件数を返す。
+ */
+export async function loadOlderMessages(
+	filePath: string,
+	stopAtOffset: number,
+	maxMessages: number,
+	showThinking: boolean = false,
+): Promise<{
+	messages: SimpleMessage[];
+	newOffset: number;
+	reachedHead: boolean;
+} | null> {
+	try {
+		const targetLines = Math.max(maxMessages * 4, 100);
+		const tail = await readTailLines(filePath, targetLines, stopAtOffset);
+		if (tail.lines.length === 0) {
+			return { messages: [], newOffset: tail.startOffset, reachedHead: tail.reachedHead };
+		}
+		const parsed = parseLinesToMessages(tail.lines, showThinking);
+		let messages = parsed.messages;
+		if (messages.length > maxMessages) {
+			messages = messages.slice(messages.length - maxMessages);
+		}
+		return { messages, newOffset: tail.startOffset, reachedHead: tail.reachedHead };
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * ファイル内の指定 lineIndex 相当のメッセージを 1 件だけフル読みで返す。
+ * 「巨大メッセージの全文を表示」用。lineIndex はブラウザ側から `data-lidx` で渡される。
+ *
+ * 実装方針: lineIndex は「session.messages の中の 0-based インデックス」ではなく、
+ *   セッション全体で表示された順序でのユニーク ID として **uuid** を使う。
+ *   末尾走査で uuid 一致行を見つけたら返す。uuid が無い場合はフォールバックとして
+ *   全文 readFile で該当 index の行を返す（大容量では低速だがワースト時のみ発火）。
+ */
+export async function loadSingleMessageByUuid(
+	filePath: string,
+	uuid: string,
+): Promise<{ role: 'user' | 'assistant' | 'system'; content: string; timestamp: Date; model?: string } | null> {
+	if (!uuid) { return null; }
+	// tail 方式で 1M ずつ舐めて uuid 一致を探す（末尾に近い方から）。
+	try {
+		const handle = await fs.promises.open(filePath, 'r');
+		try {
+			const stat = await handle.stat();
+			let cursor = stat.size;
+			let residual = '';
+			while (cursor > 0) {
+				const chunkSize = Math.min(TAIL_CHUNK_BYTES, cursor);
+				const chunkStart = cursor - chunkSize;
+				const buf = Buffer.alloc(chunkSize);
+				await handle.read(buf, 0, chunkSize, chunkStart);
+				const combined = buf.toString('utf-8') + residual;
+				const firstNewline = combined.indexOf('\n');
+				const partial = chunkStart > 0 && firstNewline >= 0 ? combined.substring(0, firstNewline + 1) : '';
+				const usable = chunkStart > 0 && firstNewline >= 0 ? combined.substring(firstNewline + 1) : combined;
+				residual = partial;
+				for (const line of usable.split('\n')) {
+					if (!line.includes(uuid)) { continue; } // 軽量な substring 判定で不要行をスキップ（最適化）
+					try {
+						const p = JSON.parse(line);
+						if (p.uuid !== uuid) { continue; }
+						return extractSingleMessage(p);
+					} catch { /* skip */ }
+				}
+				cursor = chunkStart;
+			}
+		} finally {
+			await handle.close();
+		}
+	} catch { /* fall through */ }
+	return null;
+}
+
+function extractSingleMessage(parsed: Record<string, unknown>): { role: 'user' | 'assistant' | 'system'; content: string; timestamp: Date; model?: string } | null {
+	const type = parsed.type;
+	const msg = parsed.message as { content: unknown; model?: string } | undefined;
+	if (!msg) { return null; }
+	const text = extractText(msg.content as string | ContentBlock[]);
+	if (type === 'user') {
+		return { role: 'user', content: text, timestamp: new Date(parsed.timestamp as string) };
+	}
+	if (type === 'assistant') {
+		return { role: 'assistant', content: text, timestamp: new Date(parsed.timestamp as string), model: msg.model };
+	}
+	return null;
+}
+
+// --- 内部ヘルパー: 行配列を messages + メタに分解 ---
+interface ParsedLinesResult {
+	messages: SimpleMessage[];
+	firstUserMessage?: string;
+	model?: string;
+	gitBranch?: string;
+	sessionId?: string;
+	claudeTitle?: string;
+	cwd?: string;
+}
+
+function parseLinesToMessages(lines: string[], includeThinking: boolean): ParsedLinesResult {
+	const messages: SimpleMessage[] = [];
+	let firstUserMessage: string | undefined;
+	let model: string | undefined;
+	let gitBranch: string | undefined;
+	let sessionId: string | undefined;
+	let claudeTitle: string | undefined;
+	let cwd: string | undefined;
+
+	for (const line of lines) {
+		// 軽量な substring 判定で「メッセージにも含まれない可能性が高い」不要行をスキップ
+		if (line.length < 20) { continue; }
+		try {
+			const parsed = JSON.parse(line);
+			if (parsed.type === 'custom-title' && parsed.customTitle) {
+				claudeTitle = parsed.customTitle;
+				continue;
+			}
+			if (parsed.type === 'ai-title' && parsed.aiTitle && !claudeTitle) {
+				claudeTitle = parsed.aiTitle;
+				continue;
+			}
+			if (!cwd && parsed.cwd) { cwd = parsed.cwd; }
+			if (parsed.type === 'user' && parsed.message) {
+				const text = extractText(parsed.message.content);
+				if (!firstUserMessage && text) { firstUserMessage = text.substring(0, 100); }
+				if (parsed.sessionId) { sessionId = parsed.sessionId; }
+				if (parsed.gitBranch) { gitBranch = parsed.gitBranch; }
+				messages.push({
+					role: 'user',
+					content: text,
+					timestamp: new Date(parsed.timestamp),
+					uuid: typeof parsed.uuid === 'string' ? parsed.uuid : undefined,
+					fullBytes: Buffer.byteLength(text, 'utf-8'),
+				});
+			} else if (parsed.type === 'assistant' && parsed.message) {
+				if (includeThinking && Array.isArray(parsed.message.content)) {
+					const thinkingBlocks = parsed.message.content
+						.filter((b: ContentBlock) => b.type === 'thinking' && b.text);
+					for (const tb of thinkingBlocks) {
+						messages.push({
+							role: 'system',
+							content: `[思考]${tb.text!.substring(0, 1000)}`,
+							timestamp: new Date(parsed.timestamp),
+						});
+					}
+				}
+				const text = extractText(parsed.message.content);
+				if (parsed.message.model) { model = parsed.message.model; }
+				messages.push({
+					role: 'assistant',
+					content: text,
+					timestamp: new Date(parsed.timestamp),
+					model: parsed.message.model,
+					uuid: typeof parsed.uuid === 'string' ? parsed.uuid : undefined,
+					fullBytes: Buffer.byteLength(text, 'utf-8'),
+				});
+			}
+		} catch { /* skip */ }
+	}
+	return { messages, firstUserMessage, model, gitBranch, sessionId, claudeTitle, cwd };
+}

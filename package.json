@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager - セッション履歴管理",
 	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.5.19",
+	"version": "0.5.20",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -1166,6 +1166,20 @@
 						"type": "boolean",
 						"default": false,
 						"description": "Claudeが回答前に内部で考えた思考プロセスをセッションプレビューに表示します"
+					},
+					"claudeManager.preview.initialMessages": {
+						"type": "number",
+						"default": 200,
+						"minimum": 20,
+						"maximum": 2000,
+						"markdownDescription": "セッションビューワーで初期表示するメッセージの件数（末尾から）。大容量セッション（数十MB〜数百MB）の起動高速化のため、これを超える古いメッセージはヘッダの『以前のメッセージを読み込む』で追加取得します（v0.5.20 追加）"
+					},
+					"claudeManager.preview.maxMessageBytes": {
+						"type": "number",
+						"default": 4096,
+						"minimum": 512,
+						"maximum": 65536,
+						"markdownDescription": "1メッセージの初期描画の最大バイト数。超過分は『全文を表示』ボタンでオンデマンド取得します。巨大なツール出力（Read/Bash 大量出力）による起動遅延を防止（v0.5.20 追加）"
 					},
 					"claudeManager.trash.folder": {
 						"type": "string",

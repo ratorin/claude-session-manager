@@ -1,5 +1,67 @@
 # 更新履歴
 
+## v0.5.20 (2026-07-10) — セッションビューワーの起動高速化（遅延読み込み + tail リーダー）
+
+背景: `parseSessionFile` の readFile 一括 + 全行 JSON.parse と、`getSessionHtml` の全メッセージを正規表現 markdown 変換して巨大 HTML を一括生成する構造で、実環境の 276MB / 154MB 級 JSONL では **ビューワーが開くまで数秒〜数十秒** かかっていた。
+
+目標: **どんなサイズのセッションでも初期表示が体感 1 秒以内**。
+
+### ➕ (1) 遅延読み込み — 末尾 N 件だけ初期描画
+
+- 新設定 **`claudeManager.preview.initialMessages`**（既定 `200`、min 20 / max 2000）: 初期表示するメッセージ件数（末尾から）。
+- ヘッダに **「▲ 以前のメッセージを読み込む」** ボタンを追加。クリックで拡張側から前の N 件を取得 → webview に postMessage → `insertAdjacentHTML('afterbegin', ...)` で先頭に差し込む（HTML 全体は再構築しない）。
+- **タグ追加・削除経路（既存の setHtml 再構築）はそのまま**維持（メタ変更でメッセージ表示は初期状態にリセット。UX トレードオフとして許容）。
+
+### ➕ (2) tail リーダー — 全文 readFile を回避
+
+- **`readTailLines(filePath, maxLines, stopAtOffset?)`** を新設。fs.open + 1MB 単位のチャンク逆読み。
+  - **境界の途中で切れた行**は residual として次チャンクの末尾に持ち越し（欠損・重複ゼロ）
+  - **maxLines 到達時の cursor 位置を精密に計算**（未処理領域の末尾位置 = `chunkStart + partial.byteLen + unprocessedText.byteLen`）→ オンデマンド追加読みで重複しない
+  - `reachedHead` は `!earlyBreak && cursor === 0`
+- **`loadSessionTail(filePath, maxInitialMessages, showThinking)`** で初期表示用の `ParsedSession` を末尾 N 件だけで構築。
+  - user/assistant 以外のメタ行が混じる想定で **`targetLines = max(maxInitial * 4, 100)`** を tail に確保
+  - メタデータ（cwd / model / sessionId / firstUserMessage / claudeTitle）が tail で欠ける場合は **先頭 64KB** を追加で読み補完
+- **`loadOlderMessages(filePath, stopAtOffset, max, showThinking)`** で追加取得。
+- **判断: readline + リングバッファ方式（全文 stream）は 276MB 全体を読むためディスク帯域律速**。1MB tail 読みは典型的な NVMe で数十 ms のため、末尾チャンク逆読み方式を採用。CHANGELOG に明記。
+- **軽量最適化**: `parseLinesToMessages` 内で `line.length < 20` の行は JSON.parse せずスキップ。
+
+### ➕ (3) 巨大ツール出力の抑制 — 4KB 上限 + オンデマンド全文取得
+
+- 新設定 **`claudeManager.preview.maxMessageBytes`**（既定 `4096`、min 512 / max 65536）。
+- 1 メッセージの初期描画は上限まで切り詰め、超過分は **「全文を表示（<bytes>）」ボタン** に置換。
+- ボタンクリック → webview から `{ type: 'loadFullMessage', uuid }` を postMessage → 拡張側で **`loadSingleMessageByUuid(filePath, uuid)`** が末尾からチャンク逆読みで uuid 一致行を探索（`substring(uuid)` 判定で JSON.parse スキップ）→ 全文を返送 → 該当 message の content を差し替え + ボタン削除。
+- **初期 HTML に隠し全文を埋め込まない**（サイズ削減が目的）。
+- `SimpleMessage` に `uuid?` / `fullBytes?` を追加。`uuid` が JSONL に無い古いセッションは切り詰めのみで「…以降省略」の静的表示に fallback。
+
+### ⚠️ 検索の挙動変更
+
+- クライアント側検索（`#searchInput`）は **読み込み済みメッセージが対象**（従来は全文）。placeholder と title に **「表示中のメッセージから検索」** を明記。仕様書許容範囲。
+
+### 🧪 テスト（新規追加 N1〜N6、合計 52 → 58 pass）
+
+- **N1**: `readTailLines` — 末尾 N 行を昇順で返す + 先頭到達判定
+- **N2**: `readTailLines` — 1MB 境界跨ぎ（約 6MB × 3000 行の合成 JSONL）で欠損・重複が発生しないこと
+- **N3**: `loadSessionTail` — 末尾 N 件だけで ParsedSession を構築 + head fill でメタ復元
+- **N4**: `loadOlderMessages` — `oldestByteOffset` を渡して続きを重複なく取得、時系列順序が維持される
+- **N5**: `loadSingleMessageByUuid` — 中央付近の uuid を大ファイルから取り出す + 存在しない uuid は null
+- **N6**: `loadSessionTail` — 小さいファイルは `hasOlder=false` で全件返る
+- 巨大ファイル（数百 MB）テストは合成 JSONL で代替可能と判断し、6MB×3000 行を上限に設定（テスト実行時間 < 100ms）
+- テストハーネスは修正済み USERPROFILE 隔離 + fail-fast ガードを踏襲、一時ファイルは `os.tmpdir()` 配下（`setupTmpHome` の `.claude` サブディレクトリ）
+
+### 検証
+
+- `npx tsc --noEmit` クリーン。
+- `npm test`: **52 → 58 pass**（N1〜N6 追加、既存に退行なし）。
+- `package.json` `0.5.19` → **`0.5.20`**、新設定 2 件（`preview.initialMessages` / `preview.maxMessageBytes`）を追加。
+
+### 判断・見送り事項
+
+- **タグ追加・削除で HTML を再構築する経路**は変更せず（既存 UX 変更の副作用を回避）。**メッセージ表示は初期 N 件にリセット**され、追加読み分は失われる。副作用として許容。
+- **検索範囲**: グローバル検索（拡張側でファイル走査する方式）は本 Sprint スコープ外。将来 Sprint で対応候補。
+- **thinking ブロック**: `loadOlderMessages` / `loadSessionTail` にも `showThinking` を渡し、既存挙動を維持。
+- **uuid が無い古いセッション**: 全文取得ボタンは表示せず「…以降省略」の静的表示。
+- **loadSessionFull は残す**: tail 経路が万一失敗した場合のフォールバックとして残置（現行の parseSessionFile 呼び出し互換）。
+
 ## v0.5.19 (2026-07-09) — 「Claudeで開く」を拡張UIで開くよう変更 + CLIボタン分離
 
 ユーザーフィードバック対応: v0.5.15 の「▶ Claudeで開く」がターミナルで CLI を起動していたが、

@@ -70,6 +70,7 @@ function loadFresh(tmpHome) {
 		usageMonitor: require(path.join(REPO, 'out', 'utils', 'usageMonitor')),
 		pathUtils: require(path.join(REPO, 'out', 'utils', 'pathUtils')),
 		hookService: require(path.join(REPO, 'out', 'services', 'hookService')),
+		sessionLoader: require(path.join(REPO, 'out', 'utils', 'sessionLoader')),
 	};
 }
 
@@ -873,5 +874,137 @@ test('M1 レビュー修正(1)-b: src 内の registerCommand は同一 id が 1 
 		const msg = dups.map(([id, locs]) => `${id} → ${locs.join(' / ')}`).join('\n');
 		assert.fail(`registerCommand の同一 id が複数箇所で登録されています:\n${msg}`);
 	}
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// N. Sprint v0.5.20: セッションビューワー高速化 — tail リーダー / 遅延読み込み
+// ════════════════════════════════════════════════════════════════════════════
+
+// JSONL の合成: user/assistant ペアを N 個並べる。各メッセージに uuid と content を付与。
+function makeSyntheticJsonl(pairs, contentBytesEach = 100) {
+	const lines = [];
+	let now = Date.parse('2026-01-01T00:00:00.000Z');
+	for (let i = 0; i < pairs; i++) {
+		const uid1 = `u-${i.toString().padStart(6, '0')}`;
+		const uid2 = `a-${i.toString().padStart(6, '0')}`;
+		const uTs = new Date(now + i * 60_000).toISOString();
+		const aTs = new Date(now + i * 60_000 + 30_000).toISOString();
+		const pad = 'x'.repeat(Math.max(0, contentBytesEach - 32));
+		lines.push(JSON.stringify({ type: 'user', uuid: uid1, sessionId: 'sid-fake', cwd: '/tmp/p', gitBranch: 'main', timestamp: uTs, message: { content: `q${i}-${pad}` } }));
+		lines.push(JSON.stringify({ type: 'assistant', uuid: uid2, timestamp: aTs, message: { content: `r${i}-${pad}`, model: 'claude-sonnet-4-6' } }));
+	}
+	return lines.join('\n') + '\n';
+}
+
+test('N1 v0.5.20 readTailLines: 末尾 N 行を昇順で返す + 先頭到達判定', async () => {
+	const home = setupTmpHome();
+	const { sessionLoader } = loadFresh(home);
+	const jsonl = makeSyntheticJsonl(50, 80);
+	const fp = path.join(home, 'test-tail.jsonl');
+	fs.writeFileSync(fp, jsonl);
+	// 20 行だけ末尾取得
+	const r = await sessionLoader.readTailLines(fp, 20);
+	assert.equal(r.lines.length, 20, '20 行取得');
+	assert.equal(r.reachedHead, false, '先頭に達していない');
+	// 全体は 100 行 → 末尾 20 行の 1 行目は「50-10 番目」相当（user か assistant か index 依存）
+	// 最終行 = assistant r49 を含むはず
+	assert.ok(r.lines[r.lines.length - 1].includes('"r49-'), '末尾は最後の assistant');
+	// 昇順並び: 先頭行のタイムスタンプ ≤ 最終行
+	const firstTs = JSON.parse(r.lines[0]).timestamp;
+	const lastTs = JSON.parse(r.lines[r.lines.length - 1]).timestamp;
+	assert.ok(firstTs <= lastTs, '昇順');
+
+	// 全行以上取得 → 先頭到達
+	const rAll = await sessionLoader.readTailLines(fp, 999);
+	assert.equal(rAll.lines.length, 100);
+	assert.equal(rAll.reachedHead, true, '先頭到達');
+});
+
+test('N2 v0.5.20 readTailLines: 1MB 境界跨ぎでも欠損・重複しない', async () => {
+	const home = setupTmpHome();
+	const { sessionLoader } = loadFresh(home);
+	// 1 行 ~2KB × 3000 行 = 約 6MB → 1MB チャンク境界が複数入る
+	const jsonl = makeSyntheticJsonl(1500, 2048);
+	const fp = path.join(home, 'test-tail-big.jsonl');
+	fs.writeFileSync(fp, jsonl);
+	// 全 3000 行取得
+	const r = await sessionLoader.readTailLines(fp, 5000);
+	assert.equal(r.lines.length, 3000, '全 3000 行');
+	assert.equal(r.reachedHead, true);
+	// 各行はいずれも valid JSON
+	for (const line of r.lines) {
+		JSON.parse(line);
+	}
+	// 順序保証: user/assistant/user/... と i の昇順
+	for (let i = 0; i < 1500; i++) {
+		const u = JSON.parse(r.lines[i * 2]);
+		const a = JSON.parse(r.lines[i * 2 + 1]);
+		assert.equal(u.uuid, `u-${i.toString().padStart(6, '0')}`);
+		assert.equal(a.uuid, `a-${i.toString().padStart(6, '0')}`);
+	}
+});
+
+test('N3 v0.5.20 loadSessionTail: 末尾 N 件だけで ParsedSession を構築', async () => {
+	const home = setupTmpHome();
+	const { sessionLoader } = loadFresh(home);
+	const jsonl = makeSyntheticJsonl(500, 100);
+	const fp = path.join(home, 'test-load-tail.jsonl');
+	fs.writeFileSync(fp, jsonl);
+	const r = await sessionLoader.loadSessionTail(fp, 50, false);
+	assert.ok(r, 'result あり');
+	assert.equal(r.session.messages.length, 50, '末尾 50 メッセージ');
+	assert.equal(r.hasOlder, true, 'まだ古いメッセージあり');
+	assert.equal(r.session.model, 'claude-sonnet-4-6', 'モデルが tail からでも取れる');
+	// メタデータ（sessionId / cwd）は先頭からしか取れないケース → head fill で補完される
+	assert.equal(r.session.id, 'sid-fake', 'sessionId 復元（head fill）');
+	assert.equal(r.session.cwd, '/tmp/p', 'cwd 復元（head fill）');
+});
+
+test('N4 v0.5.20 loadOlderMessages: 続きの N 件を逆方向に取得', async () => {
+	const home = setupTmpHome();
+	const { sessionLoader } = loadFresh(home);
+	const jsonl = makeSyntheticJsonl(200, 100);
+	const fp = path.join(home, 'test-older.jsonl');
+	fs.writeFileSync(fp, jsonl);
+	const first = await sessionLoader.loadSessionTail(fp, 40, false);
+	assert.equal(first.session.messages.length, 40);
+	assert.ok(first.hasOlder);
+	// 続きを 40 件追加読み
+	const older = await sessionLoader.loadOlderMessages(fp, first.oldestByteOffset, 40, false);
+	assert.ok(older, 'older result');
+	assert.equal(older.messages.length, 40, '追加 40 件');
+	assert.equal(older.reachedHead, false, 'まだ古い行あり');
+	// 追加分は tail より古いはず
+	const oldestTailTs = first.session.messages[0].timestamp.getTime();
+	const newestOlderTs = older.messages[older.messages.length - 1].timestamp.getTime();
+	assert.ok(newestOlderTs <= oldestTailTs, '古い→新しい順序が維持');
+});
+
+test('N5 v0.5.20 loadSingleMessageByUuid: uuid で 1 件だけ取り出す（大ファイル対応）', async () => {
+	const home = setupTmpHome();
+	const { sessionLoader } = loadFresh(home);
+	const jsonl = makeSyntheticJsonl(400, 200);
+	const fp = path.join(home, 'test-single.jsonl');
+	fs.writeFileSync(fp, jsonl);
+	// 中央付近の uuid を取り出す
+	const target = 'u-000200';
+	const r = await sessionLoader.loadSingleMessageByUuid(fp, target);
+	assert.ok(r, 'result あり');
+	assert.equal(r.role, 'user');
+	assert.ok(r.content.startsWith('q200-'), 'content が該当');
+	// 存在しない uuid は null
+	const none = await sessionLoader.loadSingleMessageByUuid(fp, 'notexist');
+	assert.equal(none, null);
+});
+
+test('N6 v0.5.20 loadSessionTail: hasOlder=false（小さいファイル）は全件返る', async () => {
+	const home = setupTmpHome();
+	const { sessionLoader } = loadFresh(home);
+	const jsonl = makeSyntheticJsonl(10, 50);
+	const fp = path.join(home, 'test-small.jsonl');
+	fs.writeFileSync(fp, jsonl);
+	const r = await sessionLoader.loadSessionTail(fp, 200, false);
+	assert.equal(r.session.messages.length, 20, '10 pair = 20 メッセージ');
+	assert.equal(r.hasOlder, false, '全件取得済み');
 });
 
