@@ -1,12 +1,15 @@
-# Claude Session Manager v0.4.2 仕様書
+# Claude Session Manager 仕様書（v0.5.21 時点）
 
 ## 概要
 
-v0.4.0 でアーキテクチャを大幅刷新。エージェント定義を `~/.claude/agents/*.md`（CLI標準形式）に統一し、検知エンジンを簡素化、ソースファイルを機能別サブディレクトリに再配置した。
-
-v0.4.1 でセキュリティ強化（パストラバーサル・コマンドインジェクション・YAMLインジェクション・CSP・パス検証）とフロントマターパーサー統合、agents[]→agentSessionsマイグレーションを実施。
-
-v0.4.2 でエージェントプレビューパネル刷新（Webview・TODO/HISTORY表示・チェックボックス反映）、確認待ち横断ビュー、`/csm-ask-agent` スキル（旧 `/ask-agent` からリネーム）、Stop フック CSM_SUMMARY 連携、CHILDREN ブロック連携先自動生成、ステータスバー和名表示を追加。フォームから displayRole/displayDescription・Extended Thinking を削除し簡素化。
+- v0.4.0 でアーキテクチャを大幅刷新。エージェント定義を `~/.claude/agents/*.md`（CLI 標準形式）に統一、検知エンジンを簡素化、ソースファイルを機能別サブディレクトリに再配置。
+- v0.4.1 でセキュリティ強化（パストラバーサル・コマンドインジェクション・YAML インジェクション・CSP・パス検証）とフロントマターパーサ統合、`agents[] → agentSessions` マイグレーションを実施。
+- v0.4.2 でエージェントプレビューパネル刷新（WebView・TODO / HISTORY 表示・チェックボックス反映）、確認待ち横断ビュー、`/csm-ask-agent` スキル（旧 `/ask-agent` からリネーム）、Stop フック `CSM_SUMMARY` 連携、CHILDREN ブロック連携先自動生成、ステータスバー和名表示を追加。
+- v0.5.14 で **Fable 5 解禁** と `modelCatalog.ts` の単一真実源化。以降 `fable` / `fable-1m` を第一級モデルとして扱う。
+- v0.5.17 で UX 小工数・高効果 5 件（エージェント検索・ステータスバー表示モード・和英ラベル統一・description 構成カスタマイズ・タブバー非表示化）。
+- v0.5.18 で UX 最終バッチ 6 件（TreeView.badge・稼働中フィルタ・ウォークスルー・グループ表示切替・Activity Bar 5 → 4・組織図検索・テーマ追従）。
+- v0.5.19 で会話ビューワーのヘッダに **「Claude で開く」（拡張 UI）** と **「CLI で開く」（新規ターミナル + `claude --resume`）** の 2 ボタンを分離。
+- v0.5.20 で **セッションビューワーの遅延読み込み** を実装（`readTailLines` による 1 MB 逆チャンク読み + `loadSessionTail` + 「▲ 以前のメッセージを読み込む」+ 巨大メッセージの `全文を表示` ボタン）。
 
 ---
 
@@ -116,11 +119,16 @@ src/
 |---|---|---|---|
 | 部署名 | InputBox | ✅ | エージェントの名前（例: CSM開発部） |
 | 役割の説明 | InputBox | | 担当業務（例: デバッグ・品質確認） |
-| モデル選択 | QuickPick | ✅ | `fable` / `fable-1m` / `opus` / `opus-1m` / `sonnet` / `sonnet-1m` / `haiku`（v0.5.14 で fable 追加、frontmatter には `fable[1m]` / `opus[1m]` / `sonnet[1m]` を書く） |
-| セッション運用 | QuickPick | ✅ | 固定 / 使い捨て |
+| モデル選択 | ラジオボタン | ✅ | `fable` / `fable-1m` / `opus` / `opus-1m` / `sonnet` / `sonnet-1m` / `haiku`（v0.5.14 で Fable 系解禁）。frontmatter にはエイリアス（例: `fable`, `opus[1m]`, `sonnet[1m]`）を書き込みます |
+| セッション運用 | ラジオボタン | ✅ | 固定 / 使い捨て |
 | 親エージェント | QuickPick | | 既存エージェントから選択 / なし |
 | 作業フォルダ | FolderPicker | | フォルダ選択ダイアログ / なし |
-| 推論努力（Effort） | カードラジオ | | Low / Medium / High / XHigh / Max（Max は Opus / Fable 系専用） |
+| 推論努力（Effort） | カードラジオ | | 未設定（継承）/ Low / Medium / High / XHigh / Max（Max は Opus / Fable 系専用）— 「未設定（継承）」は frontmatter に書き出しません |
+| 権限モード（permissionMode） | セレクト | | 未設定（継承）/ acceptEdits / auto / plan / default / bypassPermissions |
+| 許可ツール（allowedTools） | チェックボックス | | 全オフで無制限。フォーム外の追加ツールも保持されます |
+| worktree 隔離 | チェックボックス | | `isolation: worktree`（並列作業向け） |
+| バックグラウンド実行 | チェックボックス | | `background: true` |
+| 最大ターン数（maxTurns） | 数値入力 | | 暴走・コスト制御用（空 = 無制限） |
 
 ### 共通フォーム関数
 `showAgentForm(existing?: AgentConfig): Promise<AgentConfig | undefined>`
@@ -557,15 +565,17 @@ VS Code標準の設定UIからCSMの動作をカスタマイズ可能に。
 
 ### 設定項目
 
-| キー | 型 | デフォルト | 説明 |
+> **注**: 以下の表は代表的なキーのみを掲載しています。デフォルト値は各バージョンで変遷しているため、**最新のデフォルト値は必ず [`README.md`](README.md#設定項目) または `package.json` の `contributes.configuration` を正としてください**（本 SPEC.md はスナップショット目的）。
+
+| キー | 型 | デフォルト（v0.5.21 時点） | 説明 |
 |------|-----|-----------|------|
-| `claudeManager.enableAgentMonitor` | boolean | false | エージェント監視を有効化 |
+| `claudeManager.enableAgentMonitor` | boolean | true | エージェント監視を有効化 |
 | `claudeManager.agentMonitorInterval` | number | 5 | エージェント監視間隔（秒） |
 | `claudeManager.enableNotifications` | boolean | true | タスク通知を有効化 |
 | `claudeManager.taskStalledThreshold` | number | 60 | stalled判定閾値（秒） |
 | `claudeManager.taskAutoCleanupHours` | number | 72 | タスクログ自動削除（時間） |
 | `claudeManager.taskMaxLogs` | number | 100 | 最大タスクログ数 |
-| `claudeManager.enableUsageMonitor` | boolean | false | 利用制限モニターを有効化 |
+| `claudeManager.enableUsageMonitor` | boolean | true | 利用制限モニターを有効化 |
 | `claudeManager.usageMonitorInterval` | number | 300 | 利用制限モニター更新間隔（秒） |
 | `claudeManager.defaultSortMode` | enum | updated-desc | デフォルトのソート順 |
 | `claudeManager.defaultGroupMode` | enum | date | デフォルトのグループ化 |
@@ -1062,9 +1072,9 @@ Anthropic APIのレスポンスヘッダから5時間/7日の利用率・リセ�
 3. レスポンスヘッダ: `anthropic-ratelimit-unified-{5h,7d}-{utilization,reset}`
 
 ### 設定
-| キー | 型 | デフォルト | 説明 |
+| キー | 型 | デフォルト（v0.5.21 時点） | 説明 |
 |---|---|---|---|
-| `enableUsageMonitor` | boolean | false | 有効化（APIリクエスト発生の警告付き） |
+| `enableUsageMonitor` | boolean | true | 有効化（API リクエスト発生の警告付き） |
 | `usageMonitorInterval` | number | 300 | 更新間隔（秒、60〜3600） |
 
 ### コマンド

@@ -8,7 +8,7 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Claude Session Manager v0.4.4 使い方ガイド</title>
+<title>Claude Session Manager v0.5.21 使い方ガイド</title>
 
 <style>
 
@@ -914,7 +914,7 @@
 
 	<p>Claude Codeの会話履歴・メモリ・エージェントを管理するVS Code拡張機能</p>
 
-	<div class="version">v0.4.4</div>
+	<div class="version">v0.5.21</div>
 
 </div>
 
@@ -1672,7 +1672,7 @@
 
 <div class="section">
 
-	<div class="section-title"><span class="num">5</span>会話プレビュー</div>
+	<div class="section-title" id="sec-viewer"><span class="num">5</span>会話ビューワー（v0.5.20 で高速化）</div>
 
 
 
@@ -1682,9 +1682,47 @@
 
 
 
+	<h4 style="color: #d97757; margin: 24px 0 12px;">遅延読み込みで大容量セッションも高速起動</h4>
+
+	<p>v0.5.20 から、初期表示は<strong>末尾 N 件だけ</strong>を描画するようになりました（既定 200 件、設定 <code>claudeManager.preview.initialMessages</code>）。数百 MB の JSONL でも体感 1 秒以内で開きます。</p>
+
+	<ul style="margin: 12px 0 12px 24px;">
+
+		<li>ヘッダ左の <strong>▲ 以前のメッセージを読み込む</strong> ボタンで、さらに古い N 件を追加取得できます。</li>
+
+		<li>取得した古いメッセージは HTML 全体を再構築せず、先頭に差し込まれます。</li>
+
+		<li><strong>タグ追加・削除</strong>を行うと、いったんメッセージ表示が末尾 N 件にリセットされます（副作用として許容）。</li>
+
+	</ul>
+
+
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">巨大メッセージの抑制</h4>
+
+	<p>1 メッセージあたりの初期描画は <strong>4 KB</strong>（既定、設定 <code>claudeManager.preview.maxMessageBytes</code>）で切り詰められ、それを超える content は <strong>『全文を表示（<em>サイズ</em>）』</strong> ボタンに置換されます。ボタンをクリックすると、拡張側で該当メッセージだけを uuid で再取得して差し替えます。</p>
+
+	<p style="color: #888; margin-top: 4px;">巨大なツール出力（Read/Bash の大量出力）による起動遅延を防ぐ仕組みです。</p>
+
+
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">ヘッダ 2 ボタン（v0.5.19）</h4>
+
+	<ul style="margin: 12px 0 12px 24px;">
+
+		<li><strong>▶ Claude で開く</strong> — Claude Code 拡張の UI（右クリックメニューと同一経路）で会話を再開します。</li>
+
+		<li><strong>⌨ CLI で開く</strong> — 新規ターミナルを開き、セッション作成時の cwd で <code>claude --resume &lt;sid&gt;</code> を実行します。<br>
+
+		<span style="color: #888;">※ <code>--resume</code> は作成時と同じ cwd でないと『No conversation found』で失敗します。cwd が JSONL から取れない場合はワークスペースルートで試行し、tooltip で注意喚起します。</span></li>
+
+	</ul>
+
+
+
 	<div class="tip">
 
-		<strong>会話内検索：</strong>プレビュー上部の検索バーで、会話の中身をキーワードで絞り込めます。
+		<strong>会話内検索：</strong>プレビュー上部の検索バーで、<strong>表示中のメッセージから</strong>キーワードで絞り込めます（読み込み済みのメッセージが対象）。範囲を広げたいときは『▲ 以前のメッセージを読み込む』でメッセージを追加取得してから検索してください。
 
 	</div>
 
@@ -3403,6 +3441,84 @@
 	<div class="tip">
 		<strong>PreCompact フック連携：</strong>セッションがコンパクトされる直前に CSM_SUMMARY 形式の3行要約が <code>HISTORY.md</code> に追記されます。セッションをまたいだ作業経緯を確認する際に活用してください。
 	</div>
+
+</div>
+
+
+
+<!-- ============================================ -->
+<!-- v0.5.14〜v0.5.21 新機能ハイライト -->
+<!-- ============================================ -->
+
+<div class="section">
+
+	<div class="section-title"><span class="num">★</span>v0.5.14 〜 v0.5.21 新機能ハイライト</div>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">Fable 5 モデル解禁（v0.5.14）</h4>
+	<p>旧 v0.5.6 〜 v0.5.13 で「組織方針で非選択」として除外していた <strong>Fable 5</strong> を第一級モデルとして復活しました。表示文字は <strong>Ｆ</strong>、色は金 <code>#ffd54f</code>。<code>effort: max</code> も選択可能です。</p>
+	<p style="color: #888;">Fable 5 に関するバグ修正（<code>claude-fable-5[1m]</code> の判定順序、<code>fable → opus</code> のサイレント書き換え）も同時に対応済み。</p>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">セッションビューワーの高速化（v0.5.20）</h4>
+	<p>末尾遅延読み込み + tail リーダー + 巨大出力の抑制で、数百 MB の JSONL でも体感 1 秒以内で開くようになりました。詳細は <a href="#sec-viewer">セクション 5「会話ビューワー」</a> を参照してください。</p>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">エージェント検索（v0.5.17）</h4>
+	<p>コマンド <code>Claude: エージェントを検索</code> で、名前 / 表示名 / 役割 / モデル / 親部署をあいまい検索し、選択でツリー上の該当ノードに自動ジャンプ + プレビューを起動します。エージェント管理ビューのツールバー <span style="color: #64b5f6;">$(search)</span> からも起動可能。</p>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">エージェント表示のカスタマイズ（v0.5.17 / v0.5.18）</h4>
+	<ul style="margin: 12px 0 12px 24px;">
+		<li><strong>グループ表示切替</strong> — コマンド <code>Claude: エージェントのグループ表示を切替</code> で <strong>組織図 / モデル別 / 状態別 / フラット</strong> の 4 モードを切替可能。<code>claudeManager.agents.defaultGroupMode</code> で永続化。</li>
+		<li><strong>稼働中のみ表示</strong> — ツールバーの <span style="color: #64b5f6;">$(filter)</span> トグル。<code>claudeManager.agents.activeOnly</code> で永続化。</li>
+		<li><strong>稼働数バッジ</strong> — 「エージェント管理」「ライブ状態」ビューアイコンに稼働中エージェント数を表示。</li>
+		<li><strong>『対話中』プレフィックス</strong> — <code>[対話中]</code> / <code>[5分]</code> でライブ状態を即視認。</li>
+		<li><strong>起動時の展開状態</strong> — <code>claudeManager.agents.expandMode</code>（<code>all</code> / <code>active-branches</code>（既定）/ <code>top-level</code>）。</li>
+	</ul>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">ステータスバー表示モード（v0.5.17）</h4>
+	<p>設定 <code>claudeManager.usage.statusBarStyle</code> で以下の 3 スタイルを切替できます:</p>
+	<ul style="margin: 12px 0 12px 24px;">
+		<li><strong>full</strong>: <code>5% 4.5h / 7% 7d / S 3% 5d20h / O 20% 5d10h</code></li>
+		<li><strong>compact</strong>: <code>5% / 7% / S 3% / O 20%</code>（リセット時刻を省略）</li>
+		<li><strong>max-only</strong>: 最逼迫の 1 枠のみ表示（例: <code>O 20% 5d10h</code>）</li>
+	</ul>
+	<p style="color: #888;">ステータスバーをクリックして表示される利用率メニューからも切替できます。</p>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">日本語ラベル統一（v0.5.17）</h4>
+	<p>UI 表示の英日混在を解消しました:</p>
+	<ul style="margin: 12px 0 12px 24px;">
+		<li>ライブプレフィックス <code>[Open]</code> → <code>[対話中]</code></li>
+		<li>ライブ状態ビューの <code>[running] / [blocked] / [done]</code> → <code>[稼働] / [承認待ち] / [完了]</code></li>
+		<li>サブエージェントの <code>(no description)</code> → <code>（説明なし）</code></li>
+	</ul>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">セッション一覧の情報密度（v0.5.17）</h4>
+	<ul style="margin: 12px 0 12px 24px;">
+		<li><strong>description 構成のカスタマイズ</strong> — <code>claudeManager.sessions.descriptionFields</code> で <code>live / agent / originalMsg / time / model / tags</code> の順序・要素を配列指定。</li>
+		<li><strong>日付グループ初期展開</strong> — <code>sessions.expandRecentDateGroupsOnly</code>（既定 ON）で「今日・昨日」のみ展開。</li>
+		<li><strong>ファイルサイズ列</strong> — <code>sessions.showFileSize</code>（既定 <code>count-sort-only</code>）で会話件数ソート時のみ表示。</li>
+	</ul>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">Get Started ウォークスルー（v0.5.18）</h4>
+	<p>コマンドパレットで <code>Get Started with Claude Session Manager</code> を実行すると、5 ステップの初期セットアップが開きます:</p>
+	<ol style="margin: 12px 0 12px 24px;">
+		<li>Claude Code の確認</li>
+		<li>取締役を登録</li>
+		<li>/csm-ask-agent スキルをインストール</li>
+		<li>エージェント監視を有効化</li>
+		<li>組織図を開いて確認</li>
+	</ol>
+	<p style="color: #888;">各ステップは対応コマンド実行または設定変更で自動的にチェック済みになります。セッション / メモリ / オーケストレーションの空ビューにもウェルカムメッセージが表示されます。</p>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">アクティビティバー削減（v0.5.18）</h4>
+	<p>アクティビティバーを <strong>5 アイコンから 4 アイコン</strong>（💬 セッション / 👤 エージェント / 🧠 メモリ / 📁 プロジェクト）に整理しました。オーケストレーションビューはエージェントコンテナ内へ移設されています。</p>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">組織図の強化（v0.5.18）</h4>
+	<ul style="margin: 12px 0 12px 24px;">
+		<li><strong>検索ボックス</strong> — 名前・役割で高速あいまい検索、一致ノードに <code>cy.animate fit</code> でズーム。</li>
+		<li><strong>凡例チップ</strong> — Fable / Opus / Sonnet / Haiku / 稼働中 をクリックで該当以外を半透明化。</li>
+	</ul>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">タブバー非表示化（v0.5.17）</h4>
+	<p>設定 <code>claudeManager.ui.showTabBar</code>（既定 ON）でサイドバー上部のタブ行を OFF にできます。アクティビティバーと重複するケースで有用です。</p>
 
 </div>
 

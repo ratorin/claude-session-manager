@@ -755,17 +755,17 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 		<div class="session-info">
 			<div class="info-main">
 				${/* v0.5.15/v0.5.19: h2 タイトル横のアクションボタン。
-				   「Claudeで開く」= Claude Code 拡張のUI（右クリックメニューと同一経路）、
-				   「CLIで開く」= 新規ターミナルで claude --resume（cwd 依存のためツールチップで注意喚起）。 */''}
+				   「Claude で開く」= Claude Code 拡張の UI（右クリックメニューと同一経路）、
+				   「CLI で開く」= 新規ターミナルで claude --resume（cwd 依存のためツールチップで注意喚起）。 */''}
 				<div class="title-row">
 					<h2>${escapeHtml(displayName)}</h2>
 					<div class="header-actions">
 						<button type="button" class="action-btn" id="openInClaudeBtn"
-							title="このセッションをClaude Code拡張の画面で開きます">▶ Claudeで開く</button>
+							title="このセッションを Claude Code 拡張の画面で再開します">▶ Claude で開く</button>
 						<button type="button" class="action-btn" id="openInCliBtn"
 							title="${session.cwd
-								? 'このセッションを新規ターミナルの claude CLI で再開します'
-								: 'このセッションを新規ターミナルの claude CLI で再開します（cwd 不明のためワークスペースルートで起動。作成時と cwd が異なると『No conversation found』で失敗する場合があります）'}">⌨ CLIで開く</button>
+								? 'このセッションを新規ターミナルで claude --resume として再開します'
+								: 'このセッションを新規ターミナルで claude --resume として再開します（cwd 不明のためワークスペースルートで起動。作成時と cwd が異なると『No conversation found』で失敗する場合があります）'}">⌨ CLI で開く</button>
 					</div>
 				</div>
 				<div class="meta-grid">
@@ -824,11 +824,11 @@ function getSessionHtml(session: ParsedSession, note: string, tags: string[], ag
 	<div class="chat-panel">
 		<div class="search-bar">
 			${/* v0.5.20: 検索は読み込み済みメッセージが対象。placeholder / title でその旨を明記 */''}
-			<input type="text" id="searchInput" placeholder="表示中のメッセージから検索" title="表示中のメッセージから検索します（『以前のメッセージを読み込む』で範囲を広げられます）">
+			<input type="text" id="searchInput" placeholder="表示中のメッセージから検索" title="表示中のメッセージからキーワードで絞り込みます（『▲ 以前のメッセージを読み込む』で対象範囲を広げられます）">
 		</div>
 		${currentHasOlder ? `
 		<div class="load-older-bar">
-			<button id="loadOlderBtn" class="action-btn" title="末尾から N 件のみ初期表示中。クリックでさらに ${vscode.workspace.getConfiguration('claudeManager').get<number>('preview.initialMessages', 200)} 件を追加読み">▲ 以前のメッセージを読み込む</button>
+			<button id="loadOlderBtn" class="action-btn" title="末尾から一定件数のみ初期表示中です。クリックで、さらに ${vscode.workspace.getConfiguration('claudeManager').get<number>('preview.initialMessages', 200)} 件を追加読み込みします">▲ 以前のメッセージを読み込む</button>
 		</div>
 		` : ''}
 		<div id="messages">

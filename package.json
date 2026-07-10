@@ -1,8 +1,8 @@
 {
 	"name": "claude-session-manager",
-	"displayName": "Claude Session Manager - セッション履歴管理",
-	"description": "Claude Codeの会話履歴・メモリを管理するVS Code拡張機能",
-	"version": "0.5.20",
+	"displayName": "Claude Session Manager — 会話履歴・エージェント運用",
+	"description": "Claude Code の会話履歴・メモリ・マルチエージェント運用を管理する VS Code 拡張機能。ブックマーク、タグ、検索、組織図、大容量セッションの高速ビューワー、利用制限モニターに対応。",
+	"version": "0.5.21",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -227,7 +227,7 @@
 			},
 			{
 				"command": "claudeManager.unbookmarkSession",
-				"title": "ブックマークから削除",
+				"title": "ブックマークを解除",
 				"icon": "$(star-full)",
 				"category": "Claude Session Manager"
 			},
@@ -305,7 +305,7 @@
 			},
 			{
 				"command": "claudeManager.copySessionId",
-				"title": "セッションIDをコピー",
+				"title": "セッション ID をコピー",
 				"icon": "$(copy)",
 				"category": "Claude Session Manager"
 			},
@@ -317,7 +317,7 @@
 			},
 			{
 				"command": "claudeManager.previewAgentByName",
-				"title": "エージェントプレビュー（名前指定）",
+				"title": "エージェントをプレビュー（名前指定）",
 				"icon": "$(eye)",
 				"category": "Claude Session Manager"
 			},
@@ -335,7 +335,7 @@
 			},
 			{
 				"command": "claudeManager.refreshOrchestration",
-				"title": "オーケストレーション更新",
+				"title": "オーケストレーションを更新",
 				"icon": "$(refresh)",
 				"category": "Claude Session Manager"
 			},
@@ -359,7 +359,7 @@
 			},
 			{
 				"command": "claudeManager.copyAgentSessionId",
-				"title": "セッションIDをコピー",
+				"title": "セッション ID をコピー",
 				"icon": "$(copy)",
 				"category": "Claude Session Manager"
 			},
@@ -383,7 +383,7 @@
 			},
 			{
 				"command": "claudeManager.groupAgents",
-				"title": "エージェント表示グループを切替",
+				"title": "エージェントのグループ表示を切替",
 				"icon": "$(list-tree)",
 				"category": "Claude Session Manager"
 			},
@@ -419,7 +419,7 @@
 			},
 			{
 				"command": "claudeManager.openAgentInClaude",
-				"title": "Claudeで開く（IDE）",
+				"title": "Claude で開く（IDE）",
 				"icon": "$(play)",
 				"category": "Claude Session Manager"
 			},
@@ -443,7 +443,7 @@
 			},
 			{
 				"command": "claudeManager.showPendingTasks",
-				"title": "確認待ち一覧",
+				"title": "確認待ち一覧を表示",
 				"icon": "$(checklist)",
 				"category": "Claude Session Manager"
 			},
@@ -455,7 +455,7 @@
 			},
 			{
 				"command": "claudeManager.openInClaude",
-				"title": "Claude Codeで開く",
+				"title": "Claude Code で開く",
 				"icon": {
 					"light": "resources/sparkle-light.svg",
 					"dark": "resources/sparkle-dark.svg"
@@ -500,13 +500,13 @@
 			},
 			{
 				"command": "claudeManager.sortSessions",
-				"title": "ソート",
+				"title": "ソート順を切替",
 				"icon": "$(arrow-swap)",
 				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.groupSessions",
-				"title": "グループ切替",
+				"title": "グループ表示を切替",
 				"icon": "$(list-tree)",
 				"category": "Claude Session Manager"
 			},
@@ -530,7 +530,7 @@
 			},
 			{
 				"command": "claudeManager.reportIssue",
-				"title": "不具合を報告（GitHub Issue作成）",
+				"title": "不具合を報告（GitHub Issue を作成）",
 				"icon": "$(bug)",
 				"category": "Claude Session Manager"
 			},
@@ -542,7 +542,7 @@
 			},
 			{
 				"command": "claudeManager.toggleSessionFilter",
-				"title": "プロジェクト/全て切替",
+				"title": "プロジェクト内 / すべて を切替",
 				"icon": "$(filter)",
 				"category": "Claude Session Manager"
 			},
@@ -584,13 +584,13 @@
 			},
 			{
 				"command": "claudeManager.toggleBookmarkFilter",
-				"title": "プロジェクト/全て切替",
+				"title": "プロジェクト内 / すべて を切替",
 				"icon": "$(filter)",
 				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.toggleMemoryFilter",
-				"title": "プロジェクト/全て切替",
+				"title": "プロジェクト内 / すべて を切替",
 				"icon": "$(filter)",
 				"category": "Claude Session Manager"
 			},
@@ -608,13 +608,13 @@
 			},
 			{
 				"command": "claudeManager.installAskAgentHook",
-				"title": "/csm-ask-agent hookをインストール（プロジェクト）",
+				"title": "/csm-ask-agent フックをインストール（プロジェクト）",
 				"icon": "$(shield)",
 				"category": "Claude Session Manager"
 			},
 			{
 				"command": "claudeManager.migrateRuleFiles",
-				"title": "ルールファイルを一括移行（YAML + フォルダ構造）",
+				"title": "ルールファイルを一括移行（YAML フロントマター + フォルダ構造）",
 				"icon": "$(arrow-up)",
 				"category": "Claude Session Manager"
 			},
@@ -937,7 +937,7 @@
 						"type": "boolean",
 						"default": true,
 						"order": 2,
-						"markdownDescription": "エージェント監視を有効にします。ONにするとステータスバーに稼働中エージェントをリアルタイム表示します。\n\n⚠️ **有効にするとPC負荷が若干上がります**（定期的なセッション状態チェックのため）"
+						"markdownDescription": "エージェント監視を有効にします。ON にするとステータスバーに稼働中エージェントをリアルタイム表示します。\n\n⚠️ **有効にすると PC 負荷が若干上がります**（定期的なセッション状態チェックのため）"
 					},
 					"claudeManager.agentMonitorInterval": {
 						"type": "number",
@@ -951,7 +951,7 @@
 						"type": "boolean",
 						"default": true,
 						"order": 3,
-						"description": "タスク完了・エラー・停止時のVS Code通知を有効にする"
+						"description": "タスク完了・エラー・停止時に VS Code の通知を表示します"
 					},
 					"claudeManager.taskStalledThreshold": {
 						"type": "number",
@@ -959,7 +959,7 @@
 						"minimum": 10,
 						"maximum": 600,
 						"order": 4,
-						"description": "stalled判定の閾値（秒）。この時間セッションの更新がないと停止扱い"
+						"description": "応答停止（stalled）判定の閾値（秒）。この時間セッションが更新されないと停止扱いになります"
 					},
 					"claudeManager.taskErrorThreshold": {
 						"type": "number",
@@ -967,7 +967,7 @@
 						"minimum": 60,
 						"maximum": 7200,
 						"order": 4,
-						"description": "error判定の閾値（秒）。対話セッションの無操作を誤検知しないよう既定30分。サブエージェント専用に縮めたい場合は600秒などに"
+						"description": "エラー判定の閾値（秒）。対話セッションの無操作を誤検知しないよう既定は 30 分。サブエージェント専用に縮めたい場合は 600 秒などに調整してください"
 					},
 					"claudeManager.taskAutoCleanupHours": {
 						"type": "number",
@@ -975,7 +975,7 @@
 						"minimum": 1,
 						"maximum": 720,
 						"order": 5,
-						"description": "完了/エラーのタスクログを自動削除するまでの時間（時間）"
+						"description": "完了・エラーのタスクログを自動削除するまでの時間（時間単位）"
 					},
 					"claudeManager.taskMaxLogs": {
 						"type": "number",
@@ -983,13 +983,13 @@
 						"minimum": 10,
 						"maximum": 500,
 						"order": 6,
-						"description": "保持するタスクログの最大件数"
+						"description": "保持するタスクログの最大件数です"
 					},
 					"claudeManager.enableUsageMonitor": {
 						"type": "boolean",
 						"default": true,
 						"order": 7,
-						"markdownDescription": "Claude Code利用制限をステータスバーに表示します。\n\n⚠️ 有効にするとAnthropic APIへの軽量リクエストが定期的に発生します（更新間隔に応じてコスト発生、月額$0.01未満）"
+						"markdownDescription": "Claude Code の利用制限をステータスバーに表示します。\n\n⚠️ 有効にすると Anthropic API への軽量リクエストが定期的に発生します（更新間隔に応じてコスト発生、月額 $0.01 未満）"
 					},
 					"claudeManager.usageMonitorInterval": {
 						"type": "number",
@@ -1003,7 +1003,7 @@
 						"type": "boolean",
 						"default": true,
 						"order": 9,
-						"description": "ステータスバーに Sonnet 5日 / Opus 5日 の利用率列を表示する（S xx% / O xx% 形式）。OFFにすると従来の 5h / 7d 表示のみになります"
+						"description": "ステータスバーに Sonnet 5日 / Opus 5日 の利用率列を表示します（`S xx% / O xx%` 形式）。OFF にすると従来どおり 5h / 7d の表示のみになります"
 					},
 					"claudeManager.usage.statusBarStyle": {
 						"type": "string",
@@ -1014,18 +1014,18 @@
 							"max-only"
 						],
 						"enumDescriptions": [
-							"フル表示（5h ・ 7d ・ Sonnet 5d ・ Opus 5d をパーセントとリセット時刻付きで表示）",
-							"コンパクト表示（リセット時刻を省略し、パーセントのみ）",
-							"最逼迫のみ（もっとも利用率が高い1枠のみ表示）"
+							"フル表示（5h ・ 7d ・ Sonnet 5d ・ Opus 5d をパーセントとリセット時刻付きで表示します）",
+							"コンパクト表示（リセット時刻を省略し、パーセントのみ表示します）",
+							"最逼迫のみ表示（もっとも利用率が高い 1 枠のみ表示します）"
 						],
 						"order": 9,
-						"markdownDescription": "ステータスバーの表示スタイル。\n\n- **full**: `5% 4.5h / 7% 7d / S 3% 5d20h / O 20% 5d10h`\n- **compact**: `5% / 7% / S 3% / O 20%`\n- **max-only**: 最逼迫の枠のみ `O 20% 5d10h`\n\n詳細は常に tooltip / 利用率メニューから参照可能"
+						"markdownDescription": "ステータスバーの利用率表示のスタイルです。\n\n- **full**: `5% 4.5h / 7% 7d / S 3% 5d20h / O 20% 5d10h`\n- **compact**: `5% / 7% / S 3% / O 20%`\n- **max-only**: 最逼迫の枠のみ `O 20% 5d10h`\n\n詳細は常にツールチップと利用率メニュー（ステータスバークリック）から参照できます。"
 					},
 					"claudeManager.hooks.desktopNotification.enabled": {
 						"type": "boolean",
 						"default": false,
 						"order": 10,
-						"markdownDescription": "セッション終了時にターミナルベル（\\u0007）を発火してデスクトップ通知を行います。\n\n**Claude Code 2.1.141+** の `terminalSequence` 機能を使用します。ターミナルエミュレーターの通知設定も有効にしてください。\n\nOFF がデフォルトです（opt-in）。"
+						"markdownDescription": "セッション終了時にターミナルベル（`\\u0007`）を発火してデスクトップ通知を行います。\n\n**Claude Code 2.1.141 以降** の `terminalSequence` 機能を利用します。あわせてターミナルエミュレーター側の通知設定も有効にしてください。\n\n既定は OFF（オプトイン）です。"
 					}
 				}
 			},
@@ -1054,7 +1054,7 @@
 							"会話件数順",
 							"モデル順"
 						],
-						"description": "セッション一覧のデフォルトのソート順"
+						"description": "セッション一覧の既定のソート順です"
 					},
 					"claudeManager.defaultGroupMode": {
 						"type": "string",
@@ -1071,14 +1071,14 @@
 							"エージェント別",
 							"グループなし"
 						],
-						"description": "セッション一覧のデフォルトのグループ化"
+						"description": "セッション一覧の既定のグループ化方式です"
 					},
 					"claudeManager.maxSessionsShown": {
 						"type": "number",
 						"default": 500,
 						"minimum": 10,
 						"maximum": 5000,
-						"description": "セッション一覧に表示する最大件数。多すぎると動作が重くなる場合があります"
+						"description": "セッション一覧に表示する最大件数です。件数が多すぎると動作が重くなる場合があります"
 					},
 					"claudeManager.additionalAgentDirs": {
 						"type": "array",
@@ -1086,7 +1086,7 @@
 						"items": {
 							"type": "string"
 						},
-						"markdownDescription": "追加でスキャンするプロジェクトフォルダのリスト。各フォルダの `.claude/agents/` 内のエージェント定義を読み込みます。\n\n例: `[\"c:\\\\workspace\\\\CMS\", \"c:\\\\GDrive\"]`"
+						"markdownDescription": "追加でスキャンするプロジェクトフォルダのリストです。各フォルダの `.claude/agents/` 内のエージェント定義を読み込みます。\n\n例: `[\"c:\\\\workspace\\\\CMS\", \"c:\\\\GDrive\"]`"
 					},
 					"claudeManager.sessionFilterMode": {
 						"type": "string",
@@ -1096,10 +1096,10 @@
 							"all"
 						],
 						"enumDescriptions": [
-							"現在のプロジェクトのセッションのみ表示",
-							"すべてのセッションを表示"
+							"現在のプロジェクトのセッションのみ表示します",
+							"すべてのセッションを表示します"
 						],
-						"description": "会話一覧のフィルターモード"
+						"description": "会話一覧のフィルターモードです"
 					},
 					"claudeManager.sessions.descriptionFields": {
 						"type": "array",
@@ -1122,19 +1122,19 @@
 							],
 							"enumDescriptions": [
 								"ライブマーク（●）",
-								"紐づけエージェント（🤖name）",
+								"紐づけエージェント（🤖 name）",
 								"元のメッセージ（タイトル変更時のみ）",
 								"時刻（HH:MM）",
-								"モデル短縮名（頭文字と重複するため既定でOFF）",
-								"タグ [tag1, tag2]"
+								"モデル短縮名（頭文字と重複するため既定で OFF）",
+								"タグ（[tag1, tag2] 形式）"
 							]
 						},
-						"markdownDescription": "セッション一覧の description（右側）に表示する要素と順序。既定でモデル短縮名は含まれません（頭文字と重複するため）。\n\n順序も反映されます。例: `[\"live\",\"time\"]` にすると `● 12:34` のみが表示されます。"
+						"markdownDescription": "セッション一覧の description 欄（右側）に表示する要素と順序を指定します。既定ではモデル短縮名を含めません（頭文字と重複するため）。\n\n配列の順序が表示順に反映されます。例: `[\"live\",\"time\"]` にすると `● 12:34` のみが表示されます。"
 					},
 					"claudeManager.sessions.expandRecentDateGroupsOnly": {
 						"type": "boolean",
 						"default": true,
-						"description": "日付グループを『今日・昨日』のみ初期展開し、それ以前は初期折り畳みにします。OFF にすると従来どおり全展開します。"
+						"description": "日付グループを『今日 / 昨日』のみ初期展開し、それ以前は折り畳みで表示します。OFF にすると従来どおり全展開になります"
 					},
 					"claudeManager.sessions.showFileSize": {
 						"type": "string",
@@ -1149,7 +1149,7 @@
 							"会話件数ソート時のみ表示（既定）",
 							"表示しない"
 						],
-						"description": "セッションラベル前のファイルサイズ列の表示条件"
+						"description": "セッションラベル前のファイルサイズ列の表示条件です"
 					}
 				}
 			},
@@ -1160,46 +1160,46 @@
 					"claudeManager.ui.showTabBar": {
 						"type": "boolean",
 						"default": true,
-						"markdownDescription": "サイドバー上部のタブ行（💬 セッション / 👤 エージェント / 🧠 メモリ / 📁 プロジェクト）を表示します。\n\nActivity Bar と重複するため OFF にできます。OFF でもステータス行と Activity Bar は残ります。アクティブタブは iconPath の色で表現されます。"
+						"markdownDescription": "サイドバー上部のタブ行（💬 セッション / 👤 エージェント / 🧠 メモリ / 📁 プロジェクト）を表示します。\n\nアクティビティバーと機能が重複するため OFF にできます。OFF にしてもステータス行とアクティビティバーは残ります。アクティブタブは iconPath の色で表現されます。"
 					},
 					"claudeManager.preview.showThinkingBlocks": {
 						"type": "boolean",
 						"default": false,
-						"description": "Claudeが回答前に内部で考えた思考プロセスをセッションプレビューに表示します"
+						"description": "Claude が回答前に内部で考えた思考プロセスをセッションプレビューに表示します"
 					},
 					"claudeManager.preview.initialMessages": {
 						"type": "number",
 						"default": 200,
 						"minimum": 20,
 						"maximum": 2000,
-						"markdownDescription": "セッションビューワーで初期表示するメッセージの件数（末尾から）。大容量セッション（数十MB〜数百MB）の起動高速化のため、これを超える古いメッセージはヘッダの『以前のメッセージを読み込む』で追加取得します（v0.5.20 追加）"
+						"markdownDescription": "セッションビューワーで初期表示するメッセージの件数（末尾から）です。大容量セッション（数十 MB 〜 数百 MB）の起動高速化のため、これを超える古いメッセージはヘッダの『▲ 以前のメッセージを読み込む』で追加取得します（v0.5.20 追加）。"
 					},
 					"claudeManager.preview.maxMessageBytes": {
 						"type": "number",
 						"default": 4096,
 						"minimum": 512,
 						"maximum": 65536,
-						"markdownDescription": "1メッセージの初期描画の最大バイト数。超過分は『全文を表示』ボタンでオンデマンド取得します。巨大なツール出力（Read/Bash 大量出力）による起動遅延を防止（v0.5.20 追加）"
+						"markdownDescription": "1 メッセージの初期描画の最大バイト数です。超過分は『全文を表示』ボタンでオンデマンド取得します。巨大なツール出力（Read / Bash の大量出力）による起動遅延を防止します（v0.5.20 追加）。"
 					},
 					"claudeManager.trash.folder": {
 						"type": "string",
 						"default": "",
-						"description": "削除したセッションの移動先フォルダ。未設定の場合は ~/.claude/.trash/ を使用します"
+						"description": "削除したセッションの移動先フォルダです。未設定の場合は `~/.claude/.trash/` を使用します"
 					},
 					"claudeManager.agent.defaultHistoryEnabled": {
 						"type": "boolean",
 						"default": false,
-						"description": "新規エージェント作成時にHISTORY.md（セッション履歴記録）を自動生成する"
+						"description": "新規エージェント作成時に HISTORY.md（セッション履歴記録）を自動生成します"
 					},
 					"claudeManager.agent.defaultTodoEnabled": {
 						"type": "boolean",
 						"default": false,
-						"description": "新規エージェント作成時にTODO.md（タスク管理）を自動生成する"
+						"description": "新規エージェント作成時に TODO.md（タスク管理）を自動生成します"
 					},
 					"claudeManager.agents.showOtherProjects": {
 						"type": "boolean",
 						"default": true,
-						"description": "他プロジェクトのエージェントをエージェント一覧に表示する（灰色で表示）。OFFにすると現在のワークスペースのエージェントのみ表示"
+						"description": "他プロジェクトのエージェントをエージェント一覧に灰色で表示します。OFF にすると現在のワークスペースのエージェントのみを表示します"
 					},
 					"claudeManager.agents.defaultExpand": {
 						"type": "array",
@@ -1210,7 +1210,7 @@
 							"bookmarks",
 							"recent"
 						],
-						"description": "エージェントタブで起動時に展開するセクション（bookmarks / recent / global / project）"
+						"description": "エージェントタブで起動時に展開するセクション（`bookmarks` / `recent` / `global` / `project`）です"
 					},
 					"claudeManager.agents.expandMode": {
 						"type": "string",
@@ -1221,16 +1221,16 @@
 							"top-level"
 						],
 						"enumDescriptions": [
-							"全て展開",
+							"すべて展開",
 							"稼働中の枝のみ展開（既定）",
-							"トップレベルのみ展開（子を折りたたむ）"
+							"トップレベルのみ展開（子を折り畳む）"
 						],
-						"description": "エージェント一覧の起動時の展開状態（v0.5.18 追加）"
+						"description": "エージェント一覧の起動時の展開状態です（v0.5.18 追加）"
 					},
 					"claudeManager.agents.activeOnly": {
 						"type": "boolean",
 						"default": false,
-						"description": "エージェント一覧・ライブ状態ビューで稼働中のエージェントのみを表示するフィルタ。ツールバーの $(filter) から切替可能（v0.5.18 追加）"
+						"description": "エージェント一覧・ライブ状態ビューで稼働中のエージェントのみを表示するフィルタです。ツールバーの $(filter) アイコンから切替できます（v0.5.18 追加）"
 					},
 					"claudeManager.agents.defaultGroupMode": {
 						"type": "string",
@@ -1242,39 +1242,39 @@
 							"flat"
 						],
 						"enumDescriptions": [
-							"組織図（現行の親子関係グルーピング）",
-							"モデル別（fable/opus/sonnet/haiku…）",
+							"組織図（現行の親子関係でグルーピング）",
+							"モデル別（Fable / Opus / Sonnet / Haiku …）",
 							"状態別（稼働中 / 待機 / 未紐づけ）",
 							"フラット（グルーピングなし・名前順）"
 						],
-						"description": "エージェント一覧のグルーピング方式（v0.5.18 追加）"
+						"description": "エージェント一覧のグルーピング方式です（v0.5.18 追加）"
 					},
 					"claudeManager.claudeAgentsIntegration.enabled": {
 						"type": "boolean",
 						"default": false,
-						"description": "廃止予定: claude agents コマンドは TTY 必須のため VS Code 拡張から使用不可。ライブ状態は PID/JSONL 監視 (enableAgentMonitor) で代替。"
+						"description": "（廃止予定）`claude agents` コマンドは TTY 必須のため VS Code 拡張からは利用できません。ライブ状態は PID / JSONL 監視（`enableAgentMonitor`）で代替します"
 					},
 					"claudeManager.claudeAgentsIntegration.pollingIntervalMs": {
 						"type": "number",
 						"default": 5000,
 						"minimum": 1000,
 						"maximum": 60000,
-						"description": "claude agents のポーリング間隔（ミリ秒）。デフォルト: 5000ms"
+						"description": "（廃止予定）`claude agents` のポーリング間隔（ミリ秒）です。既定は 5000 ms"
 					},
 					"claudeManager.claudeAgentsIntegration.scopeToWorkspace": {
 						"type": "boolean",
 						"default": true,
-						"description": "ライブ状態表示を現在のワークスペース（--cwd）に絞り込む"
+						"description": "（廃止予定）ライブ状態表示を現在のワークスペース（`--cwd`）に絞り込みます"
 					},
 					"claudeManager.claudeAgentsIntegration.showUnregistered": {
 						"type": "boolean",
 						"default": true,
-						"description": "CSM に未登録のセッションもライブ状態セクションに表示する"
+						"description": "（廃止予定）CSM に未登録のセッションもライブ状態セクションに表示します"
 					},
 					"claudeManager.useNewMainPanel": {
 						"type": "boolean",
 						"default": true,
-						"description": "v0.5.0 の新しい3タブUI (claudeMain) を使う。false にすると旧 5 TreeView (会話一覧/ブックマーク/タグ/エージェント管理/メモリ管理) に戻る。変更後は VS Code を再起動してください"
+						"description": "v0.5.0 で追加した新しいプロジェクトタブ UI（`claudeMain`）を使用します。OFF にすると旧 5 TreeView（会話一覧 / ブックマーク / タグ / エージェント管理 / メモリ管理）に戻ります。変更後は VS Code を再起動してください"
 					},
 					"claudeManager.locale": {
 						"type": "string",
@@ -1287,7 +1287,7 @@
 							"日本語",
 							"English"
 						],
-						"description": "UIの表示言語。変更後はVS Codeを再起動してください"
+						"description": "UI の表示言語です。変更後は VS Code を再起動してください"
 					},
 					"claudeManager.locale.autoTranslate": {
 						"type": "boolean",
@@ -1304,12 +1304,12 @@
 							"projects"
 						],
 						"enumDescriptions": [
-							"セッションタブを起動時に表示",
-							"エージェントタブを起動時に表示",
-							"メモリタブを起動時に表示",
-							"プロジェクトタブを起動時に表示"
+							"起動時にセッションタブを表示します",
+							"起動時にエージェントタブを表示します",
+							"起動時にメモリタブを表示します",
+							"起動時にプロジェクトタブを表示します"
 						],
-						"description": "メインビューを開いた際のデフォルトタブ"
+						"description": "メインビューを開いた際に最初に表示するタブ（既定）です"
 					}
 				}
 			}
