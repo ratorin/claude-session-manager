@@ -707,6 +707,8 @@ test('K1 §4-2 formatUsageText: full / compact / max-only スタイルの出力'
 		usage7d: 10, reset7d: now + 86400 * 7,      // 7d 残
 		usageSonnet5d: 3, resetSonnet5d: now + 86400 * 5,
 		usageOpus5d: 20, resetOpus5d: now + 86400 * 5 + 3600 * 10,
+		// v0.5.22: Fable 5d はヘッダ非提供の想定（-1 でグレースフルフォールバック）
+		usageFable5d: -1, resetFable5d: 0,
 		overageUtilization: -1, overageStatus: '', overageReset: 0, fetchedAt: 0,
 	};
 	// full = デフォルト表示 (label + % + リセット時刻)
@@ -714,20 +716,21 @@ test('K1 §4-2 formatUsageText: full / compact / max-only スタイルの出力'
 	assert.match(full, /5% [\d.]+h/, 'full: 5h 情報付き');
 	assert.match(full, / \/ S 3% /, 'full: S 5d 表示');
 	assert.match(full, / \/ O 20% /, 'full: O 5d 表示');
+	assert.doesNotMatch(full, / \/ F /, 'full: Fable 5d はヘッダ未提供時に非表示（グレースフルフォールバック）');
 	// compact = リセット時刻省略
 	const compact = usageMonitor.formatUsageText(data, true, 'compact');
-	assert.match(compact, /^5% \/ S 3% \/ O 20%$/, 'compact: %のみ');
+	assert.match(compact, /^5% \/ S 3% \/ O 20%$/, 'compact: %のみ（Fable は非表示）');
 	// max-only = 最も逼迫している1枠のみ
 	const maxOnly = usageMonitor.formatUsageText(data, true, 'max-only');
 	assert.match(maxOnly, /^O 20% /, 'max-only: Opus 5d が最大 → その1枠のみ');
 });
 
-test('K2 §4-2 USAGE_MULTIDAY_COLUMNS: 配列駆動化（Fable 追加時に 1 行足すだけで済むか）', () => {
+test('K2 §4-2 USAGE_MULTIDAY_COLUMNS: 配列駆動化（v0.5.22 で fable-5d を追加）', () => {
 	const { usageMonitor } = loadFresh(setupTmpHome());
 	assert.ok(Array.isArray(usageMonitor.USAGE_MULTIDAY_COLUMNS), 'USAGE_MULTIDAY_COLUMNS が配列');
-	// Sprint C-1 時点: sonnet-5d, opus-5d の 2 件
+	// v0.5.22 時点: sonnet-5d, opus-5d, fable-5d の 3 件
 	const keys = usageMonitor.USAGE_MULTIDAY_COLUMNS.map((c) => c.key);
-	assert.deepEqual(keys, ['sonnet-5d', 'opus-5d'], 'sonnet-5d と opus-5d のみ登録');
+	assert.deepEqual(keys, ['sonnet-5d', 'opus-5d', 'fable-5d'], '3 列（fable-5d 追加済み）');
 	// 各列は getUsage / getReset / label を持つ（型契約）
 	for (const c of usageMonitor.USAGE_MULTIDAY_COLUMNS) {
 		assert.equal(typeof c.getUsage, 'function');
@@ -735,6 +738,27 @@ test('K2 §4-2 USAGE_MULTIDAY_COLUMNS: 配列駆動化（Fable 追加時に 1 �
 		assert.equal(typeof c.label, 'string');
 		assert.equal(typeof c.longLabel, 'string');
 	}
+});
+
+test('K3 v0.5.22 Fable 5d のグレースフルフォールバック: ヘッダ非提供時は非表示', () => {
+	const { usageMonitor } = loadFresh(setupTmpHome());
+	const now = Math.floor(Date.now() / 1000);
+	// ケース1: Fable ヘッダ非提供（-1）→ 非表示
+	const noFable = {
+		usage5h: 1, reset5h: now + 3600,
+		usage7d: 2, reset7d: now + 86400,
+		usageSonnet5d: -1, resetSonnet5d: 0,
+		usageOpus5d: -1, resetOpus5d: 0,
+		usageFable5d: -1, resetFable5d: 0,
+		overageUtilization: -1, overageStatus: '', overageReset: 0, fetchedAt: 0,
+	};
+	const outNo = usageMonitor.formatUsageText(noFable, true, 'full');
+	assert.doesNotMatch(outNo, /F \d/, 'Fable 5d 非提供時は F 列が出ない');
+
+	// ケース2: Fable ヘッダあり（>=0）→ 表示される
+	const withFable = { ...noFable, usageFable5d: 15, resetFable5d: now + 86400 * 5 };
+	const outYes = usageMonitor.formatUsageText(withFable, true, 'full');
+	assert.match(outYes, /F 15%/, 'Fable 5d 提供時は F 列が出る');
 });
 
 test('J7 レビュー修正(3) isSessionInAnyWorkspace: projectFilter/decoration 共通判定', () => {
@@ -1006,5 +1030,159 @@ test('N6 v0.5.20 loadSessionTail: hasOlder=false（小さいファイル）は�
 	const r = await sessionLoader.loadSessionTail(fp, 200, false);
 	assert.equal(r.session.messages.length, 20, '10 pair = 20 メッセージ');
 	assert.equal(r.hasOlder, false, '全件取得済み');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// O. v0.5.22 CC 追従（sessions/*.json リッチメタ / effort max 全モデル / Fable 5d）
+// ════════════════════════════════════════════════════════════════════════════
+
+test('O1 v0.5.22 modelCatalog.allowsMaxEffort: 全モデル true（CC 実仕様に合わせ緩和）', () => {
+	const home = setupTmpHome();
+	const { agentUtils } = loadFresh(home);
+	// modelCatalog を直接 require（agentUtils から再エクスポートされていないので）
+	const catalog = require(path.join(REPO, 'out', 'models', 'modelCatalog'));
+	const cats = catalog.MODEL_CATALOG;
+	for (const key of Object.keys(cats)) {
+		assert.equal(cats[key].allowsMaxEffort, true, `${key} は Max effort 選択可`);
+	}
+	// agentUtils も同一インスタンスで参照できる（型契約の間接確認）
+	assert.equal(typeof agentUtils, 'object');
+});
+
+test('O2 v0.5.22 SessionJsonMeta 型（レビュー修正 L3 で liveAgentTypes.ts に一本化）', () => {
+	const home = setupTmpHome();
+	loadFresh(home);
+	// レビュー修正 L3: 匿名型が SessionJsonMeta に一本化されているかをソース静的確認
+	const liveTypesSrc = fs.readFileSync(path.join(REPO, 'src', 'services', 'liveAgentTypes.ts'), 'utf-8');
+	assert.match(liveTypesSrc, /export interface SessionJsonMeta/, 'SessionJsonMeta が liveAgentTypes.ts に定義');
+	assert.match(liveTypesSrc, /startedAt\?: number;/, 'SessionJsonMeta.startedAt（レビュー修正 M2 対応）');
+	assert.match(liveTypesSrc, /agent\?: string;/, 'SessionJsonMeta.agent');
+	// agentWatcher.ts が匿名型を撤去して SessionJsonMeta を使っているか
+	const watcherSrc = fs.readFileSync(path.join(REPO, 'src', 'watchers', 'agentWatcher.ts'), 'utf-8');
+	assert.match(watcherSrc, /import\s*\{[^}]*SessionJsonMeta[^}]*\}\s*from\s*['"]\.\.\/services\/liveAgentTypes['"]/, 'SessionJsonMeta を import');
+	assert.match(watcherSrc, /sessionMetaMap\s*=\s*new Map<string, SessionJsonMeta>/, 'sessionMetaMap は SessionJsonMeta 型');
+	// 匿名型（kind?: string; entrypoint?: string; ... のインライン記述）が残っていないこと
+	// getLiveSessionMetaMap の戻り値も統一
+	assert.match(watcherSrc, /getLiveSessionMetaMap\(\)\s*:\s*Map<string, SessionJsonMeta>/, 'getter 戻り値も一本化');
+	// types.ts の SessionMeta（全体像）は保持されつつ startedAt を維持
+	const typesSrc = fs.readFileSync(path.join(REPO, 'src', 'models', 'types.ts'), 'utf-8');
+	assert.match(typesSrc, /interface SessionMeta[\s\S]+?startedAt: number;/, 'SessionMeta.startedAt（実物ベース）');
+	assert.match(typesSrc, /interface SessionMeta[\s\S]+?version\?: string;/, 'SessionMeta.version');
+	assert.match(typesSrc, /sessionKind\?: string;/, 'AgentWatcherState.sessionKind');
+	assert.match(typesSrc, /sessionName\?: string;/, 'AgentWatcherState.sessionName');
+	assert.match(typesSrc, /sessionAgent\?: string;/, 'AgentWatcherState.sessionAgent');
+});
+
+test('O3 v0.5.22 死蔵撤去: claudeAgentsService.ts が src/ に存在しないこと', () => {
+	// .trash/ へ退避済みで、src/services/ には残っていないはず
+	const inSrc = fs.existsSync(path.join(REPO, 'src', 'services', 'claudeAgentsService.ts'));
+	assert.equal(inSrc, false, 'src/services/claudeAgentsService.ts は撤去済み');
+	// 型・ヘルパは liveAgentTypes.ts に切り出し済み
+	const typesFile = path.join(REPO, 'src', 'services', 'liveAgentTypes.ts');
+	assert.equal(fs.existsSync(typesFile), true, 'liveAgentTypes.ts が新設されている');
+});
+
+test('O4 v0.5.22 package.json: claudeAgentsIntegration.* 設定 4 種が削除されている', () => {
+	const pkg = require(path.join(REPO, 'package.json'));
+	const props = pkg.contributes.configuration.flatMap((c) => Object.keys(c.properties || {}));
+	const legacy = props.filter((k) => k.startsWith('claudeManager.claudeAgentsIntegration.'));
+	assert.deepEqual(legacy, [], `claudeAgentsIntegration.* は撤去済み（残: ${legacy.join(', ') || 'なし'}）`);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// P. v0.5.22 コードレビュー修正の回帰テスト
+// ════════════════════════════════════════════════════════════════════════════
+
+test('P1 レビュー修正 M2: orchestrationViewModel が startedAt を使い elapsedSec を計算する', () => {
+	// ソース静的検証: startedAt 収集 + elapsedSec 計算ロジックが存在すること
+	const watcherSrc = fs.readFileSync(path.join(REPO, 'src', 'watchers', 'agentWatcher.ts'), 'utf-8');
+	assert.match(
+		watcherSrc,
+		/startedAt:\s*typeof\s+data\.startedAt\s*===\s*['"]number['"]\s*\?\s*data\.startedAt\s*:\s*undefined/,
+		'agentWatcher.update() が startedAt を meta に収集する',
+	);
+	const vmSrc = fs.readFileSync(path.join(REPO, 'src', 'services', 'orchestrationViewModel.ts'), 'utf-8');
+	assert.match(
+		vmSrc,
+		/const\s+startedAt\s*=\s*meta\?\.startedAt/,
+		'orchestrationViewModel が meta.startedAt を読む',
+	);
+	assert.match(
+		vmSrc,
+		/Math\.floor\(\(now\s*-\s*startedAt\)\s*\/\s*1000\)/,
+		'elapsedSec = (now - startedAt) / 1000 で計算',
+	);
+	// undefined 時は経過時間行を隠す
+	const treeSrc = fs.readFileSync(path.join(REPO, 'src', 'providers', 'orchestrationTreeProvider.ts'), 'utf-8');
+	assert.match(
+		treeSrc,
+		/session\.elapsedSec\s*!==\s*undefined\s*\?\s*formatElapsed\(session\.elapsedSec\)\s*:\s*undefined/,
+		'startedAt 不明時は elapsed を undefined にして tooltip / description から非表示',
+	);
+});
+
+test('P2 レビュー修正 L2: orchestrationViewModel が公式 kind を厳密に優先（interactive を上書きしない）', () => {
+	const vmSrc = fs.readFileSync(path.join(REPO, 'src', 'services', 'orchestrationViewModel.ts'), 'utf-8');
+	// 旧: `(!meta?.kind || kind === 'interactive') && subagents.length >= 3`
+	// 新: `meta?.kind === undefined && subagents.length >= 3` — 公式 kind='interactive' は絶対に尊重
+	assert.match(
+		vmSrc,
+		/isWorkflowLike\s*=\s*kind\s*===\s*['"]background['"]/,
+		'公式 background は最優先',
+	);
+	assert.match(
+		vmSrc,
+		/meta\?\.kind\s*===\s*undefined\s*&&\s*subagents\.length\s*>=\s*3/,
+		'ヒューリスティックのフォールバックは meta.kind が undefined のときのみ',
+	);
+	// 旧パターンが残っていないこと（明示 interactive でも上書きする挙動）
+	assert.doesNotMatch(
+		vmSrc,
+		/kind\s*===\s*['"]interactive['"]\s*\)\s*&&\s*subagents\.length\s*>=\s*3/,
+		'旧: kind=interactive を上書きするパターンが撤去済み',
+	);
+});
+
+test('P3 レビュー修正 M3: package.json に agents.showUnregisteredLive が宣言されている', () => {
+	const pkg = require(path.join(REPO, 'package.json'));
+	const found = pkg.contributes.configuration
+		.flatMap((c) => Object.entries(c.properties || {}))
+		.find(([k]) => k === 'claudeManager.agents.showUnregisteredLive');
+	assert.ok(found, 'agents.showUnregisteredLive が configuration に存在');
+	const [, def] = found;
+	assert.equal(def.type, 'boolean');
+	assert.equal(def.default, true);
+	assert.match(def.description, /旧.*showUnregistered/, 'description に旧設定からの移行言及がある');
+});
+
+test('P4 レビュー修正 L1: agent 補強ループで setAgentSession=false でも processedAutoLinkSids にマーク', () => {
+	const watcherSrc = fs.readFileSync(path.join(REPO, 'src', 'watchers', 'agentWatcher.ts'), 'utf-8');
+	// 修正パターン: setAgentSession の戻り値に関わらず add する（linked 変数の外で add）
+	// ヒューリスティック: for ループ内で「this.processedAutoLinkSids.add(sid);」の後に
+	// 条件無しで onDidChange.fire が続いていないことを確認しつつ、add が linked チェックの前にあること
+	assert.match(
+		watcherSrc,
+		/const\s+linked\s*=\s*await\s+dataStore\.setAgentSession[\s\S]{1,200}?this\.processedAutoLinkSids\.add\(sid\);/,
+		'setAgentSession 呼び出し直後に processedAutoLinkSids.add が来る（linked=false でも同じ扱い）',
+	);
+});
+
+test('P5 レビュー修正 M1: agentLiveTreeProvider のラベルに entry.sessionName が挿入されている', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'providers', 'agentLiveTreeProvider.ts'), 'utf-8');
+	// 優先順位: view.linkedDisplayName → entry.agentName → entry.sessionName → sid8
+	assert.match(
+		src,
+		/view\.linkedDisplayName[\s\S]{0,60}?entry\.agentName[\s\S]{0,60}?entry\.sessionName/,
+		'CC 公式 sessionName がフォールバックとして entry.agentName の次に来る',
+	);
+});
+
+test('P6 レビュー修正 L4: orchestrationTreeProvider が監視 OFF ガードを持つ', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'providers', 'orchestrationTreeProvider.ts'), 'utf-8');
+	assert.match(
+		src,
+		/!this\._agentWatcher\.isEnabled\(\)[\s\S]{0,300}?エージェント監視が無効です/,
+		'isEnabled() チェックと専用メッセージが存在',
+	);
 });
 

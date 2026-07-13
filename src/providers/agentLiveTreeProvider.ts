@@ -1,7 +1,7 @@
 // agentLiveTreeProvider.ts — ライブ状態エージェント専用 TreeDataProvider
-// データソース:
-//   優先: ClaudeAgentsService (claude agents --json, 2.1.145+)
-//   フォールバック: AgentWatcher (PID/JSONL 監視、claude agents 未対応環境)
+// v0.5.22: claude agents --json 依存を撤去。agentWatcher（PID + sessions/*.json）が
+// 唯一のライブデータソース。sessions/*.json の kind/name/nameSource/agent 等の
+// 公式メタも tooltip / description に反映する。
 
 import * as vscode from 'vscode';
 import * as path from 'path';
@@ -9,9 +9,8 @@ import * as dataStore from '../models/dataStore';
 import {
 	LiveAgentView,
 	ClaudeAgentEntry,
-	ClaudeAgentsService,
 	formatElapsed,
-} from '../services/claudeAgentsService';
+} from '../services/liveAgentTypes';
 import { AgentWatcher } from '../watchers/agentWatcher';
 
 type LiveTreeNode = LiveAgentItem | LiveStatusMessageItem;
@@ -29,13 +28,8 @@ export class AgentLiveTreeProvider
 	private _agentWatcher: AgentWatcher | undefined;
 	private _watcherDisposable: vscode.Disposable | undefined;
 
-	/** ClaudeAgentsService — JSON API (2.1.145+) */
-	private _claudeAgentsService: ClaudeAgentsService | undefined;
-	private _serviceDisposable: vscode.Disposable | undefined;
-
 	dispose(): void {
 		this._watcherDisposable?.dispose();
-		this._serviceDisposable?.dispose();
 		this._onDidChangeTreeData.dispose();
 	}
 
@@ -45,20 +39,8 @@ export class AgentLiveTreeProvider
 		this._watcherDisposable = watcher.onDidChange(() => this.refresh());
 	}
 
-	/**
-	 * ClaudeAgentsService を注入する（優先データソース）。
-	 * availability が 'available' のとき JSON API データを表示。
-	 * 'unavailable' / 'disabled' のとき agentWatcher にフォールバック。
-	 */
-	setClaudeAgentsService(service: ClaudeAgentsService): void {
-		this._serviceDisposable?.dispose();
-		this._claudeAgentsService = service;
-		this._serviceDisposable = service.onDidChange(() => this.refresh());
-	}
-
-	/** タブ可視性を ClaudeAgentsService に通知（ポーリング制御） */
-	notifyTabVisible(visible: boolean): void {
-		this._claudeAgentsService?.setTabVisible(visible);
+	/** タブ可視性通知（v0.5.22 以降は agentWatcher のみで完結するため実質 no-op） */
+	notifyTabVisible(_visible: boolean): void {
 		// agentWatcher はタブ可視性に依存しないため通知不要
 	}
 
@@ -74,49 +56,12 @@ export class AgentLiveTreeProvider
 		// フラットリスト — 子ノードなし
 		if (element) { return []; }
 
-		const config = vscode.workspace.getConfiguration('claudeManager.claudeAgentsIntegration');
-		const showUnregistered = config.get<boolean>('showUnregistered', true);
+		// v0.5.22: 未登録セッション表示制御は claudeManager.agents.showUnregisteredLive で継続。
+		//   旧 claudeAgentsIntegration.showUnregistered は撤去済み。
+		const showUnregistered = vscode.workspace
+			.getConfiguration('claudeManager')
+			.get<boolean>('agents.showUnregisteredLive', true);
 
-		// --- 優先: ClaudeAgentsService (claude agents --json, 2.1.145+) ---
-		const service = this._claudeAgentsService;
-		if (service && service.isEnabled()) {
-			const availability = service.getAvailability();
-
-			if (availability === 'unknown') {
-				return [new LiveStatusMessageItem(
-					'確認中...',
-					'claude agents --json を実行中',
-					'loading',
-				)];
-			}
-
-			if (availability === 'available') {
-				// JSON API データを使用
-				const entries = service.getEntries();
-				if (entries.length === 0) {
-					return [new LiveStatusMessageItem(
-						'ライブ状態のエージェントなし',
-						'現在稼働中のバックグラウンドエージェントはありません',
-						'info',
-					)];
-				}
-				const allAgents = await dataStore.getAgents();
-				const views = buildLiveAgentViews(entries, allAgents);
-				const filtered = showUnregistered ? views : views.filter(v => v.matchLevel !== 'none');
-				if (filtered.length === 0) {
-					return [new LiveStatusMessageItem(
-						'ライブ状態のエージェントなし',
-						'現在稼働中のバックグラウンドエージェントはありません',
-						'info',
-					)];
-				}
-				return filtered.map(v => new LiveAgentItem(v));
-			}
-
-			// 'unavailable' または 'disabled' → agentWatcher にフォールバック
-		}
-
-		// --- フォールバック: AgentWatcher (PID/JSONL 監視) ---
 		const watcher = this._agentWatcher;
 		if (!watcher) { return []; }
 
@@ -131,6 +76,7 @@ export class AgentLiveTreeProvider
 		const states = watcher.getStates();
 		const liveSessionIds = watcher.getLiveSessionIds();
 		const cwdMap = watcher.getLiveSessionCwdMap();
+		const metaMap = watcher.getLiveSessionMetaMap();
 
 		const entries: ClaudeAgentEntry[] = [];
 		const registeredSessions = new Set<string>();
@@ -139,12 +85,17 @@ export class AgentLiveTreeProvider
 		for (const [, state] of states) {
 			if (state.isLive) {
 				registeredSessions.add(state.sessionId);
+				const meta = metaMap.get(state.sessionId);
 				entries.push({
 					sessionId: state.sessionId,
 					agentName: state.agentName,
 					status: 'running',
 					cwd: cwdMap.get(state.sessionId) || '',
-					rawLine: '',
+					pid: meta?.pid,
+					kind: meta?.kind,
+					sessionName: meta?.name,
+					nameSource: meta?.nameSource,
+					source: 'session-json',
 				});
 			}
 		}
@@ -153,12 +104,17 @@ export class AgentLiveTreeProvider
 		if (showUnregistered) {
 			for (const sessionId of liveSessionIds) {
 				if (!registeredSessions.has(sessionId)) {
+					const meta = metaMap.get(sessionId);
 					entries.push({
 						sessionId,
 						agentName: undefined,
 						status: 'running',
 						cwd: cwdMap.get(sessionId) || '',
-						rawLine: '',
+						pid: meta?.pid,
+						kind: meta?.kind,
+						sessionName: meta?.name,
+						nameSource: meta?.nameSource,
+						source: 'session-json',
 					});
 				}
 			}
@@ -256,8 +212,12 @@ export class LiveAgentItem extends vscode.TreeItem {
 	constructor(view: LiveAgentView) {
 		const entry = view.entry;
 
+		// v0.5.22 レビュー修正 M1: CC 公式 name（sessions/*.json の name）をフォールバックに含める。
+		//   優先順位: CSM 登録の表示名 → CSM 登録の name → CC 公式 sessionName → sid 先頭 8 文字。
+		//   CC 公式 name は "xampp-07" 等の識別性が高い表示名で、未紐づけセッションに特に有効。
 		const name = view.linkedDisplayName
 			|| entry.agentName
+			|| entry.sessionName
 			|| (entry.sessionId ? entry.sessionId.substring(0, 8) : '(未登録)');
 		const matchSuffix = view.matchLevel === 'cwd' ? ' (推定)' : '';
 
@@ -293,14 +253,13 @@ export class LiveAgentItem extends vscode.TreeItem {
 		}
 
 		const elapsedStr = entry.elapsedSec !== undefined ? formatElapsed(entry.elapsedSec) : '不明';
-		// JSON API 由来のフィールド（pid, kind）を表示
+		// v0.5.22: sessions/*.json 由来のリッチメタ（pid / kind / name / nameSource）を tooltip に表示
 		const pidLine = entry.pid !== undefined ? `| PID | \`${entry.pid}\` |\n` : '';
-		const kindLine = entry.kind ? `| 種別 | \`${entry.kind}\` |\n` : '';
-		const sourceLine = entry.source === 'json-api'
-			? '\n*claude agents --json (公式 API)* 🟢\n'
-			: entry.source === 'text-parse'
-			? '\n*claude agents テキスト解析*\n'
+		const kindLine = entry.kind ? `| 種別（CC 公式 kind） | \`${entry.kind}\` |\n` : '';
+		const nameLine = entry.sessionName
+			? `| セッション名（CC） | \`${entry.sessionName}\`${entry.nameSource ? `（${entry.nameSource}）` : ''} |\n`
 			: '';
+		const sourceLine = '\n*sessions/*.json + JSONL 監視（PID ベース）*\n';
 
 		this.tooltip = new vscode.MarkdownString(
 			`**${name}**\n\n` +
@@ -311,6 +270,7 @@ export class LiveAgentItem extends vscode.TreeItem {
 			(entry.sessionId ? `| セッション ID | \`${entry.sessionId}\` |\n` : '') +
 			pidLine +
 			kindLine +
+			nameLine +
 			(view.linkedAgentName ? `| CSM エージェント | ${view.linkedAgentName} |\n` : '') +
 			sourceLine +
 			(view.matchLevel === 'cwd' ? '\n*cwd によるマッチング（推定）*' : '') +

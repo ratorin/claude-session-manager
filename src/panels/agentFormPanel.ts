@@ -648,7 +648,7 @@ ${/* v0.5.16 M-10: effort に「未設定（継承）」を追加。
 		</div>
 		<div class="radio-option" id="effort-option-max">
 			<input type="radio" name="effort" id="effort-max" value="max" ${v.effort === 'max' ? 'checked' : ''}>
-			<label for="effort-max">Max<div class="radio-sub">最大（Opus / Fable 専用）</div></label>
+			<label for="effort-max">Max<div class="radio-sub">最大（コスト大 — 上位モデル推奨）</div></label>
 		</div>
 	</div>
 </div>

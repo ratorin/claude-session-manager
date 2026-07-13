@@ -17,12 +17,15 @@
 > Claude Code のバージョン確認: `claude --version`
 > アップデート: `npm install -g @anthropic-ai/claude-code`
 
-### Claude Code への追従状況（2026-07 時点）
+### Claude Code への追従状況（確認日 2026-07-13 / CC 2.1.20x 系）
 
 - **モデル**: `fable`（Fable 系・最上位）/ `fable-1m` / `opus`（最上位）/ `opus-1m` / `sonnet`（最新世代）/ `sonnet-1m` / `haiku`（最新世代）を選択可能。frontmatter にはエイリアス（例: `fable`, `opus[1m]`）を書き込み、Claude Code が起動時に最新モデルへ解決します（2026-07 時点で Opus 4.8 / Fable 5 に解決）。
-- **effort**: `low` 〜 `max` に対応。`max` は **Opus / Fable 系のみ**。
+- **effort**: `low` / `medium` / `high` / `xhigh` / `max` の 5 段階（`claude --help` 表記に準拠）。**モデル制限は無し**（v0.5.22 で `max` を全モデル選択可に緩和）。ただし `max` はコスト大につき Opus / Fable 系推奨。
 - **hook**: `SubagentStart` / `SubagentStop` を利用（サブエージェント可視化）。`permissionDecision` 等の出力契約は現行どおり。
 - **subagent frontmatter**: `model` / `effort` / `permissionMode` / `allowedTools` / `isolation` / `background` / `maxTurns` をフォームから編集可能。
+- **sessions/*.json**（v0.5.22 で公式値追従）: `kind` / `entrypoint` / `version` / `name` / `nameSource` を読み取り、オーケストレーションビューの `interactive` / `background` 判定と、ライブビューのセッション表示名に公式値を優先利用。`--agent` 起動セッションの `agent` フィールドは `agentSessions` 紐づけの補強に利用。
+- **fast mode**: **非対応**（v0.5.22 確認: `claude --help` に CLI オプションとして存在せず、セッション内トグルのみ）。CSM 側での per-agent 設定は行いません。
+- **ライブデータ源**: v0.5.22 で `claude agents --json`（TTY 必須で拡張ホストから利用不可）依存を撤去。以降は `sessions/<pid>.json` + PID 監視のみで完結します。
 
 ---
 
@@ -406,7 +409,7 @@ VS Code Marketplace または Open VSX Registry で「Claude Session Manager」�
 ### VSIX から
 
 ```bash
-code --install-extension claude-session-manager-0.5.21.vsix
+code --install-extension claude-session-manager-0.5.22.vsix
 ```
 
 ---
@@ -415,6 +418,7 @@ code --install-extension claude-session-manager-0.5.21.vsix
 
 全変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。
 
+- **v0.5.22** — CC 追従スプリント（sessions/*.json 公式メタ活用、`claude agents --json` 依存撤去、effort=max を全モデル選択可に緩和、Fable 5d 利用率枠を投機的追加、fast mode 非対応を明記）
 - **v0.5.21** — Marketplace 公開前のドキュメント・文言統一（コード変更なし）
 - **v0.5.20** — セッションビューワーの起動高速化（末尾遅延読み込み + tail リーダー + 巨大出力抑制）
 - **v0.5.19** — ヘッダの「Claude で開く」を拡張 UI で開くよう変更 + 「CLI で開く」ボタン分離

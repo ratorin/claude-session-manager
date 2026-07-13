@@ -44,7 +44,11 @@ export interface ModelDefinition {
 	themeColor: string;
 	/** 1M コンテキストモデルか */
 	is1m: boolean;
-	/** effort=max を選べるか（Opus / Fable 系のみ許可） */
+	/**
+	 * effort=max を選べるか。
+	 * v0.5.22: CC 実仕様に合わせ全モデルで true。max はコスト大につき上位モデル推奨、
+	 * という説明はフォーム UI 側で案内する（この定義から特定モデルを弾かない）。
+	 */
 	allowsMaxEffort: boolean;
 	/** 短い説明（フォームのラジオ下に出す） */
 	description: string;
@@ -106,7 +110,7 @@ export const MODEL_CATALOG: Record<CsmModel, ModelDefinition> = {
 		colorHex: '#64b5f6',
 		themeColor: 'charts.blue',
 		is1m: false,
-		allowsMaxEffort: false,
+		allowsMaxEffort: true,
 		description: 'Sonnet（最新世代） — 定型作業・補助（コスト効率◎）',
 	},
 	'sonnet-1m': {
@@ -117,7 +121,7 @@ export const MODEL_CATALOG: Record<CsmModel, ModelDefinition> = {
 		colorHex: '#64b5f6',
 		themeColor: 'charts.blue',
 		is1m: true,
-		allowsMaxEffort: false,
+		allowsMaxEffort: true,
 		description: 'Sonnet（最新世代） + 1M 長文コンテキスト・定型作業',
 	},
 	haiku: {
@@ -128,7 +132,7 @@ export const MODEL_CATALOG: Record<CsmModel, ModelDefinition> = {
 		colorHex: '#81c784',
 		themeColor: 'charts.green',
 		is1m: false,
-		allowsMaxEffort: false,
+		allowsMaxEffort: true,
 		description: 'Haiku（最新世代） — 軽量タスク・高速応答',
 	},
 };

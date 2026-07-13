@@ -24,6 +24,13 @@ export interface ContentBlock {
 }
 
 // セッションメタデータ
+/**
+ * `~/.claude/sessions/<pid>.json` 全体のスキーマ（実物ベース、CC 2.1.207 で確認）。
+ *
+ * v0.5.22 レビュー修正 L3: agentWatcher が扱う "リッチメタ部分" は
+ * `services/liveAgentTypes.SessionJsonMeta` に一本化した。本型はより網羅的な全体像を示す
+ * ドキュメント兼テスト用の型（実コードで生成される shape と揃える）。
+ */
 export interface SessionMeta {
 	pid: number;
 	sessionId: string;
@@ -31,6 +38,12 @@ export interface SessionMeta {
 	startedAt: number;
 	kind: string;
 	entrypoint: string;
+	// v0.5.22: CC 2.1.20x で確認された追加フィールド（sessions/*.json 実物・取締役側検証）
+	version?: string;        // CC ランタイムのバージョン（例: "2.1.207"）
+	peerProtocol?: number;   // ピアプロトコルバージョン（例: 1）
+	name?: string;           // CC が付与するセッション表示名（例: "xampp-bc"）
+	nameSource?: string;     // name の由来（例: "derived" / "user" 等）
+	agent?: string;          // --agent 起動セッションで frontmatter に指定されたエージェント名
 }
 
 // 会話の解析済みデータ
@@ -101,7 +114,7 @@ export interface AgentConfig {
 	previousSessionIds?: string[]; // 過去のセッションID（直近5件）
 	status?: 'active' | 'idle' | 'archived';
 	// Phase 1b: モデル制御
-	effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; // 推論努力レベル（xhigh: v2.1.111+, max: 全モデル可・セッション限定。Opus 4.8 既定=high）
+	effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; // 推論努力レベル（xhigh: v2.1.111+, max: 全モデル可・コスト大につき上位モデル推奨。Opus 系既定=high）
 	thinkingEnabled?: boolean;   // Extended Thinking 有効/無効
 	permissionMode?: string;     // 権限モード（acceptEdits, auto, plan, default, bypassPermissions）
 	// CC subagent frontmatter (2.1.15x+)
@@ -128,8 +141,15 @@ export interface AgentWatcherState {
 	sessionId: string;
 	isLive: boolean;
 	activeSubagentIds: string[];
-	actualModel?: string;       // JONSLから読み取った実際のモデル名
+	actualModel?: string;       // JSONLから読み取った実際のモデル名
 	modelMismatch?: boolean;    // 設定モデルと実モデルが不一致
+	// v0.5.22: sessions/*.json から取得した公式メタ（P0: T6-1.3〜1.5）
+	sessionKind?: string;       // 'interactive' | 'background' 等（CC 公式 kind）
+	sessionEntrypoint?: string; // 'claude-vscode' | 'claude' 等
+	sessionVersion?: string;    // CC ランタイムのバージョン
+	sessionName?: string;       // CC 付与のセッション表示名
+	sessionNameSource?: string; // 'derived' | 'user' 等
+	sessionAgent?: string;      // --agent 起動時の agent フィールド
 }
 
 // サブエージェント情報

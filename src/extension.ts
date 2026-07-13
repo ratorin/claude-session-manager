@@ -25,8 +25,7 @@ import { initErrorReporter, logError } from './utils/errorReporter';
 import { MainTabPanel } from './panels/mainTabPanel';
 import { HelpFeedbackProvider } from './providers/helpFeedbackProvider';
 import { setLocale, setAutoTranslate } from './services/i18nService';
-// ClaudeAgentsService — claude agents --json 公式 API (2.1.145+) 対応
-import { ClaudeAgentsService } from './services/claudeAgentsService';
+// v0.5.22: ClaudeAgentsService は撤去（claude agents --json は TTY 必須で拡張ホストから使用不可）。
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -256,28 +255,9 @@ export function activate(context: vscode.ExtensionContext) {
 	sessionProvider.setSortMode(initialSortMode as 'updated-desc' | 'updated-asc' | 'created-desc' | 'created-asc' | 'name' | 'count' | 'model');
 	sessionProvider.setGroupMode(initialGroupMode as 'date' | 'tag' | 'agent' | 'flat');
 
-	// ライブ状態プロバイダに agentWatcher を注入（PID/JSONL 監視、フォールバック用）
+	// v0.5.22: ClaudeAgentsService（claude agents --json 依存）を撤去。
+	//   agentWatcher の PID + sessions/*.json 監視が唯一のライブデータソース。
 	agentLiveProvider.setAgentWatcher(agentWatcher);
-
-	// ClaudeAgentsService — claude agents --json 公式 API (2.1.145+) を優先データソースとして注入
-	const claudeAgentsService = new ClaudeAgentsService();
-	context.subscriptions.push(claudeAgentsService);
-	agentLiveProvider.setClaudeAgentsService(claudeAgentsService);
-
-	// Phase 3: claude agents --json の running セッションを agentWatcher PID セットに補完
-	claudeAgentsService.onDidChange(() => {
-		const runningSessions = new Set(
-			claudeAgentsService.getEntries()
-				.filter(e => e.status === 'running' && e.sessionId)
-				.map(e => e.sessionId!)
-		);
-		if (runningSessions.size > 0) {
-			agentWatcher.supplementLiveFromClaudeAgents(runningSessions);
-		}
-	});
-
-	// オーケストレーションプロバイダに依存サービスを注入
-	orchestrationProvider.setClaudeAgentsService(claudeAgentsService);
 	orchestrationProvider.setAgentWatcher(agentWatcher);
 
 	// AgentWatcher を起動
@@ -628,8 +608,8 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	// TASK-5: ライブ状態ビューの可視性変化を ClaudeAgentsService に通知
-	// claudeAgentsLive TreeView の可視性を監視してポーリングを制御
+	// v0.5.22: ClaudeAgentsService 撤去に伴い、可視性通知は agentLiveProvider 側で no-op 実装済み。
+	//   agentWatcher は可視性に依存しない常時監視なので、tab 可視性通知は将来的な拡張のため残置。
 	context.subscriptions.push(
 		claudeAgentsLiveTreeView.onDidChangeVisibility(e => {
 			agentLiveProvider.notifyTabVisible(e.visible);

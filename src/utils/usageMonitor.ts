@@ -15,6 +15,9 @@ export interface UsageData {
 	resetSonnet5d: number;  // Sonnet 5日リセット時刻（Unix秒）
 	usageOpus5d: number;    // Opus 5日間利用率（%）
 	resetOpus5d: number;    // Opus 5日リセット時刻（Unix秒）
+	// v0.5.22: Fable 5d（投機的追加 — ヘッダ非提供時は -1 でグレースフルフォールバック）
+	usageFable5d: number;   // Fable 5日間利用率（%、-1 = ヘッダ未提供）
+	resetFable5d: number;   // Fable 5日リセット時刻（Unix秒、0 = ヘッダ未提供）
 	// 追加分（overage）。取得できない場合は overageUtilization = -1
 	overageUtilization: number;  // 追加分の利用率（%）
 	overageStatus: string;       // 追加分の状態（allowed 等）
@@ -123,6 +126,9 @@ function fetchUsageHeaders(accessToken: string): Promise<FetchResult> {
 				const rawOpus5d    = pickHeader(['anthropic-ratelimit-claude-opus-5d-utilization',   'anthropic-ratelimit-opus-5d-utilization',   'anthropic-ratelimit-unified-opus-5d-utilization']);
 				const resetSonnet5d = pickHeader(['anthropic-ratelimit-claude-sonnet-5d-reset',       'anthropic-ratelimit-sonnet-5d-reset',       'anthropic-ratelimit-unified-sonnet-5d-reset']);
 				const resetOpus5d   = pickHeader(['anthropic-ratelimit-claude-opus-5d-reset',         'anthropic-ratelimit-opus-5d-reset',         'anthropic-ratelimit-unified-opus-5d-reset']);
+				// v0.5.22: Fable 5d を投機的に取得（ヘッダ非提供時は -1 でグレースフルフォールバック）
+				const rawFable5d   = pickHeader(['anthropic-ratelimit-claude-fable-5d-utilization', 'anthropic-ratelimit-fable-5d-utilization', 'anthropic-ratelimit-unified-fable-5d-utilization']);
+				const resetFable5d = pickHeader(['anthropic-ratelimit-claude-fable-5d-reset',        'anthropic-ratelimit-fable-5d-reset',        'anthropic-ratelimit-unified-fable-5d-reset']);
 
 				// 追加分（overage）: 利用率 / 状態 / リセット
 				const rawOverage   = pickHeader(['anthropic-ratelimit-unified-overage-utilization']);
@@ -144,8 +150,9 @@ function fetchUsageHeaders(accessToken: string): Promise<FetchResult> {
 				const pct7d = isNaN(usage7d) ? 0 : Math.round(usage7d * 1000) / 10;
 				const pctSonnet5d = isNaN(rawSonnet5d) ? -1 : Math.round(rawSonnet5d * 1000) / 10;
 				const pctOpus5d   = isNaN(rawOpus5d)   ? -1 : Math.round(rawOpus5d * 1000) / 10;
+				const pctFable5d  = isNaN(rawFable5d)  ? -1 : Math.round(rawFable5d * 1000) / 10;
 				const pctOverage  = isNaN(rawOverage)  ? -1 : Math.round(rawOverage * 1000) / 10;
-				log.appendLine(`  5h: ${pct5h}%, 7d: ${pct7d}%, S5d: ${pctSonnet5d}%, O5d: ${pctOpus5d}%, 追加: ${pctOverage}% (${overageStatus})`);
+				log.appendLine(`  5h: ${pct5h}%, 7d: ${pct7d}%, S5d: ${pctSonnet5d}%, O5d: ${pctOpus5d}%, F5d: ${pctFable5d}%, 追加: ${pctOverage}% (${overageStatus})`);
 
 				resolve({
 					data: {
@@ -157,6 +164,8 @@ function fetchUsageHeaders(accessToken: string): Promise<FetchResult> {
 						resetSonnet5d: isNaN(resetSonnet5d) ? 0 : resetSonnet5d,
 						usageOpus5d: pctOpus5d,
 						resetOpus5d: isNaN(resetOpus5d) ? 0 : resetOpus5d,
+						usageFable5d: pctFable5d,
+						resetFable5d: isNaN(resetFable5d) ? 0 : resetFable5d,
 						overageUtilization: pctOverage,
 						overageStatus,
 						overageReset: isNaN(resetOverage) ? 0 : resetOverage,
@@ -206,10 +215,12 @@ function fmtPct(v: number): string {
 }
 
 // v0.5.17 §4-2: 5d 列を配列駆動化（Fable 5d 枠が将来追加される場合、この配列に 1 行足すだけで済む）。
+// v0.5.22: fable-5d 列を投機的に追加。ヘッダ非提供時は getUsage が -1 を返し、既存の
+//   >=0 判定で自動的に非表示（グレースフルフォールバック）。
 // 各列は `getUsage(data)` / `getReset(data)` / `label`（表示上の 1 文字）で自己完結する。
 interface UsageMultiDayColumn {
-	key: 'sonnet-5d' | 'opus-5d';
-	label: string;                     // ステータスバー用の 1 文字（S/O 等）
+	key: 'sonnet-5d' | 'opus-5d' | 'fable-5d';
+	label: string;                     // ステータスバー用の 1 文字（S/O/F 等）
 	longLabel: string;                 // tooltip 用の日本語ラベル
 	getUsage(data: UsageData): number; // <0 なら「データなし」
 	getReset(data: UsageData): number; // Unix 秒
@@ -219,6 +230,8 @@ export const USAGE_MULTIDAY_COLUMNS: readonly UsageMultiDayColumn[] = [
 		getUsage: (d) => d.usageSonnet5d, getReset: (d) => d.resetSonnet5d },
 	{ key: 'opus-5d', label: 'O', longLabel: 'Opus 5日',
 		getUsage: (d) => d.usageOpus5d,   getReset: (d) => d.resetOpus5d },
+	{ key: 'fable-5d', label: 'F', longLabel: 'Fable 5日',
+		getUsage: (d) => d.usageFable5d,  getReset: (d) => d.resetFable5d },
 ];
 
 export type StatusBarStyle = 'full' | 'compact' | 'max-only';
@@ -291,10 +304,8 @@ export class UsageMonitor implements vscode.Disposable {
 	private notified7d90 = false;
 	private notified7d100 = false;
 	// v0.5.16 L-13: Sonnet/Opus 5日枠の通知フラグ（旧: 100%到達しても通知なしで沈黙）
-	private notifiedSonnet5d90 = false;
-	private notifiedSonnet5d100 = false;
-	private notifiedOpus5d90 = false;
-	private notifiedOpus5d100 = false;
+	// v0.5.22: 5d 列ごとの通知フラグを配列駆動化（USAGE_MULTIDAY_COLUMNS の key で管理）
+	private notified5dFlags: Record<string, { at90: boolean; at100: boolean }> = {};
 
 	constructor() {
 		this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
@@ -330,10 +341,7 @@ export class UsageMonitor implements vscode.Disposable {
 		this.notified7d90 = false;
 		this.notified7d100 = false;
 		// v0.5.16 L-13
-		this.notifiedSonnet5d90 = false;
-		this.notifiedSonnet5d100 = false;
-		this.notifiedOpus5d90 = false;
-		this.notifiedOpus5d100 = false;
+		this.notified5dFlags = {};
 	}
 
 	// 手動リフレッシュ
@@ -429,17 +437,18 @@ export class UsageMonitor implements vscode.Disposable {
 			this.checkAndNotify(data.usage7d, r7d, '7日間',
 				() => this.notified7d90, (v) => { this.notified7d90 = v; },
 				() => this.notified7d100, (v) => { this.notified7d100 = v; });
-			// v0.5.16 L-13: Sonnet/Opus 5日枠も通知（>=0 のときのみ = ヘッダ提供時のみ）。
-			//   show5d 設定に関わらず 100% 到達は通知する（沈黙リスク回避）。
-			if (data.usageSonnet5d >= 0) {
-				this.checkAndNotify(data.usageSonnet5d, formatTimeRemaining(data.resetSonnet5d), 'Sonnet 5日',
-					() => this.notifiedSonnet5d90, (v) => { this.notifiedSonnet5d90 = v; },
-					() => this.notifiedSonnet5d100, (v) => { this.notifiedSonnet5d100 = v; });
-			}
-			if (data.usageOpus5d >= 0) {
-				this.checkAndNotify(data.usageOpus5d, formatTimeRemaining(data.resetOpus5d), 'Opus 5日',
-					() => this.notifiedOpus5d90, (v) => { this.notifiedOpus5d90 = v; },
-					() => this.notifiedOpus5d100, (v) => { this.notifiedOpus5d100 = v; });
+			// v0.5.16 L-13 → v0.5.22 で配列駆動化: USAGE_MULTIDAY_COLUMNS の各列で通知
+			//   （>=0 のときのみ = ヘッダ提供時のみ）。show5d 設定に関わらず 100% 到達は通知する（沈黙リスク回避）。
+			for (const col of USAGE_MULTIDAY_COLUMNS) {
+				const usage = col.getUsage(data);
+				if (usage < 0) { continue; }
+				if (!this.notified5dFlags[col.key]) {
+					this.notified5dFlags[col.key] = { at90: false, at100: false };
+				}
+				const flags = this.notified5dFlags[col.key];
+				this.checkAndNotify(usage, formatTimeRemaining(col.getReset(data)), col.longLabel,
+					() => flags.at90, (v) => { flags.at90 = v; },
+					() => flags.at100, (v) => { flags.at100 = v; });
 			}
 		} finally {
 			this.fetching = false;

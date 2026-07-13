@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager — 会話履歴・エージェント運用",
 	"description": "Claude Code の会話履歴・メモリ・マルチエージェント運用を管理する VS Code 拡張機能。ブックマーク、タグ、検索、組織図、大容量セッションの高速ビューワー、利用制限モニターに対応。",
-	"version": "0.5.21",
+	"version": "0.5.22",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -1201,6 +1201,11 @@
 						"default": true,
 						"description": "他プロジェクトのエージェントをエージェント一覧に灰色で表示します。OFF にすると現在のワークスペースのエージェントのみを表示します"
 					},
+					"claudeManager.agents.showUnregisteredLive": {
+						"type": "boolean",
+						"default": true,
+						"description": "ライブ状態ビューに CSM 未登録のセッションも表示します（旧 `claudeAgentsIntegration.showUnregistered` の後継。v0.5.22 追加）"
+					},
 					"claudeManager.agents.defaultExpand": {
 						"type": "array",
 						"items": {
@@ -1248,28 +1253,6 @@
 							"フラット（グルーピングなし・名前順）"
 						],
 						"description": "エージェント一覧のグルーピング方式です（v0.5.18 追加）"
-					},
-					"claudeManager.claudeAgentsIntegration.enabled": {
-						"type": "boolean",
-						"default": false,
-						"description": "（廃止予定）`claude agents` コマンドは TTY 必須のため VS Code 拡張からは利用できません。ライブ状態は PID / JSONL 監視（`enableAgentMonitor`）で代替します"
-					},
-					"claudeManager.claudeAgentsIntegration.pollingIntervalMs": {
-						"type": "number",
-						"default": 5000,
-						"minimum": 1000,
-						"maximum": 60000,
-						"description": "（廃止予定）`claude agents` のポーリング間隔（ミリ秒）です。既定は 5000 ms"
-					},
-					"claudeManager.claudeAgentsIntegration.scopeToWorkspace": {
-						"type": "boolean",
-						"default": true,
-						"description": "（廃止予定）ライブ状態表示を現在のワークスペース（`--cwd`）に絞り込みます"
-					},
-					"claudeManager.claudeAgentsIntegration.showUnregistered": {
-						"type": "boolean",
-						"default": true,
-						"description": "（廃止予定）CSM に未登録のセッションもライブ状態セクションに表示します"
 					},
 					"claudeManager.useNewMainPanel": {
 						"type": "boolean",

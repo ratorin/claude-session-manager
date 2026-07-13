@@ -13,7 +13,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { ClaudeAgentsService, formatElapsed } from '../services/claudeAgentsService';
+import { formatElapsed } from '../services/liveAgentTypes';
 import { AgentWatcher } from '../watchers/agentWatcher';
 import {
 	buildOrchestrationViewModel,
@@ -43,9 +43,7 @@ export class OrchestrationTreeProvider
 	private _onDidChangeTreeData = new vscode.EventEmitter<OrchNode | undefined>();
 	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-	private _claudeAgentsService: ClaudeAgentsService | undefined;
 	private _agentWatcher: AgentWatcher | undefined;
-	private _serviceDisposable: vscode.Disposable | undefined;
 	private _watcherDisposable: vscode.Disposable | undefined;
 
 	/** キャッシュ済みビューモデル */
@@ -58,16 +56,8 @@ export class OrchestrationTreeProvider
 
 	dispose(): void {
 		this._stopTimer();
-		this._serviceDisposable?.dispose();
 		this._watcherDisposable?.dispose();
 		this._onDidChangeTreeData.dispose();
-	}
-
-	setClaudeAgentsService(service: ClaudeAgentsService): void {
-		this._serviceDisposable?.dispose();
-		this._claudeAgentsService = service;
-		// サービスのデータ変化を即時反映
-		this._serviceDisposable = service.onDidChange(() => this._invalidateAndRefresh());
 	}
 
 	setAgentWatcher(watcher: AgentWatcher): void {
@@ -124,17 +114,25 @@ export class OrchestrationTreeProvider
 	// -------------------------------------------------------------------
 
 	private async _buildRoot(): Promise<OrchNode[]> {
-		if (!this._claudeAgentsService || !this._agentWatcher) {
-			return [new EmptyItem('初期化中...', '依存サービス待機', 'loading')];
+		if (!this._agentWatcher) {
+			return [new EmptyItem('初期化中...', 'agentWatcher 待機中', 'loading')];
+		}
+
+		// v0.5.22 レビュー修正 L4: agentWatcher が唯一のライブ供給源になったため、
+		//   監視 OFF 時は agentLiveTreeProvider と同じ案内を表示する。
+		//   （空配列を返して sessions=0 の集計を返すのは誤解を招くため）
+		if (!this._agentWatcher.isEnabled()) {
+			return [new EmptyItem(
+				'エージェント監視が無効です',
+				'設定: claudeManager.enableAgentMonitor を有効にしてください',
+				'info',
+			)];
 		}
 
 		// ビューモデルが未取得または古い場合は再構築
 		if (!this._viewModel) {
 			try {
-				this._viewModel = await buildOrchestrationViewModel(
-					this._claudeAgentsService,
-					this._agentWatcher,
-				);
+				this._viewModel = await buildOrchestrationViewModel(this._agentWatcher);
 			} catch {
 				return [new EmptyItem('取得エラー', 'データの取得に失敗しました', 'warning')];
 			}
@@ -225,7 +223,8 @@ class SummaryItem extends vscode.TreeItem {
 		super(label, vscode.TreeItemCollapsibleState.None);
 
 		const age = Math.floor((Date.now() - vm.updatedAt) / 1000);
-		this.description = `更新 ${age}秒前 (${vm.source === 'claude-agents-json' ? 'JSON API' : 'PID 監視'})`;
+		// v0.5.22: 供給源は agentWatcher（sessions/*.json + PID 監視）のみ
+		this.description = `更新 ${age}秒前 (sessions/*.json + PID 監視)`;
 		this.iconPath = new vscode.ThemeIcon('circuit-board', new vscode.ThemeColor(
 			sessionCount > 0 ? 'terminal.ansiGreen' : 'foreground'
 		));
@@ -268,7 +267,9 @@ export class SessionItem extends vscode.TreeItem {
 	public readonly session: OrchestrationSession;
 
 	constructor(session: OrchestrationSession) {
+		// v0.5.22 P0: セッションタイトルは「CSM 表示名 > CC 公式 name > sessionId 先頭 8 文字」の優先順位
 		const name = session.linkedDisplayName
+			|| session.sessionName
 			|| (session.sessionId ? session.sessionId.substring(0, 8) : '(不明)');
 		const hasSubagents = session.subagents.length > 0;
 
@@ -279,10 +280,11 @@ export class SessionItem extends vscode.TreeItem {
 		this.session = session;
 
 		const cwdShort = session.cwd ? (path.basename(session.cwd) || session.cwd) : '—';
-		const elapsed = formatElapsed(session.elapsedSec);
+		// v0.5.22 レビュー修正 M2: startedAt 不明時（elapsedSec === undefined）は経過時間行を非表示
+		const elapsed = session.elapsedSec !== undefined ? formatElapsed(session.elapsedSec) : undefined;
 		const subCount = session.subagents.length;
 
-		this.description = `${cwdShort}  ${elapsed}${subCount > 0 ? `  [${subCount} sub]` : ''}`;
+		this.description = `${cwdShort}${elapsed ? `  ${elapsed}` : ''}${subCount > 0 ? `  [${subCount} sub]` : ''}`;
 		this.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor(
 			session.kind === 'background' || session.isWorkflowLike
 				? 'terminal.ansiYellow'
@@ -294,9 +296,13 @@ export class SessionItem extends vscode.TreeItem {
 			`| | |\n|---|---|\n` +
 			`| セッション ID | \`${session.sessionId || '—'}\` |\n` +
 			`| 作業ディレクトリ | \`${session.cwd || '—'}\` |\n` +
-			`| kind | \`${session.kind}\` |\n` +
-			`| 経過時間 | ${elapsed} |\n` +
+			`| kind（CC 公式） | \`${session.kind}\` |\n` +
+			(elapsed ? `| 経過時間 | ${elapsed} |\n` : '') +
 			(session.pid !== undefined ? `| PID | ${session.pid} |\n` : '') +
+			(session.sessionName ? `| セッション名（CC） | \`${session.sessionName}\`${session.nameSource ? `（${session.nameSource}）` : ''} |\n` : '') +
+			(session.sessionVersion ? `| CC バージョン | \`${session.sessionVersion}\` |\n` : '') +
+			(session.entrypoint ? `| entrypoint | \`${session.entrypoint}\` |\n` : '') +
+			(session.sessionAgent ? `| agent（公式） | \`${session.sessionAgent}\` |\n` : '') +
 			`| サブエージェント | ${subCount} |\n` +
 			(session.linkedAgentName ? `| CSM エージェント | ${session.linkedAgentName} |\n` : ''),
 		);

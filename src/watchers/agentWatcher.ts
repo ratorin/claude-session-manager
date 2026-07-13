@@ -12,6 +12,7 @@ import * as agentFileManager from '../agents/agentFileManager';
 import { detectSubagents } from '../utils/subagentDetector';
 import { MODEL_CATALOG, CSM_MODELS } from '../models/modelCatalog';
 import { computeJsonlPathForSession, computeJsonlPathForSessionAsync, FallbackScanCache } from '../utils/agentUtils';
+import { SessionJsonMeta } from '../services/liveAgentTypes';
 
 // 検知モードの型定義（Phase 4: fswatch のみ残す）
 type DetectionMode = 'fswatch';
@@ -44,6 +45,9 @@ export class AgentWatcher implements vscode.Disposable {
 	private states = new Map<string, AgentWatcherState>();
 	private sessionMtimes = new Map<string, number>(); // セッションIDごとのJSONL mtime
 	private sessionCwdMap = new Map<string, string>(); // セッションID → cwd（JSONL特定用）
+	// v0.5.22 P0 (T6-1.3〜1.5) + レビュー修正 L3: sessions/*.json のリッチメタを保持。
+	//   型は liveAgentTypes.SessionJsonMeta に一本化（複製解消）。
+	private sessionMetaMap = new Map<string, SessionJsonMeta>();
 	// シグナルベースの子エージェント追跡（sessionId → true/false）
 	private signalLiveSessions = new Map<string, boolean>();
 	private enabled = false;
@@ -290,10 +294,14 @@ export class AgentWatcher implements vscode.Disposable {
 
 	private async update(): Promise<void> {
 		// 1. sessions/*.json からPIDベースでライブセッション検出
+		//   v0.5.22 P0 (T6-1.3〜1.5): kind/entrypoint/version/name/nameSource/agent もここで収集し
+		//   sessionMetaMap に保持する。orchestrationViewModel と AgentWatcherState から参照される。
 		const sessionsDir = path.join(os.homedir(), '.claude', 'sessions');
 		const newLiveSessionIds = new Set<string>();
 		const newSessionMtimes = new Map<string, number>();
 		const newSessionCwdMap = new Map<string, string>();
+		// v0.5.22 レビュー修正 L3: 匿名型 → SessionJsonMeta に統一
+		const newSessionMetaMap = new Map<string, SessionJsonMeta>();
 
 		try {
 			const files = await fs.promises.readdir(sessionsDir);
@@ -310,6 +318,18 @@ export class AgentWatcher implements vscode.Disposable {
 						if (data.cwd) {
 							newSessionCwdMap.set(data.sessionId, data.cwd);
 						}
+						// v0.5.22 P0: リッチメタ（未知フィールドは undefined でスキップ）
+						//   レビュー修正 M2: startedAt を追加収集（orchestration の経過秒表示に使用）
+						newSessionMetaMap.set(data.sessionId, {
+							kind: typeof data.kind === 'string' ? data.kind : undefined,
+							entrypoint: typeof data.entrypoint === 'string' ? data.entrypoint : undefined,
+							version: typeof data.version === 'string' ? data.version : undefined,
+							name: typeof data.name === 'string' ? data.name : undefined,
+							nameSource: typeof data.nameSource === 'string' ? data.nameSource : undefined,
+							agent: typeof data.agent === 'string' ? data.agent : undefined,
+							pid: typeof data.pid === 'number' ? data.pid : undefined,
+							startedAt: typeof data.startedAt === 'number' ? data.startedAt : undefined,
+						});
 						// sessions/*.json の mtime を活動指標として記録（stalled判定用）
 						try {
 							const jsonStat = await fs.promises.stat(filePath);
@@ -334,6 +354,31 @@ export class AgentWatcher implements vscode.Disposable {
 		this.liveSessionIds = newLiveSessionIds;
 		this.sessionMtimes = newSessionMtimes;
 		this.sessionCwdMap = newSessionCwdMap;
+		this.sessionMetaMap = newSessionMetaMap;
+
+		// v0.5.22 P0: sessions/*.json の agent フィールドを agentSessions 紐づけ補強に利用
+		//   （公式値優先のハイブリッド）— まだ processedAutoLinkSids に無い sid のみを対象。
+		//   JSONL 内の agent-setting より確実なため、まず agent フィールドで紐づけを試みる。
+		// v0.5.22 レビュー修正 L1: setAgentSession が false（既存紐づけあり等）を返した場合も
+		//   processedAutoLinkSids に即マーク。次回 update で同一 sid を再試行しても結果は変わらないため、
+		//   無駄な dataStore アクセスと「JSONL agent-setting 経路との実行順序の暗黙依存」を解消する。
+		//   注: agentDef が null（未登録エージェント名を JSON から拾ったケース）や try/catch 内例外の
+		//   場合はマークしない（未登録が後から登録される可能性を保持）。
+		for (const [sid, meta] of newSessionMetaMap) {
+			if (!meta.agent) { continue; }
+			if (this.processedAutoLinkSids.has(sid)) { continue; }
+			try {
+				const agentDef = await agentFileManager.getAgentByName(meta.agent);
+				if (!agentDef) { continue; }
+				const linked = await dataStore.setAgentSession(meta.agent, sid);
+				// 既存紐づけあり (false) でも「この sid については agent フィールド経由で処理を試みた」
+				// と見なして再試行を抑止する。
+				this.processedAutoLinkSids.add(sid);
+				if (linked) {
+					this._onDidChange.fire();
+				}
+			} catch { /* 個別失敗は無視（次回リトライ可） */ }
+		}
 
 		// 新規ライブセッションの agent-setting 自動紐づけ（未処理分のみ）
 		{
@@ -397,6 +442,8 @@ export class AgentWatcher implements vscode.Disposable {
 				? !this.modelsMatch(agent.model, actualModel)
 				: false;
 
+			// v0.5.22 P0: sessions/*.json のリッチメタを状態に載せる（tooltip 等で参照）
+			const meta = agent.sessionId ? this.sessionMetaMap.get(agent.sessionId) : undefined;
 			this.states.set(agent.name, {
 				agentName: agent.name,
 				sessionId: agent.sessionId,
@@ -404,6 +451,12 @@ export class AgentWatcher implements vscode.Disposable {
 				activeSubagentIds,
 				actualModel,
 				modelMismatch,
+				sessionKind: meta?.kind,
+				sessionEntrypoint: meta?.entrypoint,
+				sessionVersion: meta?.version,
+				sessionName: meta?.name,
+				sessionNameSource: meta?.nameSource,
+				sessionAgent: meta?.agent,
 			});
 		}));
 
@@ -530,8 +583,17 @@ export class AgentWatcher implements vscode.Disposable {
 			// activeSubagentIds の変更も検出
 			if (p.activeSubagentIds.length !== state.activeSubagentIds.length) { return true; }
 			if (p.activeSubagentIds.some((id, i) => id !== state.activeSubagentIds[i])) { return true; }
+			// v0.5.22 P0: sessions/*.json 由来メタの変化も検出（kind 変化・rename 等を UI に反映）
+			if (p.sessionKind !== state.sessionKind) { return true; }
+			if (p.sessionName !== state.sessionName) { return true; }
 		}
 		return false;
+	}
+
+	// v0.5.22 P0: orchestrationViewModel 等から利用する sessions/*.json メタのスナップショット
+	//   レビュー修正 L3: 型は liveAgentTypes.SessionJsonMeta に一本化
+	getLiveSessionMetaMap(): Map<string, SessionJsonMeta> {
+		return new Map(this.sessionMetaMap);
 	}
 
 	// --- 外部API ---
@@ -633,23 +695,8 @@ export class AgentWatcher implements vscode.Disposable {
 
 	// --- TASK-5 Phase 3: claude agents 由来データで PID チェックを補完 ---
 
-	/**
-	 * claude agents 出力の running セッションを PID ライブセットに補完する。
-	 * extension.ts から claudeAgentsService.onDidChange 時に呼ばれる。
-	 * フォールバック: 既存 PID チェックに干渉しない（追加のみ）
-	 */
-	supplementLiveFromClaudeAgents(runningSessions: ReadonlySet<string>): void {
-		let changed = false;
-		for (const sid of runningSessions) {
-			if (!this.liveSessionIds.has(sid)) {
-				this.liveSessionIds.add(sid);
-				changed = true;
-			}
-		}
-		if (changed) {
-			this._onDidChange.fire();
-		}
-	}
+	// v0.5.22: supplementLiveFromClaudeAgents は claudeAgentsService 撤去に伴い削除済み。
+	//   sessions/*.json + PID 監視だけで完結する。
 
 	// --- 自動紐づけ (agent-setting JSONL 先頭行解析) ---
 

@@ -1,5 +1,93 @@
 # 更新履歴
 
+## v0.5.22 (2026-07-13) — CC 追従スプリント（P0 バックログ + 死蔵撤去 + Fable 5d 投機追加）
+
+`docs/v0.6.0-roadmap.md` の P0 積み残しと QA レポート §5 の要確認事項を一括対応。CC 2.1.20x（実機確認: 2.1.207）に追従。**破壊的変更として `claudeAgentsService.ts` と `claudeManager.claudeAgentsIntegration.*` 4 設定を撤去** — 移行注記は下記参照。
+
+### ➕ P0: sessions/*.json の公式メタを活用（T6-1.3〜1.5）
+
+- **`agentWatcher.update()` が `kind` / `entrypoint` / `version` / `name` / `nameSource` / `agent` を収集** し、`sessionMetaMap` に保持。`AgentWatcherState` にも `sessionKind` / `sessionName` / `sessionAgent` 等を露出。
+- **`orchestrationViewModel.buildOrchestrationViewModel` を公式 `kind` 優先に切替**:
+  - `kind === 'background'` は公式値を最優先で信頼
+  - kind が空 or `'interactive'` のときのみ、従来の `subagents.length >= 3` ヒューリスティックにフォールバック
+  - サブエージェント数だけで background 誤判定していた既存バグを解消
+- **ライブ表示のセッションタイトル**: 「CSM 表示名 > **CC 公式 `name`** > sessionId 先頭 8 文字」の優先順に。`nameSource`（例: `derived`）は tooltip の CC バージョン・entrypoint と並べて表示。
+- **`agent` フィールド活用**: `sessions/*.json` に `agent` が入っていれば（`--agent` 起動セッション）、`processedAutoLinkSids` に無い sid に対して agentSessions を即時補強。JSONL の `agent-setting` より確実な公式値優先のハイブリッド。T6-1.6（完全置換）は P1 のため今回は補強に留める。
+
+### 🗑 T6-1.1/1.2: 死蔵撤去（**破壊的変更**）
+
+- **`src/services/claudeAgentsService.ts`（515 行）を撤去** — TTY 必須で拡張ホストから呼び出せない `claude agents --json` CLI 呼び出し系。`.trash/claudeAgentsService.ts.20260713` に退避（rm 禁止ルール準拠）。
+- 型と `formatElapsed` は **`src/services/liveAgentTypes.ts`** に切り出し、`agentLiveTreeProvider` と `orchestrationTreeProvider` から参照。
+- **`extension.ts` の配線を削除** — `ClaudeAgentsService` の new / onDidChange / `supplementLiveFromClaudeAgents` 呼び出しを撤去。`orchestrationProvider.setClaudeAgentsService` も撤去し、`buildOrchestrationViewModel` は `agentWatcher` 単独版へ書き直し。
+- **`agentWatcher.supplementLiveFromClaudeAgents` メソッドを削除**（v0.5.22 で呼び出し元がゼロ）。
+- **package.json の廃止設定 4 種を完全削除**:
+  - `claudeManager.claudeAgentsIntegration.enabled`
+  - `claudeManager.claudeAgentsIntegration.pollingIntervalMs`
+  - `claudeManager.claudeAgentsIntegration.scopeToWorkspace`
+  - `claudeManager.claudeAgentsIntegration.showUnregistered`
+  - **移行注記**: v0.5.21 で「（廃止予定）」プレフィックス付きだったこれらの設定は本 v0.5.22 で削除。ユーザー設定に残っていても VS Code は無視するだけで害はない。「未登録セッション表示」は `claudeManager.agents.showUnregisteredLive`（既定 true）に置換（agentLiveTreeProvider で参照）。
+- **agentLiveTreeProvider の重複データソース分岐を撤去**、agentWatcher 単独動作に。tooltip の source 表記も「sessions/*.json + JSONL 監視（PID ベース）」に更新。
+
+### 🔧 effort=max を全モデル選択可に緩和
+
+- 前提（`claude --help` 表記）: `--effort low|medium|high|xhigh|max` にモデル制限の記載なし。
+- **`modelCatalog.MODEL_CATALOG` の `allowsMaxEffort` を全モデル `true`** に変更（従来: Opus / Fable 系のみ true）。
+- フォームの Max ラジオ説明を「最大（コスト大 — 上位モデル推奨）」に更新。UI の連動グレーアウトは撤廃せず、`ALLOWS_MAX_MODELS` が全モデル含む形で自然と全モデル有効化。
+- `types.ts` のコメント・README・SPEC で「Opus / Fable 専用」表記を撤去し「全モデル可・コスト大につき上位モデル推奨」に統一。
+
+### ➕ Fable 5d 利用率枠を投機的追加
+
+- **`UsageData` に `usageFable5d` / `resetFable5d` を追加**。
+- **ヘッダ候補**: `anthropic-ratelimit-claude-fable-5d-utilization` / `anthropic-ratelimit-fable-5d-utilization` / `anthropic-ratelimit-unified-fable-5d-utilization`（Sonnet/Opus と同パターン 3 種）。
+- **`USAGE_MULTIDAY_COLUMNS` に `fable-5d` 列を追加**（label `F`、longLabel `Fable 5日`）— 既に配列駆動化（v0.5.17 §4-2）されていたため 1 行追加のみ。
+- **ヘッダ非提供時は `-1` でグレースフルフォールバック** — 既存の `>= 0` 判定で自動的に非表示（statusBar / tooltip / 警告色判定・通知フラグすべて）。
+- **通知フラグを配列駆動化** — 個別 `notifiedSonnet5d90` 等の Boolean を `notified5dFlags: Record<key, {at90, at100}>` に統合。列追加時にフラグ変数を増やさなくて済む。
+
+### 📖 README / guide 追従状況更新
+
+- `README.md` 追従状況節を「確認日 2026-07-13 / CC 2.1.20x 系」に更新。
+- **fast mode 非対応**を明記（根拠: `claude --help` に CLI オプション無し）。CSM 側で per-agent 設定はしない。
+- **effort の max はモデル制限無し**を明記。
+- **sessions/*.json 公式値活用**の項目を追記（`kind`/`name` 等）。
+- **ライブデータ源**を「sessions/*.json + PID 監視のみ」に整理し、`claude agents --json` 撤去を明記。
+
+### 🧪 テスト
+
+- **K1 / K2 を v0.5.22 の 3 列（fable-5d 追加）に更新**（`data` オブジェクトに `usageFable5d/resetFable5d` を追加）
+- **K3**（新規）: Fable 5d のグレースフルフォールバック — ヘッダ非提供時（-1）は非表示、提供時（>=0）は F 列が出ることを検証
+- **O1**（新規）: modelCatalog.allowsMaxEffort が全モデル true
+- **O2**（新規）: SessionMeta / AgentWatcherState 拡張フィールドが types.ts に定義されている（ソース静的検証）
+- **O3**（新規）: `src/services/claudeAgentsService.ts` が撤去済み + `liveAgentTypes.ts` が新設されている
+- **O4**（新規）: `claudeManager.claudeAgentsIntegration.*` 設定 4 種が package.json から削除されている
+- **58 → 63 pass**（K3 + O1〜O4 の 5 テスト追加）
+
+### 検証
+
+- `npx tsc --noEmit` クリーン。
+- `npm test`: **63 / 63 pass → レビュー修正で 69 / 69 pass**（P1〜P6 の 6 回帰テスト追加、O2 は静的検証を実型に更新）。
+- `package.json` `0.5.21` → **`0.5.22`**。
+
+### 🔍 コードレビュー修正ラウンド（v0.5.22 コミット前）
+
+CRITICAL / HIGH 0、MEDIUM 3・LOW 4 の 7 件を全対応（コミット前差戻し）。
+
+- **M1** `agentLiveTreeProvider` のラベル生成に **`entry.sessionName`（CC 公式 name）を挿入**。優先順位: `linkedDisplayName` → `agentName` → **`sessionName`** → sid 先頭 8 文字。CC が付与する識別性の高い `xampp-07` 等が未紐づけセッションでも表示される。
+- **M2** `sessions/*.json` の **`startedAt` を収集して経過秒を実測値で計算**。`agentWatcher.update()` が `SessionJsonMeta.startedAt` を保存し、`orchestrationViewModel` が `Math.floor((now - startedAt) / 1000)` で算出。`startedAt` 不明時は `elapsedSec = undefined` を返し、`orchestrationTreeProvider` 側で経過時間行を非表示（虚偽の `00:00:00` を撤廃）。
+- **M3** `claudeManager.agents.showUnregisteredLive` を **`contributes.configuration` に正式宣言**（type: boolean, default: true）。旧 `claudeAgentsIntegration.showUnregistered` からの後継である旨を description に明記。CHANGELOG の移行注記と判断事項の矛盾も解消。
+- **L1** `agentWatcher` の agent 補強ループで **`setAgentSession=false`（既存紐づけあり）でも `processedAutoLinkSids` にマーク**。次回 update で同一 sid の再試行を回避し、JSONL `agent-setting` 経路との実行順序の暗黙依存を解消。`agentDef=null` の未登録エージェント名や try/catch 内例外の場合はマークしない（後から登録される可能性を保持）。
+- **L2** `orchestrationViewModel` の kind 判定ロジックを **公式 kind の厳密優先** に修正。旧: `(!meta?.kind || kind === 'interactive') && subagents.length >= 3` は公式 `interactive` を上書きしていた。新: `meta?.kind === undefined && subagents.length >= 3` — 公式値が明示的に interactive を指定していれば、サブエージェント数に関係なく interactive として扱う。
+- **L3** `agentWatcher.ts` に 3 か所複製されていた匿名 `{ kind?, entrypoint?, ... }` 型を **`liveAgentTypes.SessionJsonMeta` に一本化**。`types.ts:SessionMeta`（`sessions/*.json` 全体像）はドキュメント兼テスト用として保持し、`startedAt` 追加。O2 テストを実型検証（import + 型使用箇所の grep）に更新。
+- **L4** `orchestrationTreeProvider._buildRoot` に **`watcher.isEnabled()` ガード** を追加。監視 OFF 時は「エージェント監視が無効です」を `agentLiveTreeProvider` と同じ体裁で表示。空配列返却で sessions=0 の集計を出す誤解を防止。
+
+**新規テスト（P1〜P6）**: 6 件すべて静的ソース検証で MEDIUM/LOW 各修正の実装を確実にトラップ。将来リグレッションで CHANGELOG の記載と実装が乖離した場合に即検出できる。
+
+### 判断・見送り事項
+
+- **T6-1.6（agent フィールド完全置換）は P1** のため今回は補強のみ。JSONL 内 `agent-setting` 経路と並列で動作。
+- **~~`sessions/*.json` の `startedAt` を orchestration に伝播~~**（v0.5.22 レビュー修正 M2 で実施完了）
+- **claudeAgentsService の TTY 復活**は仕様上ない想定のため撤去確定。将来 CC 側で子プロセスから叩ける JSON API が復活したら新設で対応する。
+- **`agents.showUnregisteredLive` 設定**は **v0.5.22 レビュー修正 M3 で `contributes.configuration` に正式宣言**（既定 true）。旧設定 `claudeAgentsIntegration.showUnregistered` のユーザ設定値は自動移行されないが、既定 true の新設定で従来と同じ挙動が続く。
+
 ## v0.5.21 (2026-07-10) — Marketplace 公開前のドキュメント・文言整備（コード変更なし）
 
 v0.5.14 〜 v0.5.20 の大量の機能追加に伴って積み上がった、ユーザー向けテキストの陳腐化・不整合を一掃した。**コードのロジック変更はなし**、文言と設定 description・コマンドタイトル・ドキュメントの更新のみ。
