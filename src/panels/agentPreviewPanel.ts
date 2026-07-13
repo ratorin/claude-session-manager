@@ -19,6 +19,12 @@ export interface AgentPreviewCallbacks {
 	onOpenInTerminal: (agent: AgentConfig) => void;
 	onRenewSession: (agent: AgentConfig) => void;
 	onLinkSession: (agent: AgentConfig) => void;
+	/**
+	 * v0.5.27: フォルダパス行のクリックで呼ばれる。実装は
+	 *   `vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(...))`
+	 * を期待。workDir は空でない前提（HTML 側で空なら非リンク化する）。
+	 */
+	onRevealFolder?: (workDir: string) => void;
 }
 
 export async function showAgentPreview(
@@ -77,6 +83,10 @@ function rebindMessages(
 			case 'openInTerminal': cb.onOpenInTerminal(agent); break;
 			case 'renewSession': cb.onRenewSession(agent); break;
 			case 'linkSession': cb.onLinkSession(agent); break;
+			case 'revealFolder':
+				// v0.5.27: 基本情報のフォルダリンクから OS のエクスプローラで開く
+				if (agent.workDir && cb.onRevealFolder) { cb.onRevealFolder(agent.workDir); }
+				break;
 			case 'openFile':
 				if (message.path) {
 					vscode.workspace.openTextDocument(vscode.Uri.file(message.path)).then(doc => {
@@ -399,6 +409,14 @@ async function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle:
 		padding: 0;
 	}
 	.agent-link:hover { text-decoration: underline; }
+	/* v0.5.27: フォルダパスのリンク（OS エクスプローラで開く） */
+	.folder-link {
+		color: var(--accent); cursor: pointer;
+		background: none; border: none; font-size: 12px;
+		padding: 0; font-family: ui-monospace, Consolas, monospace;
+		text-align: left; word-break: break-all;
+	}
+	.folder-link:hover { text-decoration: underline; }
 	.child-item, .collab-item { font-size: 12px; padding: 2px 0; }
 
 	/* コンテンツブロック */
@@ -506,6 +524,11 @@ async function getPreviewHtml(agent: AgentConfig, isLive: boolean, sessionTitle:
 		<div>${escapeHtml(parentLabel)}</div>
 		<div class="info-label">セッション</div>
 		<div>${escapeHtml(sessionLabel)}</div>
+		<!-- v0.5.27: フォルダパス（クリックで OS エクスプローラを開く） -->
+		<div class="info-label">フォルダ</div>
+		<div>${agent.workDir
+			? `<button class="folder-link" id="btn-reveal-folder" title="OS のファイルエクスプローラで開く">${escapeHtml(agent.workDir)}</button>`
+			: '<span class="dim">（未設定）</span>'}</div>
 		${agent.permissionMode ? `<div class="info-label">権限モード</div><div>${escapeHtml(agent.permissionMode)}</div>` : ''}
 	</div>
 </div>
@@ -568,6 +591,8 @@ ${collaborators.length > 0 ? `
 	document.getElementById('btn-terminal')?.addEventListener('click', () => vscode.postMessage({ type: 'openInTerminal' }));
 	document.getElementById('btn-renew')?.addEventListener('click', () => vscode.postMessage({ type: 'renewSession' }));
 	document.getElementById('btn-link')?.addEventListener('click', () => vscode.postMessage({ type: 'linkSession' }));
+	// v0.5.27: フォルダパスクリック → OS エクスプローラで開く
+	document.getElementById('btn-reveal-folder')?.addEventListener('click', () => vscode.postMessage({ type: 'revealFolder' }));
 
 	// TODO/HISTORY 編集
 	document.getElementById('btn-edit-todo')?.addEventListener('click', () => {

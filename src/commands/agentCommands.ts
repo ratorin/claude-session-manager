@@ -14,6 +14,7 @@ import { showAgentPreview } from '../panels/agentPreviewPanel';
 import { resolveRuleFilePath } from '../agents/agentManager';
 import { normalizeModel, translateWorkDirPath } from '../utils/agentUtils';
 import { isWorkDirCompatible } from '../utils/cliBuilder';
+import { resolveOpenInClaudeTargetFolder, needsNewWindowForClaudeOpen } from '../utils/pathUtils';
 import { syncParentRuleFile } from '../agents/parentChildSync';
 import { AgentWatcher } from '../watchers/agentWatcher';
 import {
@@ -264,6 +265,12 @@ context.subscriptions.push(
 			onLinkSession: (a) => {
 				vscode.commands.executeCommand('claudeManager.linkSession', { agent: a });
 			},
+			// v0.5.27: 基本情報のフォルダリンクから OS エクスプローラで開く
+			onRevealFolder: (workDir) => {
+				if (!workDir) { return; }
+				const resolved = translateWorkDirPath(workDir);
+				void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(resolved));
+			},
 		});
 	})
 );
@@ -308,6 +315,12 @@ context.subscriptions.push(
 			},
 			onLinkSession: (a) => {
 				vscode.commands.executeCommand('claudeManager.linkSession', { agent: a });
+			},
+			// v0.5.27: 基本情報のフォルダリンクから OS エクスプローラで開く
+			onRevealFolder: (workDir) => {
+				if (!workDir) { return; }
+				const resolved = translateWorkDirPath(workDir);
+				void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(resolved));
 			},
 		});
 	})
@@ -614,9 +627,9 @@ context.subscriptions.push(
 			return;
 		}
 
-		// 会話一覧の openInClaude と同じ挙動。
-		// 違いの可能性として、セッション作成時の cwd と現ワークスペースが異なる場合、
-		// Claude Code 拡張が新しいウィンドウを開く可能性がある旨を通知する。
+		// v0.5.27: セッション作成時 cwd（存在すれば）または agent.workDir を対象フォルダとし、
+		//   現ワークスペース群のいずれかに包含されていなければ「新しいウィンドウを開く」
+		//   → その後にセッション復元 URI を投げる（ベストエフォート、下記 判断メモ 参照）。
 		const sid = item.agent.sessionId;
 		const projectsDir = path.join(os.homedir(), '.claude', 'projects');
 		let sessionCwd: string | undefined;
@@ -645,20 +658,44 @@ context.subscriptions.push(
 			}
 		} catch { /* projects dir なし */ }
 
-		const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-		const normalize = (p: string): string => p.toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '');
-		if (sessionCwd && wsFolder && normalize(sessionCwd) !== normalize(wsFolder)) {
-			vscode.window.showInformationMessage(
-				`このセッションは別フォルダ (${sessionCwd}) で作成されています。Claude Code 拡張側で新しいウィンドウが開く場合があります。`
-			);
-		}
+		// 純関数で対象フォルダ・新ウィンドウ要否を判定
+		const wsFolders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+		const targetFolder = resolveOpenInClaudeTargetFolder(sessionCwd, item.agent.workDir);
+		const allowNewWindow = vscode.workspace
+			.getConfiguration('claudeManager')
+			.get<boolean>('agent.openInNewWindowWhenFolderMismatch', true);
+		const needsNew = needsNewWindowForClaudeOpen(targetFolder, wsFolders, allowNewWindow);
 
 		const scheme = vscode.env.uriScheme;
 		const uri = vscode.Uri.parse(
 			`${scheme}://anthropic.claude-code/open?session=` +
 			encodeURIComponent(item.agent.sessionId)
 		);
-		vscode.env.openExternal(uri);
+
+		if (needsNew) {
+			// 新ウィンドウで対象フォルダを開く → その後セッション URI をベストエフォートで送る
+			const resolved = translateWorkDirPath(targetFolder);
+			vscode.window.showInformationMessage(
+				`「${targetFolder}」を新しいウィンドウで開きます。開いた先で自動的にセッションが復元されない場合は、` +
+				`CSM のライブ状態から再度「Claude で開く」を押してください。`,
+			);
+			try {
+				await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(resolved), { forceNewWindow: true });
+			} catch (err) {
+				// openFolder 失敗（パス不正等）→ URI のみ試みる（従来と同じ挙動にフォールバック）
+				vscode.window.showWarningMessage(
+					`新しいウィンドウを開けませんでした（${String(err)}）。URI ハンドラのみで開きます。`,
+				);
+			}
+			// URI は新ウィンドウ側の CC 拡張が起動した後に届くのが理想。タイミング依存のため
+			//   小さな遅延を入れてベストエフォートで送る。届かなくてもユーザーは案内メッセージにより
+			//   再度「Claude で開く」を押せば復元できる。
+			setTimeout(() => { void vscode.env.openExternal(uri); }, 1500);
+		} else {
+			// 既存動作: 現ワークスペースに包含されていれば URI ハンドラだけで OK
+			// （openExternal を待つ必要はないので await しない）
+			void vscode.env.openExternal(uri);
+		}
 	})
 );
 

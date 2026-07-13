@@ -124,3 +124,67 @@ export function isContainedIn(child: string, parent: string): boolean {
 	const parentWithSep = np.endsWith('/') ? np : np + '/';
 	return nc.startsWith(parentWithSep);
 }
+
+// ─── v0.5.27: 「Claude で開く」の対象フォルダ決定と新ウィンドウ要否判定 ──────
+//
+// エージェントのセッションを Claude Code で開くとき、対象フォルダが現在の
+// ワークスペースの外にあれば新しいウィンドウを開く必要がある。
+// 判定を純関数化してテスト可能にする（vscode 非依存）。
+
+/**
+ * 「Claude で開く」時の対象フォルダを決定する。
+ *   - sessionCwd（sessions/*.json / JSONL から取得したセッション作成時 cwd）を優先
+ *   - 取れなければ agent.workDir をフォールバック
+ *   - どちらも空なら空文字（呼び出し元はエラー表示等）
+ */
+export function resolveOpenInClaudeTargetFolder(
+	sessionCwd: string | undefined,
+	workDir: string | undefined,
+): string {
+	if (sessionCwd && sessionCwd.trim()) { return sessionCwd; }
+	if (workDir && workDir.trim()) { return workDir; }
+	return '';
+}
+
+/**
+ * 対象フォルダが現在のワークスペース群のいずれかに包含されているか判定する（双方向）。
+ * v0.5.16 の isSessionInAnyWorkspace と同じ流儀:
+ *   ワークスペースが対象を含む OR 対象がワークスペースを含む
+ * どちらか一方でも真なら「同一ウィンドウで開ける」= 新ウィンドウ不要。
+ *
+ * ワークスペース未オープン（workspaceFolders 空）の場合は false を返す。
+ * → 新ウィンドウを開かないと Claude Code は表示先を持たない、と解釈するのは
+ *    呼び出し元 (needsNewWindowForClaudeOpen) の判断とする。
+ */
+export function isFolderInAnyWorkspace(
+	targetFolder: string,
+	workspaceFolders: readonly string[],
+): boolean {
+	if (!targetFolder || workspaceFolders.length === 0) { return false; }
+	return workspaceFolders.some(
+		(ws) => isContainedIn(targetFolder, ws) || isContainedIn(ws, targetFolder),
+	);
+}
+
+/**
+ * 新ウィンドウを開くべきかの純判定。
+ *
+ * needsNewWindow は下記のいずれかで true:
+ *   - allowNewWindow=true かつ 対象フォルダが空でない かつ
+ *     現ワークスペース群のいずれにも包含関係が無い
+ *   - allowNewWindow=true かつ 対象フォルダが空でない かつ
+ *     ワークスペース未オープン（新ウィンドウを開いて Claude が復元先を持つよう促す）
+ *
+ * allowNewWindow=false（設定 OFF）なら常に false を返す。
+ * 対象フォルダが空なら false（新ウィンドウを開いても意味がない）。
+ */
+export function needsNewWindowForClaudeOpen(
+	targetFolder: string,
+	workspaceFolders: readonly string[],
+	allowNewWindow: boolean,
+): boolean {
+	if (!allowNewWindow) { return false; }
+	if (!targetFolder) { return false; }
+	if (workspaceFolders.length === 0) { return true; }
+	return !isFolderInAnyWorkspace(targetFolder, workspaceFolders);
+}

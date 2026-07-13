@@ -1778,3 +1778,102 @@ test('S7 v0.5.25 orgChartPanel.ts: ビューポート/座標変換/ズーム制�
 	assert.match(src, /function\s+pickNode\s*\(\s*worldX\s*,\s*worldY\s*\)/, 'pickNode(worldX, worldY)');
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// U. v0.5.27 エージェントフォルダ表示 + Claude で開くの新ウィンドウ起動
+// ════════════════════════════════════════════════════════════════════════════
+
+test('U1 pathUtils.resolveOpenInClaudeTargetFolder: sessionCwd 優先、workDir フォールバック、両方空なら空', () => {
+	const { pathUtils } = loadFresh(setupTmpHome());
+	const r = pathUtils.resolveOpenInClaudeTargetFolder;
+	assert.equal(r('c:/proj/a', 'c:/proj/b'), 'c:/proj/a', 'sessionCwd 優先');
+	assert.equal(r(undefined, 'c:/proj/b'), 'c:/proj/b', 'workDir フォールバック');
+	assert.equal(r('', 'c:/proj/b'), 'c:/proj/b', '空文字も未指定扱い');
+	assert.equal(r('   ', 'c:/proj/b'), 'c:/proj/b', '空白のみは未指定扱い');
+	assert.equal(r(undefined, undefined), '', '両方無しは空文字');
+	assert.equal(r('', ''), '', '両方空');
+});
+
+test('U2 pathUtils.isFolderInAnyWorkspace: 双方向包含（v0.5.16 と同じ流儀）', () => {
+	const { pathUtils } = loadFresh(setupTmpHome());
+	const f = pathUtils.isFolderInAnyWorkspace;
+	if (process.platform === 'win32') {
+		assert.equal(f('C:\\xampp\\Project\\csm', ['C:\\xampp\\Project\\csm']), true, '同一');
+		assert.equal(f('C:\\xampp\\Project\\csm\\src', ['C:\\xampp\\Project\\csm']), true, '対象が WS の子');
+		assert.equal(f('c:/xampp', ['C:\\xampp\\Project\\csm']), true, '対象が WS の親（双方向）');
+		assert.equal(f('C:\\other', ['C:\\xampp']), false, '兄弟は非包含');
+		assert.equal(f('c:/xampp', []), false, 'WS 空なら常に false');
+		assert.equal(f('', ['C:\\xampp']), false, '対象空なら false');
+	} else {
+		assert.equal(f('/repo/csm', ['/repo/csm']), true);
+		assert.equal(f('/repo/csm/src', ['/repo/csm']), true, '子');
+		assert.equal(f('/repo', ['/repo/csm']), true, '親（双方向）');
+		assert.equal(f('/other', ['/repo']), false);
+		assert.equal(f('/any', []), false);
+		assert.equal(f('', ['/repo']), false);
+	}
+});
+
+test('U3 pathUtils.needsNewWindowForClaudeOpen: allowNewWindow=false / 対象空 / 包含済み では新ウィンドウ不要', () => {
+	const { pathUtils } = loadFresh(setupTmpHome());
+	const n = pathUtils.needsNewWindowForClaudeOpen;
+	// allowNewWindow=false → 常に false
+	assert.equal(n('c:/other', ['c:/xampp'], false), false, 'allowNewWindow OFF');
+	// 対象空 → false
+	assert.equal(n('', ['c:/xampp'], true), false, '対象フォルダ空');
+	// 包含済み → false（そのまま現ウィンドウで開ける）
+	assert.equal(n('c:/xampp/Project/csm', ['c:/xampp'], true), false, 'WS 配下は false');
+	assert.equal(n('c:/xampp', ['c:/xampp/Project/csm'], true), false, '親でも双方向で false');
+	// 別プロジェクト → 新ウィンドウ必要
+	assert.equal(n('c:/other/proj', ['c:/xampp'], true), true, '別プロジェクトは true');
+	// WS 未オープン + 対象あり + allowNewWindow=true → 新ウィンドウで開いて Claude 復元先を用意
+	assert.equal(n('c:/xampp', [], true), true, 'WS 未オープンは true');
+});
+
+test('U4 v0.5.27 package.json: agent.openInNewWindowWhenFolderMismatch 設定が宣言されている', () => {
+	const pkg = require(path.join(REPO, 'package.json'));
+	const props = pkg.contributes.configuration.flatMap((c) => Object.entries(c.properties || {}));
+	const found = props.find(([k]) => k === 'claudeManager.agent.openInNewWindowWhenFolderMismatch');
+	assert.ok(found, '設定が宣言されている');
+	assert.equal(found[1].type, 'boolean');
+	assert.equal(found[1].default, true, '既定 true（新ウィンドウで開く）');
+});
+
+test('U5 v0.5.27 agentPreviewPanel.ts: フォルダ行 + revealFolder メッセージハンドラ + onRevealFolder コールバックが備わっている', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'panels', 'agentPreviewPanel.ts'), 'utf-8');
+	// (a) info-grid に「フォルダ」行がある
+	assert.match(src, /info-label">フォルダ/, '基本情報に「フォルダ」ラベル');
+	// (b) folder-link クラスと btn-reveal-folder ボタン
+	assert.match(src, /class="folder-link"/, 'folder-link CSS 使用');
+	assert.match(src, /id="btn-reveal-folder"/, 'ボタン id');
+	assert.match(src, /\.folder-link\s*\{/, 'folder-link CSS 定義');
+	// (c) workDir 空なら「（未設定）」表示（リンクにしない）
+	assert.match(src, /（未設定）/, '空のとき非リンク表示');
+	// (d) revealFolder メッセージハンドラ
+	assert.match(src, /case\s*'revealFolder'/, 'revealFolder ハンドラ');
+	assert.match(src, /cb\.onRevealFolder/, 'onRevealFolder コールバック呼び出し');
+	// (e) AgentPreviewCallbacks に onRevealFolder 型が追加
+	assert.match(src, /onRevealFolder\?\s*:\s*\(workDir:\s*string\)\s*=>\s*void/, 'onRevealFolder 型');
+});
+
+test('U6 v0.5.27 agentCommands.ts: openAgentInClaude が新ウィンドウ経路を持ち onRevealFolder が両プレビューに配線されている', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'commands', 'agentCommands.ts'), 'utf-8');
+	// (a) 新ウィンドウ判定ヘルパーをインポート
+	assert.match(
+		src,
+		/import\s*\{[^}]*resolveOpenInClaudeTargetFolder[^}]*needsNewWindowForClaudeOpen[^}]*\}\s*from\s*['"]\.\.\/utils\/pathUtils['"]/,
+		'pathUtils から純関数を import',
+	);
+	// (b) 設定キーを参照
+	assert.match(src, /agent\.openInNewWindowWhenFolderMismatch/, '設定キーを参照');
+	// (c) vscode.openFolder を呼び forceNewWindow: true を渡す
+	assert.match(src, /['"]vscode\.openFolder['"]/, 'vscode.openFolder 文字列');
+	assert.match(src, /forceNewWindow:\s*true/, 'forceNewWindow: true');
+	// (d) 案内メッセージ
+	assert.match(src, /新しいウィンドウで開きます/, '案内メッセージ');
+	// (e) onRevealFolder が両プレビュー呼び出しに配線されている（2 回）
+	const matches = src.match(/onRevealFolder:\s*\(workDir\)\s*=>/g) || [];
+	assert.equal(matches.length, 2, 'onRevealFolder が 2 箇所（openAgentPreview / previewAgentByName）で配線');
+	// (f) revealFileInOS 呼び出し
+	assert.match(src, /executeCommand\(\s*['"]revealFileInOS['"]/, 'revealFileInOS を呼ぶ');
+});
+

@@ -1,5 +1,77 @@
 # 更新履歴
 
+## v0.5.27 (2026-07-13) — エージェントフォルダパス表示 + Claude で開くの新ウィンドウ起動
+
+ユーザー要望 2 点を実装。
+
+### 📁 (1) エージェントプレビューの基本情報にフォルダパス（リンク付き）
+
+- `agentPreviewPanel.ts` の基本情報グリッドに **「フォルダ」行** を追加。`agent.workDir` を表示。空なら `（未設定）`（リンクにしない）。
+- パスは **`.folder-link` ボタン**（既存 `.agent-link` と別クラス、等幅フォント + word-break: break-all）。クリックで webview→拡張へ `postMessage({type:'revealFolder'})` → 拡張側 `onRevealFolder(workDir)` コールバックで `vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(translateWorkDirPath(workDir)))` を実行し **OS のファイルエクスプローラで対象フォルダを表示**。
+- `AgentPreviewCallbacks` に `onRevealFolder?: (workDir: string) => void` を追加（optional、実装なくても動く）。`agentCommands.ts` の 2 か所の `showAgentPreview` 呼び出し（`previewAgent` / `previewAgentByName`）両方で配線。
+- HTML 出力は既存の `escapeHtml` で必ずエスケープ。
+
+### 🪟 (2) Claude で開くの新ウィンドウ起動
+
+`openAgentInClaude` は旧実装ではセッション作成時 cwd と現ワークスペースが違うときに **警告メッセージを出すだけ** で、実際にはユーザーが手動で対応する必要があった。今回これを **「実際に新しい VS Code ウィンドウで対象フォルダを開く」動作に格上げ**。
+
+- **対象フォルダの決定** — `resolveOpenInClaudeTargetFolder(sessionCwd, workDir)`（純関数）で `sessionCwd`（既存の `projects/*.jsonl` 走査で取得）を優先、取れなければ `agent.workDir` をフォールバック。
+- **包含チェック** — `needsNewWindowForClaudeOpen(targetFolder, wsFolders, allowNewWindow)`（純関数）で現ワークスペース群のいずれかに双方向包含（`isContainedIn` の 2 方向、v0.5.16 流儀）していれば `false`。包含しない or ワークスペース未オープンの場合 `true`。
+- **新ウィンドウ経路** — `vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(translateWorkDirPath(target)), { forceNewWindow: true })` で新ウィンドウを開き、その直後（1500ms setTimeout）に `vscode.env.openExternal(scheme://anthropic.claude-code/open?session=<sid>)` を **ベストエフォート** で送る。事前に案内メッセージ「自動復元されない場合は再度『Claude で開く』を押してください」を表示。
+- **既存経路** — 包含済み or 設定 OFF なら旧通り URI ハンドラのみ（`openExternal`）で即座に開く。
+- **設定** — `claudeManager.agent.openInNewWindowWhenFolderMismatch`（既定 `true`）で新ウィンドウ経路の ON/OFF。OFF なら判定を素通りし、常に URI ハンドラのみ（旧挙動）。
+
+### 🤔 判断メモ（タイミング依存の扱い）
+
+`vscode.openFolder` は新しい VS Code ウィンドウを起動し、そこで拡張ホストが**再起動**する。同一プロセスから直後に `openExternal(uri)` しても、URI が届く先は必ずしも新ウィンドウとは限らない（OS 経由で開かれる URI ハンドラは、その時点で URI ハンドラ登録済みの任意のウィンドウに解決されうる）。よって:
+
+- **確実性の高い部分（フォルダを新ウィンドウで開く）は同期的に実装**。
+- **セッション自動復元はベストエフォート**（`setTimeout(1500ms)` で URI 送信）。
+- **フォールバック案内**を info メッセージで先出し（新ウィンドウが開いた後、ユーザーが CSM のライブ状態から再度クリックすれば必ず復元できる）。
+
+この判断根拠を CHANGELOG + guide.html の両方に明記。
+
+### 🔧 純関数の分離（テスト可能な形）
+
+`src/utils/pathUtils.ts` に追加:
+- `resolveOpenInClaudeTargetFolder(sessionCwd, workDir): string`
+- `isFolderInAnyWorkspace(targetFolder, workspaceFolders): boolean`（v0.5.16 と同じ双方向包含）
+- `needsNewWindowForClaudeOpen(targetFolder, workspaceFolders, allowNewWindow): boolean`
+
+いずれも vscode 非依存で node 単体テスト可能。
+
+### 🧪 テスト（U1〜U6、6 件新規、合計 108 pass）
+
+- **U1** `resolveOpenInClaudeTargetFolder`: sessionCwd 優先、workDir フォールバック、空/空白の扱い
+- **U2** `isFolderInAnyWorkspace`: 双方向包含（v0.5.16 流儀）、Windows/POSIX 両対応、空配列 / 空文字は false
+- **U3** `needsNewWindowForClaudeOpen`: allowNewWindow=false / 対象空 / 包含済み → false、別プロジェクトや WS 未オープン → true
+- **U4** `package.json`: `agent.openInNewWindowWhenFolderMismatch` 設定（既定 true）
+- **U5** `agentPreviewPanel.ts` 静的検証: フォルダ行 / folder-link CSS / btn-reveal-folder / （未設定）表示 / revealFolder ハンドラ / onRevealFolder 型
+- **U6** `agentCommands.ts` 静的検証: pathUtils から純関数 import / 設定キー参照 / `vscode.openFolder` + `forceNewWindow: true` / 案内メッセージ / `onRevealFolder` が 2 プレビュー呼び出しに配線 / `revealFileInOS` 呼び出し
+
+### 📖 ドキュメント
+
+- **CHANGELOG**: 本節を追加。
+- **README.md**: エージェント節に「基本情報にフォルダパス（リンク）」「Claude で開く時の新ウィンドウ起動」を追記。変更履歴に v0.5.27 追加。
+- **guide.html**: 「基本情報 + 新ウィンドウ起動（v0.5.27）」節を追加、タイミング依存の説明も同梱。
+
+### 検証
+
+- `npx tsc --noEmit` クリーン。
+- `npm test`: **108 / 108 pass**（102 → 108、U1〜U6 追加）。
+- `package.json` `0.5.26` → **`0.5.27`**。設定 1 種（`agent.openInNewWindowWhenFolderMismatch`）新設。
+
+### 判断・見送り事項
+
+- **セッション自動復元は setTimeout(1500ms) のベストエフォート** — 拡張ホスト再起動の待ち時間を厳密に測る手段がなく、`openFolder` の完了を待っても対象ウィンドウの CC 拡張が activate 済みかどうかは判別不能。1500ms は経験値（VS Code 起動 1〜2 秒が目安）。届かなかった場合の再操作導線（案内メッセージ）を必ずセットで提示する設計。
+- **URI 送信を後回しにする** — `openFolder` 前に `openExternal` すると URI が現在のウィンドウ側で解決され誤動作するため、必ず後（かつ小さな遅延）で送る。
+- **`revealFileInOS` を採用**（`vscode.env.openExternal(vscode.Uri.file(...))` ではない） — VS Code の標準コマンド。Windows→エクスプローラ / macOS→Finder / Linux→ファイルマネージャに自動でルーティングされる。ファイルではなくフォルダを渡してもディレクトリを開いてくれる（挙動確認済み）。
+- **`onRevealFolder` を optional にした** — 既存の外部ユーザ（もしいれば）や、将来の別 UI から `showAgentPreview` を呼ぶケースで、フォルダリンクを付けなくても動くようにするため。実装側で「未定義なら黙って無視」の防御あり。
+- **`.folder-link` は等幅 + word-break: break-all** — 長い Windows パスでも改行して折り返す。等幅で識別性が高い。
+- **設定 OFF 時の挙動を維持** — `allowNewWindow=false` なら旧同様に URI ハンドラのみで動く（ダイアログ / info も出さない）。ユーザーが自分で warning フリー運用を選べる。
+- **`translateWorkDirPath` を通す** — Windows パスを Linux HGFS にマップするケース（dev-lamp 上での実行など）を尊重。既存の他コマンドと一貫。
+- **spec 中「revealInExplorer」との差** — VS Code の `revealInExplorer` は VS Code 内エクスプローラーで表示するコマンド。ユーザ要望は OS のファイルエクスプローラなので `revealFileInOS` を採用。
+
 ## v0.5.26 (2026-07-13) — 組織図の整理（グローバル除外復活 + ルート絞り込み + 階層モード全面再設計 + 線視認性改善）
 
 ユーザーからのフィードバック 4 点を反映した組織図の整理スプリント。

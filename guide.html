@@ -2117,6 +2117,15 @@
 	</ul>
 	<p style="color: #888; font-size: 12px;">※ グローバル / ルート / モード変更はいずれも設定に自動保存され、次回パネル起動時に再現されます。</p>
 
+	<h4 style="color: #d97757; margin: 24px 0 12px;">エージェント基本情報 + Claude で開くの新ウィンドウ起動（v0.5.27）</h4>
+	<p>エージェントプレビューの取り回しを 2 点強化しました。</p>
+	<ul style="margin: 12px 0 12px 24px;">
+		<li><b>基本情報に「フォルダ」行を追加</b> — <code>agent.workDir</code> をクリック可能なリンクで表示。クリックで <b>OS のファイルエクスプローラ</b>（Windows: エクスプローラ / macOS: Finder / Linux: ファイルマネージャ）が起動して対象フォルダを開きます。<code>workDir</code> 未設定なら「（未設定）」表示（リンクにしない）。</li>
+		<li><b>Claude で開くが新ウィンドウを自動起動</b> — セッション作成時 <code>cwd</code>（または <code>agent.workDir</code>）が現在のワークスペース群のいずれにも包含されていない場合、対象フォルダを <b>新しい VS Code ウィンドウ</b>で自動的に開いてから、Claude Code の URI ハンドラでセッションを復元します。設定 <code>claudeManager.agent.openInNewWindowWhenFolderMismatch</code>（既定 ON）で ON/OFF 可能。</li>
+		<li><b>タイミング依存の注意</b> — 新ウィンドウ起動時は拡張ホストが再起動するため、URI 送信は約 1.5 秒遅らせたベストエフォート実装です。自動復元が届かなかった場合は、開いた先のウィンドウで CSM のライブ状態から再度「Claude で開く」を押してください（案内メッセージも表示されます）。</li>
+	</ul>
+	<p style="color: #888; font-size: 12px;">※ 現ワークスペースに包含済み or 設定 OFF なら従来通り URI ハンドラのみで即座に開きます（新ウィンドウは起動しない）。</p>
+
 
 
 	<div class="flow">
