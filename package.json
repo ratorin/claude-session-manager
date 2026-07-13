@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager — 会話履歴・エージェント運用",
 	"description": "Claude Code の会話履歴・メモリ・マルチエージェント運用を管理する VS Code 拡張機能。ブックマーク、タグ、検索、組織図、大容量セッションの高速ビューワー、利用制限モニターに対応。",
-	"version": "0.5.23",
+	"version": "0.5.24",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -1199,7 +1199,7 @@
 					"claudeManager.agents.showUnregisteredLive": {
 						"type": "boolean",
 						"default": true,
-						"description": "ライブ状態ビューに CSM 未登録のセッションも表示します（旧 `claudeAgentsIntegration.showUnregistered` の後継。v0.5.22 追加）"
+						"description": "ライブ状態ビューに『未定義』グループを表示します（CSM 未登録・sessionId 未紐づけの稼働セッション）。旧 `claudeAgentsIntegration.showUnregistered` の後継。v0.5.24 でツリー化に伴い『未定義グループの ON/OFF』の意味に統合。"
 					},
 					"claudeManager.orgChart.defaultMode": {
 						"type": "string",

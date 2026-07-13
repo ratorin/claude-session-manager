@@ -264,4 +264,18 @@ export function registerSessionCommands(
 			vscode.env.openExternal(uri);
 		})
 	);
+
+	// v0.5.24: ライブ状態の『未定義』グループ配下セッションから Claude Code を開く
+	// （SessionItem を持たないため sessionId 文字列を直接受け取る派生コマンド）
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.openLiveSessionInClaude', (sessionId: string) => {
+			if (!sessionId) { return; }
+			const scheme = vscode.env.uriScheme;
+			const uri = vscode.Uri.parse(
+				`${scheme}://anthropic.claude-code/open?session=` +
+				encodeURIComponent(sessionId)
+			);
+			vscode.env.openExternal(uri);
+		})
+	);
 }

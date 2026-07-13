@@ -1,5 +1,62 @@
 # 更新履歴
 
+## v0.5.24 (2026-07-13) — ライブ状態ツリー化 + cwd 推測マッチング撤去
+
+『動かしていないエージェントが稼働中に見える』重大な誤紐付けを根絶し、ライブ状態ビューを **フラット → エージェント別 2 階層ツリー** にリファクタしました。
+
+### 🩹 撤去: cwd 推測マッチング（実害あり）
+
+- `agentLiveTreeProvider.buildLiveAgentViews` の **`matchLevel === 'cwd'` 分岐を削除**。エージェント名を付けるのは `matchLevel === 'session-id'`（本物の `sessionId` 紐付け）のときだけ。
+- **実害の詳細**: 複数エージェントが同一 `workDir`（例: `c:/xampp`）を共有していると、内部 `cwdMap` は最初の 1 体（例: 取締役）しか保持できず、そのフォルダで動くユーザーの通常チャット窓 N 本すべてが『取締役(推定)』『Daros開発部長(推定)』等に誤って貼り付いていた。CC 2.1.207 の `sessions/*.json` には `agent` フィールドが存在しないため、`agentSessions`（`sessionId` 紐付け）が唯一の確実な同定手段。
+- 表示側の **「(推定)」サフィックス** と cwd tooltip 行、`matchSuffix` 変数、内部 `cwdMap` 生成もすべて撤去。
+- `LiveAgentView.matchLevel` の型は互換のため `'session-id' | 'cwd' | 'none'` のまま残置（型定義に「`'cwd'` は決して返らない」と明記）。
+
+### 🌳 ライブ状態ビューを 2 階層ツリー化
+
+- **ルート**: 各エージェント（本物紐付けで稼働セッションを持つもののみ、稼働ゼロは非表示）を `collapsibleState=Expanded` で表示。`label = displayName`、`description = 稼働 N`。
+- **直下（各エージェント配下）**: そのエージェントで動いている稼働セッション（複数窓・複数ワークツリー等が並ぶ）。CC 公式 `sessionName` → sid 先頭 8 文字の順でラベル、PID・kind・経過時間を description に。
+- **未定義グループ**: 本物紐付けの無い稼働セッションを `未定義（N）` のフォルダに集約（`Collapsed` 既定）。label = CC 公式 name（無ければ sid8）、description = フォルダ名（`cwd` の basename）。エージェント稼働とは明確に別扱い。
+- **部門長判定**: `parentAgent` を持つ子エージェントの数を tooltip に「配下エージェント計 M」で表示（`groupByDept` と同じ流儀の直下カウント）。
+- **経過時間**: `sessions/*.json` の `startedAt` から `Math.max(0, Math.floor((now - startedAt) / 1000))` で算出（v0.5.22 の `orchestrationViewModel` と同じ式）。startedAt 不明時は非表示。
+- **-p / background セッションのレジューム不可**: tooltip に「※ -p / background セッションはレジューム不可の場合があります」を追記（`kind === 'background'` などから判別）。
+
+### 🔧 純ロジック分離とテスト
+
+- **`resolveLiveAgentViews`** / **`buildLiveTreeStructure`** を `src/services/liveAgentTypes.ts` に配置（vscode 非依存）。`agentLiveTreeProvider.buildLiveAgentViews` は互換用の薄い再エクスポート。
+- テスト追加（`R1〜R7`、7 件、合計 **88 pass**）:
+  - **R1** `resolveLiveAgentViews`: 同一 workDir 共有時でも通常チャット窓が `linkedAgentName` を持たず `'none'` のまま（**cwd 誤爆再発防止の明示テスト**）
+  - **R2** `buildLiveTreeStructure`: エージェント別ツリー + 未定義グループ + `subordinateAgentCount` 集計
+  - **R3** 万一 `matchLevel==='cwd'` が来ても未定義に落ちる（防御的動作）
+  - **R4** `agentLiveTreeProvider.ts` からコード上の `matchSuffix` / `"(推定)"` 文字列 / cwd 用 Map 宣言がすべて撤去されている（コメント記述は許容）
+  - **R5** `package.json` の `showUnregisteredLive` description が「未定義グループ」に更新、`liveStatus.showUndefinedGroup` は新設していない（重複回避）
+  - **R6** `openLiveSessionInClaude` コマンドが登録済み
+  - **R7** `elapsedSec = Math.max(0, Math.floor((now - startedAt) / 1000))` 式で計算
+
+### 🎛 設定
+
+- **`claudeManager.agents.showUnregisteredLive`**（既定 `true`）を **「未定義グループの表示 ON/OFF」の意味に統合**。description を更新。新設 `claudeManager.liveStatus.showUndefinedGroup` は **導入せず**（重複回避）— 旧 v0.5.22 で追加された既存キーを流用することでユーザー設定の破壊を回避。
+- **新規コマンド `claudeManager.openLiveSessionInClaude`**: 未定義グループ配下のセッション行クリック時に Claude Code を起動（`SessionItem` を持たない tree item のため文字列 `sessionId` を直接受け取る派生コマンド）。既存の `claudeManager.openInClaude`（`SessionItem` 引数）と併存。
+
+### 📖 ドキュメント
+
+- **README.md**: 🟢 ライブ状態ビュー節を書き直し（ツリー化・未定義グループ・cwd 推測撤去を明記）。変更履歴に v0.5.24 追加。
+- **guide.html**: 「ライブ状態ツリー化 + 誤紐付け撤去（v0.5.24）」節を追加（挙動 5 点 + 部門長 tooltip + 経過時間）。
+
+### 検証
+
+- `npx tsc --noEmit` クリーン。
+- `npm test`: **88 / 88 pass**（81 → 88、R1〜R7 追加）。
+- `package.json` `0.5.23` → **`0.5.24`**。設定新設なし（既存キーの意味統合のみ）。
+
+### 判断・見送り事項
+
+- **`claudeManager.liveStatus.showUndefinedGroup` の新設は見送り** — 既存 `agents.showUnregisteredLive`（v0.5.22 追加）が「フラットリスト時代の未登録行表示 ON/OFF」という近縁概念だったため、意味を『未定義グループ ON/OFF』に統合。設定重複と description 分裂を回避しつつ、ユーザーの既存設定値も破壊しない（`true` のままなら未定義グループが表示される）。
+- **部門長 tooltip の「配下エージェント計」は直下のみ** — `parentAgent === X` の直下のみカウント（再帰的な合計ではない）。組織階層が深い場合の「取締役の傘下 30 名」のような再帰合計は将来 UX 要望が出れば別 Sprint で追加。
+- **セッションクリック導線** — 紐付け済み → `previewAgentByName`（エージェントプレビュー）、未定義 → `openLiveSessionInClaude`（Claude Code で開く）。両方とも既存の右クリック context menu と重複しない single command で動作。
+- **`LiveAgentView.matchLevel` の型に `'cwd'` を残置** — buildLiveAgentViews からは決して返らないが、型変更で他モジュールに波及する破壊的変更を避けるため互換のために残置。将来 v1.0 で型からも削除予定。
+- **未定義グループの label に登録済みか未登録かの区別を出さない** — ラベルはあくまで「そのセッションが何か（CC 公式 sessionName や sid）」を表す責務。「なぜここにいるか（紐付け無し）」は tooltip に集約。
+- **cwd 推測マッチングは復活させない** — sessions/*.json に将来 `agent` フィールドが復活しても、それは cwd 推測ではなく公式値経路として `agentWatcher.update()` の agent フィールド分岐（v0.5.22 追加済み）が担当する。
+
 ## v0.5.23 (2026-07-13) — 組織図リデザイン（Obsidian 風グラフに全面刷新、Cytoscape/ELK 撤去）
 
 ### 🩹 コミット前レビュー修正（HIGH 2 + LOW 2）

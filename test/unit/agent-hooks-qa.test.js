@@ -1169,13 +1169,22 @@ test('P4 レビュー修正 L1: agent 補強ループで setAgentSession=false �
 	);
 });
 
-test('P5 レビュー修正 M1: agentLiveTreeProvider のラベルに entry.sessionName が挿入されている', () => {
+test('P5 レビュー修正 M1: agentLiveTreeProvider がラベルに CC 公式 sessionName を活用（v0.5.24 でツリー化に対応）', () => {
 	const src = fs.readFileSync(path.join(REPO, 'src', 'providers', 'agentLiveTreeProvider.ts'), 'utf-8');
-	// 優先順位: view.linkedDisplayName → entry.agentName → entry.sessionName → sid8
+	// v0.5.24 ツリー化以降:
+	//   - LiveAgentGroupItem のラベル = group.linkedDisplayName（エージェント名）
+	//   - LiveSessionItem のラベル = entry.sessionName || sid8（セッション名）
+	// 旧: フラットで「linkedDisplayName || agentName || sessionName || sid8」の 1 段構造だったが、
+	//     v0.5.24 で親（エージェント）と子（セッション）に責務分離されたため、両方が使われていることを確認する。
 	assert.match(
 		src,
-		/view\.linkedDisplayName[\s\S]{0,60}?entry\.agentName[\s\S]{0,60}?entry\.sessionName/,
-		'CC 公式 sessionName がフォールバックとして entry.agentName の次に来る',
+		/super\(group\.linkedDisplayName/,
+		'LiveAgentGroupItem のラベルに group.linkedDisplayName',
+	);
+	assert.match(
+		src,
+		/entry\.sessionName[\s\S]{0,80}?entry\.sessionId[\s\S]{0,40}?substring\(0,\s*8\)/,
+		'LiveSessionItem のラベルに CC 公式 sessionName が使われ、sid 先頭 8 文字にフォールバック',
 	);
 });
 
@@ -1361,5 +1370,158 @@ test('Q12 v0.5.23: csm-ask-agent.py に collab-log 追記コードが入って�
 	assert.match(src, /csm-collab-log\.jsonl/, 'ログファイル名');
 	assert.match(src, /CSM_AGENT_NAME/, 'sender は環境変数優先');
 	assert.match(src, /pass\s*#\s*追記失敗/, '書き込み失敗はサイレント（pass）');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// R. v0.5.24 ライブ状態ツリー化 + cwd 推測マッチング撤去
+// ════════════════════════════════════════════════════════════════════════════
+
+test('R1 v0.5.24 resolveLiveAgentViews: sessionId 紐付けのみを解決、cwd 推測は行わない（同一workDir共有時の誤紐付け根絶）', () => {
+	const home = setupTmpHome();
+	loadFresh(home);
+	// 純関数は liveAgentTypes に配置（vscode 非依存）
+	const { resolveLiveAgentViews } = require(path.join(REPO, 'out', 'services', 'liveAgentTypes'));
+
+	// 同一 workDir を共有する 2 エージェント（例: 取締役 と csm-dev が両方 c:/xampp）
+	const agents = [
+		{ name: 'director', displayName: '取締役', sessionId: 'sid-director', workDir: 'c:/xampp' },
+		{ name: 'csm-dev', displayName: 'CSM開発部', sessionId: 'sid-csm-dev', workDir: 'c:/xampp' },
+	];
+
+	// ユーザーの通常チャット窓 3 本（登録されていない sid）が同じ workDir で動いている
+	const entries = [
+		{ sessionId: 'sid-random-1', status: 'running', cwd: 'c:/xampp' },
+		{ sessionId: 'sid-random-2', status: 'running', cwd: 'c:/xampp/Project' },
+		{ sessionId: 'sid-random-3', status: 'running', cwd: 'c:/xampp' },
+		{ sessionId: 'sid-director', status: 'running', cwd: 'c:/xampp' },
+	];
+
+	const views = resolveLiveAgentViews(entries, agents);
+	assert.equal(views.length, 4);
+	// sid-director は本物紐付け
+	const dir = views.find(v => v.entry.sessionId === 'sid-director');
+	assert.equal(dir.matchLevel, 'session-id');
+	assert.equal(dir.linkedAgentName, 'director');
+	// sid-random-1..3 は cwd が同じでも決して director / csm-dev に貼り付かない（実害の再発防止）
+	for (const sid of ['sid-random-1', 'sid-random-2', 'sid-random-3']) {
+		const v = views.find(x => x.entry.sessionId === sid);
+		assert.equal(v.matchLevel, 'none', `${sid} は none のまま（cwd 推測で誤紐付けされない）`);
+		assert.equal(v.linkedAgentName, undefined, `${sid} に linkedAgentName が付かない`);
+	}
+});
+
+test('R2 v0.5.24 buildLiveTreeStructure: エージェント別ツリー + 未定義グループ + subordinate 集計', () => {
+	const home = setupTmpHome();
+	loadFresh(home);
+	const { buildLiveTreeStructure } = require(path.join(REPO, 'out', 'services', 'liveAgentTypes'));
+
+	const agents = [
+		{ name: 'director' },
+		{ name: 'csm-dev', parentAgent: 'director' },
+		{ name: 'csm-impl', parentAgent: 'csm-dev' },
+		{ name: 'daros-lead', parentAgent: 'director' },
+	];
+	const views = [
+		// director に 2 セッション（別窓）
+		{ entry: { sessionId: 's1', status: 'running', cwd: '' }, linkedAgentName: 'director', linkedDisplayName: '取締役', matchLevel: 'session-id' },
+		{ entry: { sessionId: 's2', status: 'running', cwd: '' }, linkedAgentName: 'director', linkedDisplayName: '取締役', matchLevel: 'session-id' },
+		// csm-dev に 1 セッション
+		{ entry: { sessionId: 's3', status: 'running', cwd: '' }, linkedAgentName: 'csm-dev', linkedDisplayName: 'CSM開発部', matchLevel: 'session-id' },
+		// 未定義 3 本
+		{ entry: { sessionId: 's4', status: 'running', cwd: 'c:/random' }, matchLevel: 'none' },
+		{ entry: { sessionId: 's5', status: 'running', cwd: 'c:/other' }, matchLevel: 'none' },
+		{ entry: { sessionId: 's6', status: 'running', cwd: '' }, matchLevel: 'none' },
+	];
+	const tree = buildLiveTreeStructure(views, agents);
+
+	assert.equal(tree.agents.length, 2, '稼働ゼロのエージェント（csm-impl, daros-lead）は除外');
+	// エージェントは表示名で日本語順
+	const dir = tree.agents.find(g => g.linkedAgentName === 'director');
+	assert.ok(dir);
+	assert.equal(dir.sessions.length, 2, 'director は 2 セッション');
+	// director は csm-dev / daros-lead を直下に持つ = subordinate=2
+	assert.equal(dir.subordinateAgentCount, 2, 'director の直下エージェント数');
+
+	const dev = tree.agents.find(g => g.linkedAgentName === 'csm-dev');
+	assert.equal(dev.sessions.length, 1);
+	assert.equal(dev.subordinateAgentCount, 1, 'csm-dev の直下 = csm-impl');
+
+	assert.equal(tree.undefined.length, 3, '未定義グループに 3 件');
+});
+
+test('R3 v0.5.24 buildLiveTreeStructure: matchLevel==="cwd" が万一入っても未定義に落ちる（防御的動作）', () => {
+	const home = setupTmpHome();
+	loadFresh(home);
+	const { buildLiveTreeStructure } = require(path.join(REPO, 'out', 'services', 'liveAgentTypes'));
+
+	// buildLiveAgentViews からは 'cwd' は返さないが、型互換のため残置しているので
+	// 万が一渡ってきた場合も安全側（未定義行き）に倒れることを確認する。
+	const views = [
+		{ entry: { sessionId: 's-cwd', status: 'running', cwd: '' }, linkedAgentName: 'director', linkedDisplayName: '取締役', matchLevel: 'cwd' },
+	];
+	const tree = buildLiveTreeStructure(views, [{ name: 'director' }]);
+	assert.equal(tree.agents.length, 0, 'cwd マッチは agents に含めない');
+	assert.equal(tree.undefined.length, 1, 'cwd マッチは未定義に落ちる');
+});
+
+test('R4 v0.5.24 agentLiveTreeProvider.ts: matchLevel "cwd" 分岐と "(推定)" 文言が撤去されている', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'providers', 'agentLiveTreeProvider.ts'), 'utf-8');
+	// コメント行（先頭 // または * 始まり）を除去してからチェック
+	//   （撤去理由の説明として "推定" や "cwd" 分岐の記述はコメントに残っているのが自然）
+	const codeOnly = src
+		.split('\n')
+		.filter((line) => {
+			const trimmed = line.trim();
+			return !(trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*'));
+		})
+		.join('\n');
+
+	// buildLiveAgentViews の cwd 分岐（旧: `matchLevel: 'cwd' as const`）が無いこと
+	assert.doesNotMatch(codeOnly, /matchLevel:\s*['"]cwd['"]\s*as const/, 'buildLiveAgentViews は "cwd" as const を返さない');
+	// 表示側の '(推定)' サフィックスがコード上に無いこと（テンプレートリテラル・文字列で "(推定)" を出さない）
+	assert.doesNotMatch(codeOnly, /['"`]\(推定\)['"`]/, '"(推定)" 文字列リテラルは撤去済み');
+	assert.doesNotMatch(codeOnly, /matchSuffix/, 'matchSuffix 変数（旧: " (推定)" 付与用）が撤去済み');
+	// cwd マッチング用の cwdMap の宣言（buildLiveAgentViews 内部用の Map<cwd, agent>）が無いこと
+	assert.doesNotMatch(codeOnly, /const\s+cwdMap\s*=\s*new Map<string,\s*\(typeof/, 'buildLiveAgentViews から cwd 用の Map 宣言が消えている');
+});
+
+test('R5 v0.5.24 package.json: showUnregisteredLive の description が「未定義グループ」に更新されている（新設 liveStatus.showUndefinedGroup は導入しない）', () => {
+	const pkg = require(path.join(REPO, 'package.json'));
+	const props = pkg.contributes.configuration.flatMap((c) => Object.entries(c.properties || {}));
+	const found = props.find(([k]) => k === 'claudeManager.agents.showUnregisteredLive');
+	assert.ok(found, 'showUnregisteredLive は継続して存在');
+	assert.match(found[1].description, /未定義/, 'description に「未定義」を含む（グループ ON/OFF の意味に統合）');
+	// 重複設定を追加していないこと
+	const dup = props.find(([k]) => k === 'claudeManager.liveStatus.showUndefinedGroup');
+	assert.equal(dup, undefined, 'liveStatus.showUndefinedGroup は新設していない（重複回避）');
+});
+
+test('R6 v0.5.24 openLiveSessionInClaude コマンドが登録されている（未定義セッションのクリック導線）', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'commands', 'sessionCommands.ts'), 'utf-8');
+	assert.match(
+		src,
+		/registerCommand\(['"]claudeManager\.openLiveSessionInClaude['"]/,
+		'openLiveSessionInClaude が sessionCommands.ts に登録されている',
+	);
+	// LiveSessionItem 側もこのコマンドを参照している
+	const treeSrc = fs.readFileSync(path.join(REPO, 'src', 'providers', 'agentLiveTreeProvider.ts'), 'utf-8');
+	assert.match(treeSrc, /claudeManager\.openLiveSessionInClaude/, 'LiveSessionItem がコマンドを参照');
+});
+
+test('R7 v0.5.24 elapsedSec 計算: startedAt から (now - startedAt) / 1000 で秒数化', () => {
+	const home = setupTmpHome();
+	loadFresh(home);
+	// ロジックは orchestrationViewModel と同じ計算式で agentLiveTreeProvider にも埋め込まれている
+	const src = fs.readFileSync(path.join(REPO, 'src', 'providers', 'agentLiveTreeProvider.ts'), 'utf-8');
+	assert.match(
+		src,
+		/Math\.max\(0,\s*Math\.floor\(\(now\s*-\s*startedAt\)\s*\/\s*1000\)\)/,
+		'elapsedSec = Math.max(0, Math.floor((now - startedAt) / 1000)) の式',
+	);
+	assert.match(
+		src,
+		/const\s+startedAt\s*=\s*meta\?\.startedAt/,
+		'meta?.startedAt から取得',
+	);
 });
 

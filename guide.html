@@ -3463,6 +3463,17 @@
 
 	<div class="section-title"><span class="num">★</span>v0.5.14 〜 v0.5.21 新機能ハイライト</div>
 
+	<h4 style="color: #d97757; margin: 24px 0 12px;">ライブ状態ツリー化 + 誤紐付け撤去（v0.5.24）</h4>
+	<p>ライブ状態ビューを<strong>フラットリスト → エージェント別 2 階層ツリー</strong>に変更しました:</p>
+	<ul style="margin: 12px 0 12px 24px;">
+		<li><b>ルート</b> — 各エージェント（本物 <code>sessionId</code> 紐付けあり）を <code>displayName</code> + 「稼働 N」で表示。稼働ゼロのエージェントは非表示。</li>
+		<li><b>直下</b> — そのエージェントで動いている複数セッション（別窓・別ワークツリー・複数プロジェクト等）。同じエージェントが並列に動いていることが一目で分かります。</li>
+		<li><b>『未定義（N）』グループ</b> — CSM 未登録・sessionId 未紐付けの稼働セッションをまとめて集約。設定 <code>claudeManager.agents.showUnregisteredLive</code>（旧: フラット時代の未登録行表示 ON/OFF）を『未定義グループ ON/OFF』の意味に統合。</li>
+		<li><b>『(推定)』ラベル撤去</b> — 旧 v0.5.23 まで <code>cwd</code>（作業ディレクトリ）で推測マッチングしていましたが、同一 <code>workDir</code> を共有する複数エージェント間で <em>ユーザーの通常チャット窓 N 本すべてが『取締役(推定)』『Daros開発部長(推定)』等に誤って貼り付く</em> 実害があったため撤去。エージェント名を付けるのは本物の <code>sessionId</code> 紐付けが取れているときだけになりました。</li>
+		<li><b>部門長</b> — 配下エージェントを持つエージェント（<code>parentAgent</code> リンクを受けている側）は tooltip に「配下エージェント計 M」を追記。</li>
+		<li><b>経過時間</b> — <code>sessions/*.json</code> の <code>startedAt</code> から計算（v0.5.22 のオーケストレーションビューと同じロジック）。startedAt 不明時は非表示。</li>
+	</ul>
+
 	<h4 style="color: #d97757; margin: 24px 0 12px;">Fable 5 モデル解禁（v0.5.14）</h4>
 	<p>旧 v0.5.6 〜 v0.5.13 で「組織方針で非選択」として除外していた <strong>Fable 5</strong> を第一級モデルとして復活しました。表示文字は <strong>Ｆ</strong>、色は金 <code>#ffd54f</code>。<code>effort: max</code> も選択可能です。</p>
 	<p style="color: #888;">Fable 5 に関するバグ修正（<code>claude-fable-5[1m]</code> の判定順序、<code>fable → opus</code> のサイレント書き換え）も同時に対応済み。</p>
