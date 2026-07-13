@@ -2107,6 +2107,16 @@
 	</ul>
 	<p style="color: #888; font-size: 12px;">※ 階層 / グループのサブモードではズームコントロールと倍率バッジは非表示になります（HTML/CSS ベースのモードには不要のため）。</p>
 
+	<h4 style="color: #d97757; margin: 24px 0 12px;">v0.5.26 組織図の整理（グローバル除外 / ルート絞り込み / 階層再設計 / 線視認性）</h4>
+	<p>複数プロジェクトのエージェントが 1 枚に同居してカオスになる問題と、v0.5.23 リデザイン時に混入していたグローバルエージェント表示バグに対応しました。</p>
+	<ul style="margin: 12px 0 12px 24px;">
+		<li><b>グローバルエージェントを既定で除外</b>（バグ修正）— <code>parentAgent</code> 未設定 &amp; <code>showInOrgChart</code> 未指定のグローバル汎用エージェント（<code>qa</code> / <code>doc-writer</code> / <code>researcher</code> 等）を組織図の全モード（グラフ / 階層 / グループ）から除外。ツールバーの <b>「グローバルも表示」トグル</b> or 設定 <code>claudeManager.orgChart.showGlobal</code> で ON にできます。</li>
+		<li><b>ルート絞り込みセレクタ</b> — ツールバーの <b>「ルート」</b> セレクタで最上位エージェント（<code>director</code> / <code>Curtain_leader</code> / <code>ponta</code> 等）配下だけに絞れます。「すべて」も選択肢。設定 <code>claudeManager.orgChart.defaultRoot</code> で永続化されます。</li>
+		<li><b>階層モードを縦型インデントツリーに全面差し替え</b>（ファイルツリー / Obsidian アウトライン風）— カード横並びの横スクロール地獄を解消。各ノードに <b>▶ / ▼</b> トグルを付けて折りたたみ可能。既定では上位 2 階層まで展開。行本体クリックはこれまで通り履歴プレビュー。</li>
+		<li><b>線の視認性 UP + 親→子矢印</b> — グラフモードの親子エッジを太く・明るく、方向がわかる小さな三角矢印を子側に付与。連携（金色点線）と形状・色で区別できます。階層モードの縦罫線も太くコントラスト UP。</li>
+	</ul>
+	<p style="color: #888; font-size: 12px;">※ グローバル / ルート / モード変更はいずれも設定に自動保存され、次回パネル起動時に再現されます。</p>
+
 
 
 	<div class="flow">

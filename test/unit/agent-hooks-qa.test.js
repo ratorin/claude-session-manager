@@ -1623,6 +1623,136 @@ test('S6 orgChartEngine.centerViewportOn: 指定ワールド点がスクリー�
 	assert.ok(Math.abs(s2.x - 400) < 1e-9);
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// T. v0.5.26 組織図の整理（グローバル除外 / ルート絞り込み / 折りたたみ / 線視認性）
+// ════════════════════════════════════════════════════════════════════════════
+
+test('T1 orgChartEngine.isOrgChartMember: shouldShowInOrgChart と同じ 3 ルール', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const { isOrgChartMember } = orgChartEngine;
+	// 1. showInOrgChart 明示なら優先
+	assert.equal(isOrgChartMember({ name: 'a', showInOrgChart: true }), true, '明示 true');
+	assert.equal(isOrgChartMember({ name: 'b', showInOrgChart: false, parentAgent: 'x' }), false, '明示 false（parentAgent より優先）');
+	// 2. parentAgent あり → true
+	assert.equal(isOrgChartMember({ name: 'c', parentAgent: 'director' }), true, 'parentAgent あり');
+	// 3. どちらもなし → false（= グローバルエージェント）
+	assert.equal(isOrgChartMember({ name: 'qa' }), false, 'グローバルは非表示');
+});
+
+test('T2 orgChartEngine.computeRoots: parentAgent なし or 未知は全てルート', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const { computeRoots } = orgChartEngine;
+	const agents = [
+		{ name: 'director' },
+		{ name: 'ponta' },
+		{ name: 'Curtain_leader' },
+		{ name: 'csm-dev', parentAgent: 'director' },
+		{ name: 'csm-impl', parentAgent: 'csm-dev' },
+		{ name: 'lost', parentAgent: 'nonexistent' }, // 親が未知 → ルート扱い
+	];
+	const roots = computeRoots(agents).map(a => a.name).sort();
+	assert.deepEqual(roots, ['Curtain_leader', 'director', 'lost', 'ponta'], '4 ルート（親未知の lost 含む）');
+});
+
+test('T3 orgChartEngine.extractSubtree: 指定ルート配下のみ BFS で収集（循環参照防御）', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const { extractSubtree } = orgChartEngine;
+	const agents = [
+		{ name: 'director' },
+		{ name: 'csm-dev', parentAgent: 'director' },
+		{ name: 'csm-impl', parentAgent: 'csm-dev' },
+		{ name: 'al-dev', parentAgent: 'director' },
+		{ name: 'ponta' },
+		{ name: 'nano-lead', parentAgent: 'ponta' },
+	];
+	// director 配下のみ
+	const dir = extractSubtree(agents, 'director').map(a => a.name).sort();
+	assert.deepEqual(dir, ['al-dev', 'csm-dev', 'csm-impl', 'director']);
+	// ponta 配下のみ
+	const p = extractSubtree(agents, 'ponta').map(a => a.name).sort();
+	assert.deepEqual(p, ['nano-lead', 'ponta']);
+	// 空文字 → 全件
+	const all = extractSubtree(agents, '').length;
+	assert.equal(all, agents.length, '空文字は全件');
+	// 未知のルート → 全件（防御的動作）
+	const unknown = extractSubtree(agents, 'nonexistent').length;
+	assert.equal(unknown, agents.length);
+});
+
+test('T4 orgChartEngine.extractSubtree: 循環参照でも無限ループしない', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const { extractSubtree } = orgChartEngine;
+	// director → mid → director という循環（現実には無いが防御）
+	const agents = [
+		{ name: 'director', parentAgent: 'mid' },
+		{ name: 'mid', parentAgent: 'director' },
+		{ name: 'sibling', parentAgent: 'director' },
+	];
+	// タイムアウトなしで完了することが本題（結果は循環含む収集）
+	const r = extractSubtree(agents, 'director').map(a => a.name).sort();
+	assert.deepEqual(r, ['director', 'mid', 'sibling']);
+});
+
+test('T5 orgChartEngine.filterOrgChartAgents: showGlobal + rootName の組合せ', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const { filterOrgChartAgents } = orgChartEngine;
+	const agents = [
+		{ name: 'director' }, // 明示なし・parentなし = グローバル
+		{ name: 'csm-dev', parentAgent: 'director' },
+		{ name: 'csm-impl', parentAgent: 'csm-dev' },
+		{ name: 'qa' },        // グローバル
+		{ name: 'doc-writer' }, // グローバル
+		{ name: 'ponta' },     // グローバル
+		{ name: 'nano-lead', parentAgent: 'ponta' },
+	];
+	// (a) showGlobal=false, root='' → 部門エージェントのみ（グローバル 4 名は除外）
+	const a = filterOrgChartAgents(agents, false, '').map(x => x.name).sort();
+	assert.deepEqual(a, ['csm-dev', 'csm-impl', 'nano-lead'], 'グローバル 4 名 (director/qa/doc-writer/ponta) は除外');
+	// (b) showGlobal=true, root='' → 全員
+	const b = filterOrgChartAgents(agents, true, '').map(x => x.name).length;
+	assert.equal(b, agents.length, 'showGlobal で全員');
+	// (c) showGlobal=true, root='director' → director 配下のみ
+	const c = filterOrgChartAgents(agents, true, 'director').map(x => x.name).sort();
+	assert.deepEqual(c, ['csm-dev', 'csm-impl', 'director'], 'director 配下 3 名');
+	// (d) showGlobal=false, root='director' → 部門エージェントかつ director 配下
+	//     director 自体はグローバル扱いだが root として指定されると子孫 BFS の起点として扱われるため
+	//     結果には csm-dev/csm-impl が入る。director 自身は起点として含む（サブツリー抽出の慣習）。
+	const d = filterOrgChartAgents(agents, false, 'director').map(x => x.name).sort();
+	assert.deepEqual(d, ['csm-dev', 'csm-impl'], 'showGlobal=false は director 自体も除外');
+});
+
+test('T6 v0.5.26 package.json: showGlobal / defaultRoot 設定が宣言されている', () => {
+	const pkg = require(path.join(REPO, 'package.json'));
+	const props = pkg.contributes.configuration.flatMap((c) => Object.entries(c.properties || {}));
+	const sg = props.find(([k]) => k === 'claudeManager.orgChart.showGlobal');
+	assert.ok(sg, 'orgChart.showGlobal 追加');
+	assert.equal(sg[1].type, 'boolean');
+	assert.equal(sg[1].default, false, '既定 false（グローバル非表示）');
+	const dr = props.find(([k]) => k === 'claudeManager.orgChart.defaultRoot');
+	assert.ok(dr, 'orgChart.defaultRoot 追加');
+	assert.equal(dr[1].type, 'string');
+	assert.equal(dr[1].default, '', '既定 空文字（すべて）');
+});
+
+test('T7 v0.5.26 orgChartPanel.ts: グローバル除外・ルート絞り込みが showOrgChart で適用され UI が備わっている', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'panels', 'orgChartPanel.ts'), 'utf-8');
+	// filterOrgChartAgents 呼び出し
+	assert.match(src, /filterOrgChartAgents\(\s*enriched\s*,\s*showGlobal\s*,\s*defaultRoot\s*\)/, 'showOrgChart で filterOrgChartAgents(enriched, showGlobal, defaultRoot)');
+	// setShowGlobal / setRoot ハンドラ + 再構築
+	assert.match(src, /type\s*===\s*['"]setShowGlobal['"]/, 'setShowGlobal ハンドラ');
+	assert.match(src, /type\s*===\s*['"]setRoot['"]/, 'setRoot ハンドラ');
+	assert.match(src, /rebuildOrgChart/, 'rebuildOrgChart による HTML 再生成');
+	// UI 要素
+	assert.match(src, /id="root-select"/, 'ルートセレクタ');
+	assert.match(src, /id="btn-show-global"/, 'グローバル表示トグル');
+	// 階層モードが縦型インデントツリーに差し替わっている
+	assert.match(src, /tv-row/, 'tv-row（縦型ツリー行）');
+	assert.match(src, /tv-caret/, 'tv-caret（開閉トグル）');
+	assert.match(src, /tvExpanded/, '折りたたみ状態管理 Set');
+	// 線視認性: 矢印描画コード
+	assert.match(src, /小さな矢印/, '親→子矢印のコメント');
+});
+
 test('S7 v0.5.25 orgChartPanel.ts: ビューポート/座標変換/ズーム制御コードが埋め込まれている', () => {
 	const src = fs.readFileSync(path.join(REPO, 'src', 'panels', 'orgChartPanel.ts'), 'utf-8');
 	// (a) ビューポート状態

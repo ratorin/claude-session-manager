@@ -334,6 +334,108 @@ export function fitToView(
 	};
 }
 
+// ─────────────────────────────────────────────────────────────
+// v0.5.26: 組織図フィルタ（グローバル除外 / ルート絞り込み / 折りたたみ）
+// ─────────────────────────────────────────────────────────────
+
+/** 組織図フィルタ対象のミニマル型 */
+export interface OrgFilterAgent {
+	name: string;
+	parentAgent?: string;
+	showInOrgChart?: boolean;
+}
+
+/**
+ * shouldShowInOrgChart と同じ判定（純粋版）。
+ * agentUtils.shouldShowInOrgChart を engine 側で再実装しているのは、
+ * agentUtils が vscode 未依存とはいえ他モジュールを引き込む可能性があるためテストの独立性を優先。
+ *
+ * 判定ルール（agentUtils と一致させる）:
+ *   1. showInOrgChart が明示的に設定されていれば → その値
+ *   2. parentAgent が設定されていれば → true（部門エージェント）
+ *   3. それ以外 → false（グローバルエージェント）
+ */
+export function isOrgChartMember(a: OrgFilterAgent): boolean {
+	if (a.showInOrgChart !== undefined) { return a.showInOrgChart; }
+	return !!a.parentAgent;
+}
+
+/**
+ * ルート集合を計算する。
+ * ルート = `showInOrgChart` フィルタを通した後、parentAgent が空 or 未知（他ルートに繋がらない）なエージェント。
+ * 循環参照は visited セットで防御。
+ */
+export function computeRoots<T extends OrgFilterAgent>(agents: readonly T[]): T[] {
+	const known = new Set(agents.map((a) => a.name));
+	const roots: T[] = [];
+	for (const a of agents) {
+		// parentAgent が無い or 既知集合に無い → ルート
+		if (!a.parentAgent || !known.has(a.parentAgent)) {
+			roots.push(a);
+		}
+	}
+	return roots;
+}
+
+/**
+ * 指定ルートから到達可能な部分グラフを抽出する（ルート自身も含む）。
+ * parentAgent 関係を辿って `rootName` 配下の子孫を BFS で収集。循環参照は visited セットで防御。
+ * `rootName` が空文字列 or 存在しない場合は全件を返す。
+ */
+export function extractSubtree<T extends OrgFilterAgent>(agents: readonly T[], rootName: string): T[] {
+	if (!rootName) { return [...agents]; }
+	const byName = new Map<string, T>(agents.map((a) => [a.name, a]));
+	if (!byName.has(rootName)) { return [...agents]; }
+	// 親→子の隣接リストを構築
+	const childrenOf = new Map<string, T[]>();
+	for (const a of agents) {
+		if (a.parentAgent && byName.has(a.parentAgent)) {
+			const list = childrenOf.get(a.parentAgent) ?? [];
+			list.push(a);
+			childrenOf.set(a.parentAgent, list);
+		}
+	}
+	// BFS
+	const collected: T[] = [];
+	const visited = new Set<string>();
+	const queue: string[] = [rootName];
+	while (queue.length > 0) {
+		const nm = queue.shift()!;
+		if (visited.has(nm)) { continue; }
+		visited.add(nm);
+		const a = byName.get(nm);
+		if (a) { collected.push(a); }
+		for (const child of childrenOf.get(nm) ?? []) {
+			if (!visited.has(child.name)) { queue.push(child.name); }
+		}
+	}
+	return collected;
+}
+
+/**
+ * 組織図表示対象を計算する（グローバル除外 + ルート絞り込み）。
+ *
+ * 順序が重要:
+ *   1) まず**元の親子関係**で `rootName` 配下の部分グラフを BFS で得る（`extractSubtree`）。
+ *      ここでフィルタしていないのは、`rootName` に指定されたエージェント自身がグローバルで
+ *      あっても、その配下の部門エージェントを引き出せるようにするため。
+ *   2) その後 `showGlobal=false` ならグローバルエージェントを除外。ルート自身がグローバルなら
+ *      ここで除外される（結果には配下の部門エージェントだけが残る）。
+ *
+ * @param agents      全エージェント
+ * @param showGlobal  true なら shouldShowInOrgChart のフィルタを外し全エージェントを対象にする
+ * @param rootName    '' なら全ルート、それ以外はその配下（BFS）に限定
+ */
+export function filterOrgChartAgents<T extends OrgFilterAgent>(
+	agents: readonly T[],
+	showGlobal: boolean,
+	rootName: string,
+): T[] {
+	const subtree = extractSubtree(agents, rootName);
+	if (showGlobal) { return subtree; }
+	return subtree.filter(isOrgChartMember);
+}
+
 /** 稼働状態別グルーピング（稼働中 / 待機 / 未紐づけ） */
 export function groupByStatus(
 	agents: GroupTargetAgent[],

@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager — 会話履歴・エージェント運用",
 	"description": "Claude Code の会話履歴・メモリ・マルチエージェント運用を管理する VS Code 拡張機能。ブックマーク、タグ、検索、組織図、大容量セッションの高速ビューワー、利用制限モニターに対応。",
-	"version": "0.5.25",
+	"version": "0.5.26",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -1220,6 +1220,16 @@
 						"type": "boolean",
 						"default": false,
 						"description": "組織図で現ワークスペース外のエージェントを非表示にします。既定は減光のみ（v0.5.23 追加）"
+					},
+					"claudeManager.orgChart.showGlobal": {
+						"type": "boolean",
+						"default": false,
+						"description": "組織図にグローバルエージェント（parentAgent が未設定で `showInOrgChart` も指定なしのもの）も含めます。既定 OFF で部門所属エージェントのみ表示（v0.5.26 追加）。ツールバーの『グローバルも表示』トグルからも切替可能"
+					},
+					"claudeManager.orgChart.defaultRoot": {
+						"type": "string",
+						"default": "",
+						"description": "組織図の起動時ルート絞り込み（そのルート配下のみを表示）。空文字＝『すべて』。ツールバーの『ルート』セレクタで切り替えると自動で永続化されます（v0.5.26 追加）"
 					},
 					"claudeManager.agents.defaultExpand": {
 						"type": "array",

@@ -20,6 +20,7 @@ import { shouldShowInOrgChart } from '../utils/agentUtils';
 import { isContainedIn } from '../utils/pathUtils';
 import { readCollabLog, aggregateCollabLog, CollabEdge } from '../utils/collabLog';
 import { MODEL_CATALOG, CsmModel } from '../models/modelCatalog';
+import { filterOrgChartAgents, computeRoots } from '../utils/orgChartEngine';
 
 // -------------------------------------------------------------------
 // 状態管理
@@ -29,12 +30,15 @@ let orgPanel: vscode.WebviewPanel | undefined;
 
 let onOpenSession: ((sessionId: string) => void) | undefined;
 let onOpenInClaude: ((sessionId: string) => void) | undefined;
+// v0.5.26: setShowGlobal / setRoot は HTML 全再生成（絞り込み対象が変わるため）が必要。
+//   showOrgChart のクロージャに束縛できないので、再構築用のクロージャを保存する。
+let rebuildOrgChart: (() => Promise<void>) | undefined;
 
 // -------------------------------------------------------------------
 // パブリック API
 // -------------------------------------------------------------------
 
-/** 組織図パネルを開く（v0.5.23 Canvas 版） */
+/** 組織図パネルを開く（v0.5.23 Canvas 版 / v0.5.26 グローバル除外 + ルート絞り込み対応） */
 export async function showOrgChart(
 	getSessions: () => ParsedSession[],
 	isLive: (id: string) => boolean,
@@ -44,6 +48,8 @@ export async function showOrgChart(
 ): Promise<void> {
 	onOpenSession = openSession;
 	onOpenInClaude = openInClaude;
+	// v0.5.26: 設定変更・トグル時に呼び直せるよう自身をクロージャに保存
+	rebuildOrgChart = () => showOrgChart(getSessions, isLive, openSession, openInClaude, _extensionUri);
 
 	const agents = await getAgents();
 	const sessions = getSessions();
@@ -86,15 +92,35 @@ export async function showOrgChart(
 	const cfg = vscode.workspace.getConfiguration('claudeManager');
 	const defaultMode = cfg.get<'graph' | 'tree' | 'group'>('orgChart.defaultMode', 'graph');
 	const hideOtherProjects = cfg.get<boolean>('orgChart.hideOtherProjects', false);
+	const showGlobal = cfg.get<boolean>('orgChart.showGlobal', false);
+	const defaultRoot = cfg.get<string>('orgChart.defaultRoot', '');
+
+	// v0.5.26: 組織図の表示対象を絞り込む（グローバル除外 + ルート絞り込み）。
+	//   showGlobal=false（既定）なら shouldShowInOrgChart==false のエージェント（parentAgent 未設定の
+	//   グローバル汎用エージェント）を除外。全 3 モード（グラフ/階層/グループ）に効かせる。
+	//   `enriched` 全件は rootOptions 算出のために別途保持する必要があるが、
+	//   ルート選択肢は showGlobal を適用した後の集合から出す（グローバル OFF 時にグローバルなルートが
+	//   選択肢に出るとユーザーを混乱させるため）。
+	const orgAgents = filterOrgChartAgents(enriched, showGlobal, defaultRoot);
+	// ルート選択肢: 表示対象になり得るエージェントのうち parentAgent が空 or 未知のもの。
+	//   defaultRoot が指定されていても選択肢は「全体」で計算する。
+	const allChartCandidates = showGlobal ? enriched : enriched.filter((a) => shouldShowInOrgChart(a));
+	const roots = computeRoots(allChartCandidates);
+	const rootOptions = roots
+		.map((r) => ({ id: r.name, label: r.displayName || r.name }))
+		.sort((a, b) => a.label.localeCompare(b.label, 'ja'));
 
 	const html = buildOrgChartHtml({
-		agents: enriched,
+		agents: orgAgents,
 		liveIds,
 		wsFolders,
 		collabEdges,
 		nonce,
 		defaultMode,
 		hideOtherProjects,
+		showGlobal,
+		selectedRoot: defaultRoot,
+		rootOptions,
 	});
 	orgPanel.webview.html = html;
 	orgPanel.reveal(vscode.ViewColumn.One);
@@ -161,6 +187,23 @@ async function handleOrgChartMessage(message: Record<string, unknown>): Promise<
 					.update('orgChart.defaultMode', v, vscode.ConfigurationTarget.Global);
 			} catch { /* 書き込み失敗はサイレント */ }
 		}
+	} else if (type === 'setShowGlobal') {
+		// v0.5.26: グローバルも表示トグル。永続化 + パネル HTML を再生成（表示対象集合が変わるため）。
+		try {
+			await vscode.workspace
+				.getConfiguration('claudeManager')
+				.update('orgChart.showGlobal', Boolean(message.value), vscode.ConfigurationTarget.Global);
+		} catch { /* サイレント */ }
+		if (rebuildOrgChart) { await rebuildOrgChart(); }
+	} else if (type === 'setRoot') {
+		// v0.5.26: ルート絞り込み。'' はすべて。永続化 + 再生成。
+		const v = typeof message.value === 'string' ? message.value : '';
+		try {
+			await vscode.workspace
+				.getConfiguration('claudeManager')
+				.update('orgChart.defaultRoot', v, vscode.ConfigurationTarget.Global);
+		} catch { /* サイレント */ }
+		if (rebuildOrgChart) { await rebuildOrgChart(); }
 	}
 }
 
@@ -176,6 +219,12 @@ interface BuildArgs {
 	nonce: string;
 	defaultMode: 'graph' | 'tree' | 'group';
 	hideOtherProjects: boolean;
+	/** v0.5.26: グローバルエージェント（parentAgent 未設定）も含めるか */
+	showGlobal: boolean;
+	/** v0.5.26: 現在選択中のルート（''=すべて） */
+	selectedRoot: string;
+	/** v0.5.26: ルートセレクタの選択肢（表示ラベル + 内部 id） */
+	rootOptions: Array<{ id: string; label: string }>;
 }
 
 interface OrgNodeData {
@@ -218,13 +267,24 @@ function toOrgNodeData(agents: AgentInfo[], liveIds: Set<string>, wsFolders: str
 }
 
 function buildOrgChartHtml(args: BuildArgs): string {
-	const { agents, liveIds, wsFolders, collabEdges, nonce, defaultMode, hideOtherProjects } = args;
+	const { agents, liveIds, wsFolders, collabEdges, nonce, defaultMode, hideOtherProjects,
+		showGlobal, selectedRoot, rootOptions } = args;
 	const nodes = toOrgNodeData(agents, liveIds, wsFolders);
 	const nodesJson = JSON.stringify(nodes);
 	const collabJson = JSON.stringify(collabEdges);
 	const modelColorsJson = JSON.stringify(
 		Object.fromEntries(Object.entries(MODEL_CATALOG).map(([k, v]) => [k, v.colorHex]))
 	);
+	// ルートセレクタの HTML オプション
+	const escOpt = (s: string): string => s.replace(/[&<>"']/g, (c) => (
+		{ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as Record<string, string>
+	)[c]);
+	const rootOptionsHtml = [
+		`<option value="" ${selectedRoot === '' ? 'selected' : ''}>すべて</option>`,
+		...rootOptions.map((r) => (
+			`<option value="${escOpt(r.id)}" ${selectedRoot === r.id ? 'selected' : ''}>${escOpt(r.label)}</option>`
+		)),
+	].join('');
 
 	return `<!DOCTYPE html>
 <html lang="ja">
@@ -375,8 +435,37 @@ canvas.graph.pan { cursor: move; }
 }
 .idle-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); opacity: 0.5; }
 .ecount { font-size: 10px; color: var(--text-dim); margin-left: auto; font-family: ui-monospace, Consolas, monospace; }
-.vline { width: 1px; height: 20px; background: var(--border); }
+/* v0.5.26: 罫線を太く・コントラスト UP（旧: 1px border → 2px text-dim） */
+.vline { width: 2px; height: 20px; background: var(--text-dim); opacity: 0.55; }
 .subtree { display: flex; gap: 10px; margin-top: 20px; flex-wrap: nowrap; }
+
+/* ---- v0.5.26: 階層モードを縦型インデントツリー（ファイルツリー風）に作り替え ---- */
+/* 判断: モックのカード階層は横スクロール地獄でユーザから『イメージとかけ離れている』と指摘。
+        Obsidian / VS Code エクスプローラ / ファイルマネージャ慣習の「縦積み + インデント + 三角トグル」
+        の方が期待に近いと判断し、階層モードを全面差し替え。 */
+.tv-row {
+	display: flex; align-items: center; gap: 6px;
+	padding: 4px 6px; border-radius: 4px; cursor: pointer;
+	position: relative;
+	font-size: 12.5px;
+	line-height: 1.4;
+	border-left: 2px solid transparent;
+}
+.tv-row:hover { background: var(--vscode-list-hoverBackground); border-left-color: var(--accent); }
+.tv-row.dimmed { opacity: 0.35; }
+.tv-row.hidden { display: none; }
+.tv-caret {
+	display: inline-flex; align-items: center; justify-content: center;
+	width: 16px; height: 16px; font-size: 10px; opacity: 0.75; user-select: none;
+	transition: transform .12s;
+}
+.tv-caret.collapsed { transform: rotate(-90deg); }
+.tv-caret.leaf { visibility: hidden; }
+.tv-name { font-weight: 600; }
+.tv-role { font-size: 11px; color: var(--text-dim); }
+.tv-children { display: block; }
+.tv-children.collapsed { display: none; }
+.tv-empty-hint { padding: 24px; color: var(--text-dim); font-size: 12.5px; text-align: center; }
 @keyframes pw {
 	0% { box-shadow: 0 0 0 0 rgba(63,174,106,.5); }
 	70% { box-shadow: 0 0 0 9px rgba(63,174,106,0); }
@@ -426,6 +515,15 @@ canvas.graph.pan { cursor: move; }
 
 	<div class="toolbar-group">
 		<input type="search" id="org-search" class="search-box" placeholder="🔎 名前・役割で検索" aria-label="組織図ノード検索">
+	</div>
+
+	<!-- v0.5.26: ルート絞り込み + グローバル表示トグル（全モード共通、ここで絞ると再描画される） -->
+	<div class="toolbar-group" title="ルート（取締役級）で絞り込み">
+		<span class="toolbar-label">ルート:</span>
+		<select id="root-select" class="search-box" aria-label="組織図ルート絞り込み">${rootOptionsHtml}</select>
+	</div>
+	<div class="toolbar-group">
+		<button class="mtool ${showGlobal ? 'active' : ''}" id="btn-show-global" title="parentAgent 未設定のグローバルエージェント（qa / doc-writer 等）も含めて表示（既定 OFF）">グローバルも表示</button>
 	</div>
 
 	<div class="toolbar-group" id="legend-chips" role="group" aria-label="凡例フィルタ">
@@ -683,20 +781,40 @@ function draw(ts, edges) {
 	for (const e of edges) {
 		if (!isVisible(e.s) || !isVisible(e.t)) continue;
 		const dim = hi && !(hi.has(e.s.id) && hi.has(e.t.id));
-		ctx.globalAlpha = dim ? 0.06 : (e.kind === 'cmd' ? 0.35 : 0.8);
+		// v0.5.26: 親子 (cmd) の視認性 UP（旧: alpha 0.35, lineWidth 1.1, color #6b7185）
+		ctx.globalAlpha = dim ? 0.08 : (e.kind === 'cmd' ? 0.65 : 0.85);
 		ctx.beginPath();
 		ctx.moveTo(e.s.x, e.s.y); ctx.lineTo(e.t.x, e.t.y);
 		if (e.kind === 'collab') {
 			ctx.setLineDash([5, 4]);
-			ctx.strokeStyle = 'var(--collab)';
 			ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--collab') || '#e8b84b';
-			ctx.lineWidth = Math.min(1 + (e.w || 1) * 0.7, 5);
+			ctx.lineWidth = Math.min(1 + (e.w || 1) * 0.7, 5) / viewport.zoom;
 		} else {
 			ctx.setLineDash([]);
-			ctx.strokeStyle = '#6b7185';
-			ctx.lineWidth = 1.1;
+			ctx.strokeStyle = '#a4aac0'; // 明るめのグレー（旧 #6b7185）
+			ctx.lineWidth = 1.8 / viewport.zoom;
 		}
 		ctx.stroke(); ctx.setLineDash([]);
+
+		// v0.5.26: 親子エッジには小さな矢印（親→子）— 子ノード縁の少し外側に描く。連携（金点線）とは形状で区別。
+		if (e.kind === 'cmd' && !dim) {
+			const dx = e.t.x - e.s.x, dy = e.t.y - e.s.y;
+			const len = Math.sqrt(dx * dx + dy * dy) || 1;
+			const ux = dx / len, uy = dy / len;
+			// 矢印先端: 子ノード表面（ちょっと手前）
+			const tipX = e.t.x - ux * (e.t.r + 2);
+			const tipY = e.t.y - uy * (e.t.r + 2);
+			const size = 7 / viewport.zoom;
+			// 側方ベクトル（左右）
+			const lx = -uy, ly = ux;
+			ctx.beginPath();
+			ctx.moveTo(tipX, tipY);
+			ctx.lineTo(tipX - ux * size + lx * size * 0.5, tipY - uy * size + ly * size * 0.5);
+			ctx.lineTo(tipX - ux * size - lx * size * 0.5, tipY - uy * size - ly * size * 0.5);
+			ctx.closePath();
+			ctx.fillStyle = '#c2c6da';
+			ctx.fill();
+		}
 	}
 
 	// ノード
@@ -848,53 +966,109 @@ function centerOn(id) {
 	alpha = 1;
 }
 
-// ────────────────────────── 階層モード（カード） ──────────────────────────
+// ────────────────────────── 階層モード（v0.5.26 縦型インデントツリー） ──────────────────────────
+// 旧: カード階層（横並び、横スクロール地獄）→ ファイルツリー風の縦積み + インデント + 三角トグルへ差し替え
+// 折りたたみ状態は tvExpanded にパネル内で保持（設定永続化なし）。既定は上位 2 階層まで展開しそれ以下は折りたたみ。
+
+const tvExpanded = new Set(); // 展開中のノード id
 function renderTree() {
 	const root = document.getElementById('tree-root');
 	root.innerHTML = '';
-	// ルート = parent === null
 	const roots = NODES.filter(n => n.parent === null);
 	if (roots.length === 0) {
-		root.innerHTML = '<div class="empty-hint">エージェントが登録されていません</div>';
+		root.innerHTML = '<div class="tv-empty-hint">エージェントが登録されていません</div>';
 		return;
 	}
-	// 全階層を再帰的にレンダリング
-	const tier = document.createElement('div'); tier.className = 'tier';
-	root.appendChild(tier);
-	for (const r of roots) tier.appendChild(renderCardCol(r));
+	// 既定展開: 深さ 0〜1 のノードを展開しておく（=上位 2 階層まで表示）
+	//   ユーザーが手動で開閉した後はその状態を尊重（tvExpanded を毎回クリアしない）
+	if (tvExpanded.size === 0) {
+		for (const n of NODES) {
+			const depth = depthOf(n);
+			if (depth < 2 && (CHILD_COUNT[n.id] || 0) > 0) {
+				tvExpanded.add(n.id);
+			}
+		}
+	}
+	for (const r of roots) root.appendChild(renderTreeNode(r, 0));
 	applyTreeFilter();
 }
-
-function renderCardCol(node) {
-	const col = document.createElement('div'); col.className = 'tcol';
-	col.appendChild(renderCard(node));
-	const children = NODES.filter(n => n.parent === node.id);
-	if (children.length > 0) {
-		const vline = document.createElement('div'); vline.className = 'vline'; col.appendChild(vline);
-		const sub = document.createElement('div'); sub.className = 'subtree';
-		for (const c of children) sub.appendChild(renderCardCol(c));
-		col.appendChild(sub);
+function depthOf(node) {
+	let d = 0, cur = node;
+	const visited = new Set();
+	while (cur && cur.parent && byId[cur.parent] && !visited.has(cur.parent)) {
+		visited.add(cur.parent);
+		cur = byId[cur.parent]; d++;
 	}
-	return col;
+	return d;
 }
-function renderCard(node) {
-	const card = document.createElement('div'); card.className = 'card';
-	card.dataset.nodeId = node.id;
-	const cc = CHILD_COUNT[node.id] || 0;
-	const dot = node.live ? '<span class="pulse"></span>' : '<span class="idle-dot"></span>';
-	const chip = modelClass(node.model);
-	card.innerHTML =
-		'<div class="nm">' + dot + esc(node.label) + '</div>' +
-		(node.role ? '<div class="rl">' + esc(node.role) + '</div>' : '') +
-		'<div class="foot">' +
-			'<span class="mchip ' + chip + '">' + esc(String(node.model || '').toUpperCase()) + '</span>' +
-			(cc > 0 ? '<span class="ecount">部下 ' + cc + '</span>' : '') +
-		'</div>';
-	card.addEventListener('click', () => handleNodeClick(node));
-	return card;
+function renderTreeNode(node, depth) {
+	const wrap = document.createElement('div');
+	wrap.className = 'tv-node';
+	const children = NODES.filter(n => n.parent === node.id);
+	const hasChildren = children.length > 0;
+	const isExpanded = tvExpanded.has(node.id);
+
+	const row = document.createElement('div');
+	row.className = 'tv-row';
+	row.dataset.nodeId = node.id;
+	row.style.paddingLeft = (6 + depth * 16) + 'px';
+
+	const caret = document.createElement('span');
+	caret.className = 'tv-caret ' + (hasChildren ? (isExpanded ? '' : 'collapsed') : 'leaf');
+	caret.textContent = '▼';
+	row.appendChild(caret);
+
+	const dot = document.createElement('span');
+	dot.className = node.live ? 'pulse' : 'idle-dot';
+	row.appendChild(dot);
+
+	const nm = document.createElement('span');
+	nm.className = 'tv-name'; nm.textContent = node.label || node.id;
+	row.appendChild(nm);
+
+	if (node.role) {
+		const rl = document.createElement('span');
+		rl.className = 'tv-role'; rl.textContent = '— ' + node.role;
+		row.appendChild(rl);
+	}
+	// 右側にモデルチップと部下数
+	const chip = document.createElement('span');
+	chip.className = 'mchip ' + modelClass(node.model);
+	chip.style.marginLeft = 'auto';
+	chip.textContent = String(node.model || '').toUpperCase();
+	row.appendChild(chip);
+	if (hasChildren) {
+		const cnt = document.createElement('span');
+		cnt.className = 'ecount';
+		cnt.textContent = '部下 ' + children.length;
+		cnt.style.marginLeft = '6px';
+		cnt.style.flex = '0 0 auto';
+		row.appendChild(cnt);
+	}
+
+	// キャレット単独クリック: 開閉
+	caret.addEventListener('click', (ev) => {
+		if (!hasChildren) return;
+		ev.stopPropagation();
+		if (tvExpanded.has(node.id)) { tvExpanded.delete(node.id); }
+		else { tvExpanded.add(node.id); }
+		renderTree(); // 再描画（軽量なので DOM 再構築で OK）
+	});
+	// 行本体クリック: ノードのプレビュー
+	row.addEventListener('click', () => handleNodeClick(node));
+
+	wrap.appendChild(row);
+
+	if (hasChildren) {
+		const kids = document.createElement('div');
+		kids.className = 'tv-children ' + (isExpanded ? '' : 'collapsed');
+		for (const c of children) kids.appendChild(renderTreeNode(c, depth + 1));
+		wrap.appendChild(kids);
+	}
+	return wrap;
 }
 function applyTreeFilter() {
-	document.querySelectorAll('#tree-root .card').forEach((el) => {
+	document.querySelectorAll('#tree-root .tv-row').forEach((el) => {
 		const id = el.dataset.nodeId;
 		const n = byId[id]; if (!n) return;
 		const visible = isVisible(n) && matchesSearch(n) && matchesChip(n);
@@ -1074,6 +1248,21 @@ document.getElementById('btn-hide-other').addEventListener('click', () => {
 	alpha = 1;
 	// v0.5.23 レビュー修正: 設定 orgChart.hideOtherProjects に永続化（拡張側で書き込み）
 	vscode.postMessage({ type: 'setHideOtherProjects', value: HIDE_OTHER });
+});
+
+// ────────────────────────── v0.5.26: ルート絞り込み + グローバル表示トグル ──────────────────────────
+const rootSel = document.getElementById('root-select');
+if (rootSel) {
+	rootSel.addEventListener('change', () => {
+		vscode.postMessage({ type: 'setRoot', value: rootSel.value });
+		// 拡張側で永続化 + rebuildOrgChart() → HTML 全再生成が来る
+	});
+}
+document.getElementById('btn-show-global').addEventListener('click', () => {
+	const btn = document.getElementById('btn-show-global');
+	const active = btn.classList.contains('active');
+	btn.classList.toggle('active', !active);
+	vscode.postMessage({ type: 'setShowGlobal', value: !active });
 });
 
 // ────────────────────────── v0.5.25: ズームコントロール ──────────────────────────

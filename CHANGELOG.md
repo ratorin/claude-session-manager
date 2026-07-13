@@ -1,5 +1,76 @@
 # 更新履歴
 
+## v0.5.26 (2026-07-13) — 組織図の整理（グローバル除外復活 + ルート絞り込み + 階層モード全面再設計 + 線視認性改善）
+
+ユーザーからのフィードバック 4 点を反映した組織図の整理スプリント。
+
+### 🩹 (A) グローバルエージェントの混入バグ修正（フィルタ復活）
+
+`showOrgChart` が全エージェントをそのまま `buildOrgChartHtml` に渡していたため、`shouldShowInOrgChart` フィルタが v0.5.23 リデザイン時に**適用漏れ**していた（`buildMiniOrgChartData` には残っていた）。qa / doc-writer / researcher などのグローバル汎用エージェントがグラフ・階層・グループの全モードに混入していた。
+
+- `showOrgChart` に **`orgChartEngine.filterOrgChartAgents(enriched, showGlobal, defaultRoot)`** を挿入。グラフ / 階層 / グループの 3 モード全てに効かせる。
+- 判定は `agentUtils.shouldShowInOrgChart` と一致させた純関数 `isOrgChartMember`（`orgChartEngine`）を採用（テスト独立性のため engine 側に再実装、ルールは 1:1 同期）。
+- **ツールバー「グローバルも表示」トグル**（既定 OFF、設定 `claudeManager.orgChart.showGlobal`）を追加。ON にすると `parentAgent` 未設定のグローバル汎用エージェントも含めて表示。設定はトグル操作で自動永続化（`ConfigurationTarget.Global`）。
+
+### 🌱 (B) ルート絞り込み
+
+複数プロジェクトのエージェントが 1 枚に同居してカオスになる問題への対策。
+
+- **ツールバー「ルート」セレクタ**（`<select>`）を追加。`parentAgent` を辿った最上位を列挙（`orgChartEngine.computeRoots`）し、選択したルート配下（BFS で子孫収集）のみを表示（`orgChartEngine.extractSubtree`）。「すべて」も選択肢に。
+- 設定 **`claudeManager.orgChart.defaultRoot`**（既定 `""`＝すべて）で永続化。セレクタ変更で自動保存。
+- ルート判定は循環参照防御あり（visited セット）。ルート自身がグローバルの場合、`showGlobal=false` ならそのルート自身は除外し配下の部門エージェントだけを残す（挙動をテスト T5 で明示）。
+- `showGlobal` / `defaultRoot` の切替は Webview から `postMessage({type:'setShowGlobal'|'setRoot'})` を送り、拡張側 `handleOrgChartMessage` で永続化 + `rebuildOrgChart()` で HTML 全再生成（絞り込み対象集合が変わるため部分更新ではなく全再生成が安全）。
+
+### 🌳 (C) 階層モードを縦型インデントツリーに全面差し替え
+
+ユーザーから「イメージとかなりかけ離れている」「折りたためると良い」との指摘。
+
+- **旧: カード階層（横並び、横スクロール地獄）** → **新: ファイルツリー / Obsidian アウトライン風の縦積み + インデント + ▶/▼ トグル**。
+- **折りたたみ対応**: 各ノードに子があれば `▶`（畳んだ状態）/ `▼`（開いた状態）のキャレットを表示、クリックで開閉。行本体クリックは従来通り `openSession` プレビューへ。
+- **既定展開**: 深さ 0〜1 の（子を持つ）ノードを既定で展開＝**上位 2 階層まで表示**。ユーザーが手動で開閉した後はその状態を尊重（`tvExpanded` Set をパネル内 state で保持、設定永続化なし）。
+- **判断根拠**: 元カード階層は横並び前提でエージェントが多いと画面外に流れて可視性が悪い。ファイルマネージャ / VS Code エクスプローラの慣習が最も期待に近い（縦積み + インデント + 三角トグル）。CHANGELOG と guide.html の両方に明記。
+
+### 🖋 (D) 線の視認性改善
+
+- **グラフモードのエッジ**: 親子（cmd）のアルファ `0.35 → 0.65`、線幅 `1.1 → 1.8`（zoom 補正付き）、色 `#6b7185 → #a4aac0`（明るめグレー）。連携（金色点線）と形状 + 色で区別。
+- **親→子矢印**: 親子エッジの子側端に**小さな三角矢印**を追加。指揮系統の方向が一目で分かる。矢印は `zoom` 補正付き。ホバー減光時は非表示（矢印がちらつかない）。
+- **階層モードの縦罫線**: `1px var(--border)` → **`2px var(--text-dim) opacity 0.55`** で太く・コントラスト UP（旧は薄すぎて視認性が悪かった）。
+- **行ホバー**: 行の左端に `2px accent` の縦ハイライトを付与し、ホバー時のフォーカス位置を明確化。
+
+### 🧪 テスト（T1〜T7、7 件新規、合計 102 pass）
+
+- **T1** `isOrgChartMember`: 3 ルール（明示 > parentAgent > false）— `agentUtils.shouldShowInOrgChart` と 1:1 一致
+- **T2** `computeRoots`: parentAgent なし or 未知（親が集合外）は全てルート扱い（`director` / `ponta` / `Curtain_leader` / `lost(親未知)`）
+- **T3** `extractSubtree`: 指定ルート配下のみ BFS で収集、空文字は全件、未知ルートは全件フォールバック
+- **T4** `extractSubtree`: 循環参照でも無限ループしない（visited 防御）
+- **T5** `filterOrgChartAgents`: `showGlobal × rootName` の 4 組合せ（グローバル除外 / 全員 / ルート限定 + グローバル除外）— **『同一プロジェクト外の窓が混入しない』『グローバルエージェントがルート指定でも除外される』の両方を明示的にテスト**
+- **T6** `package.json`: `orgChart.showGlobal` / `orgChart.defaultRoot` の 2 設定が新規宣言
+- **T7** `orgChartPanel.ts`: `filterOrgChartAgents` の呼び出し、`setShowGlobal` / `setRoot` ハンドラ、`rebuildOrgChart` による再生成、`root-select` / `btn-show-global` UI、`tv-row` / `tv-caret` / `tvExpanded`（縦型ツリー）、親→子矢印コメントが埋め込まれている
+
+### 📖 ドキュメント
+
+- **CHANGELOG**: v0.5.26 節を追加（本節）。
+- **README.md**: 組織図節に「(A) グローバル除外」「(B) ルート絞り込み」「(C) 階層モード縦型インデント化」「(D) 線視認性 + 親→子矢印」を明記。設定に `orgChart.showGlobal` / `orgChart.defaultRoot` を追記。変更履歴に v0.5.26 追加。
+- **guide.html**: セクション 7 に **v0.5.26 組織図の整理** 段落を追加（トグル / セレクタ / 折りたたみ操作 / 線の見た目改善を説明）。
+
+### 検証
+
+- `npx tsc --noEmit` クリーン。
+- `npm test`: **102 / 102 pass**（95 → 102、T1〜T7 追加）。
+- `package.json` `0.5.25` → **`0.5.26`**。設定 2 種（`orgChart.showGlobal` / `orgChart.defaultRoot`）を新設。
+
+### 判断・見送り事項
+
+- **階層モードは全面差し替え（カード → 縦型インデント）** — ユーザーからの「イメージとかなりかけ離れている」を素直に受け止め、ファイルツリー慣習に寄せた。旧カード階層のコード（`renderCardCol` / `renderCard` / `.tcol` / `.tier` / `.subtree`）は撤去。CSS の `.card` / `.tier` / `.subtree` は使わなくなったが将来再利用の可能性があるため CSS 定義自体は残置（実害なし・軽量）。
+- **折りたたみ状態は設定永続化しない** — セッション内での短期記憶。ユーザーがエージェント構成を変えたときに古い ID の折りたたみ状態を持ち越すと混乱するため。パネル再オープンで既定（上位 2 階層展開）に戻る。
+- **既定展開 = 深さ 0〜1（上位 2 階層）** — 部門構成（例: director → csm-dev → csm-impl）で「部門長までは開いた状態」がユーザーの期待。深さ 2 以上（実装エンジニアレベル）は畳んで見せ、必要に応じて展開してもらう。
+- **矢印は親子（cmd）エッジのみ** — 連携（collab）エッジは相互やりとりの記録で方向性はあるが視覚的に矢印まで付けると煩雑になる。金色点線 + 線幅で識別可能なので矢印は付けない。
+- **`isOrgChartMember` を engine 側にも実装（agentUtils と 2 実装）** — テストで vscode モックの読み込みを避けるため。ルールは同一（同じコメントを両方に貼付）で将来ドリフトしないよう注意コメント記載。
+- **`extractSubtree` を空/未知ルート → 全件返す** — 「無効な defaultRoot に飛ばされたユーザーが空画面を見て困る」を回避するグレースフルフォールバック。
+- **rebuildOrgChart で HTML 全再生成** — 部分更新（`postMessage` で NODES を上書き）も可能だが、力学位置が全部リセットされ / モード切替状態も維持しづらいため単純に全再生成。切替後は `defaultMode` 設定 → 現在モードで復元される。
+- **VS Code の QuickPick 経由でルート選択も検討したが `<select>` を採用** — Webview 内で自己完結する方がクリック→即反映で UX が良く、拡張ホスト往復のレイテンシもない。
+- **『紐づけミス（Ponta を CSM 配下）』はコード側で救わない** — ユーザーの `agents/*.md` の `parentAgent` フィールドが間違っている場合、ルート絞り込みで「Ponta 配下として CSM の子孫が出る」等の見え方になるが、それはユーザーの直しどころ（データ側の修正）を示唆する動作でもある。UI での自動修正は行わない。
+
 ## v0.5.25 (2026-07-13) — 組織図グラフのズーム/パン対応
 
 ユーザーからのフィードバック「グラフモードは気に入ったが、エージェントが増えるとカオスになる」を受け、Obsidian 風力学グラフに **ホイールズーム + 背景ドラッグパン + フィット** を追加しました。
