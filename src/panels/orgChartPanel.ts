@@ -340,6 +340,13 @@ canvas.graph.drag { cursor: grabbing; }
 	background: rgba(24,25,32,.85); border: 1px solid #383c4a; color: #c9cdd9;
 	border-radius: 6px; z-index: 3; max-width: 260px; pointer-events: none;
 }
+/* v0.5.25: ズーム倍率バッジ（右下） */
+.zoom-badge {
+	position: absolute; right: 12px; bottom: 12px; padding: 3px 8px; font-size: 11px;
+	background: rgba(24,25,32,.7); border: 1px solid #383c4a; color: #c9cdd9;
+	border-radius: 10px; z-index: 3; pointer-events: none; font-family: ui-monospace, Consolas, monospace;
+}
+canvas.graph.pan { cursor: move; }
 
 /* ---- 階層（カード階層、テーマ追従） ---- */
 #pane-tree { overflow: auto; background: var(--bg); padding: 20px; }
@@ -443,12 +450,20 @@ canvas.graph.drag { cursor: grabbing; }
 		<button class="mtool" id="btn-collab" title="/csm-ask-agent の直近 7 日の送信を金色点線で重ね描き">連携</button>
 		<button class="mtool ${hideOtherProjects ? 'active' : ''}" id="btn-hide-other" title="現ワークスペース外のエージェントを非表示">他プロジェクトを隠す</button>
 	</div>
+
+	<!-- v0.5.25: グラフモード専用のズームコントロール（他モードでは無効） -->
+	<div class="toolbar-group" id="zoom-controls" title="ズーム / パン（グラフモードのみ）">
+		<button class="mtool" id="btn-zoom-out" title="縮小">−</button>
+		<button class="mtool" id="btn-zoom-in"  title="拡大">＋</button>
+		<button class="mtool" id="btn-zoom-fit" title="全体をフィット表示（ダブルクリックでも可）">⤢</button>
+	</div>
 </div>
 
 <div id="stage-wrap">
 	<!-- グラフモード -->
 	<div class="pane ${defaultMode === 'graph' ? 'on' : ''}" id="pane-graph" role="tabpanel">
 		<div class="hint-overlay" id="collab-hint" style="display:none;"></div>
+		<div class="zoom-badge" id="zoom-badge">100%</div>
 		<canvas id="graph-cv" class="graph"></canvas>
 	</div>
 
@@ -519,8 +534,54 @@ function matchesChip(n) {
 // 実装はモック makeSim を移植。純ロジックは utils/orgChartEngine と等価。
 const cv = document.getElementById('graph-cv');
 const ctx = cv.getContext('2d');
-let W = 0, H = 0, hover = null, drag = null, alpha = 1, raf = null, seeded = false;
+let W = 0, H = 0, DPR = 1, hover = null, drag = null, alpha = 1, raf = null, seeded = false;
 const REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// ────────────────────────── v0.5.25: ビューポート（zoom/pan） ──────────────────────────
+// 実装は utils/orgChartEngine の zoomAt / screenToWorld / fitToView と等価。
+// マウス座標は全て screenToWorld で必ずワールド座標へ変換してからノード判定に使う。
+const ZOOM_MIN = 0.2, ZOOM_MAX = 4.0;
+let viewport = { zoom: 1, panX: 0, panY: 0 };
+let panDrag = null; // 背景パン中の状態: { startSx, startSy, startPanX, startPanY }
+function clampZoom(z) { return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)); }
+function screenToWorld(sx, sy) {
+	return { x: (sx - viewport.panX) / viewport.zoom, y: (sy - viewport.panY) / viewport.zoom };
+}
+function zoomAtScreen(sx, sy, factor) {
+	const nz = clampZoom(viewport.zoom * factor);
+	if (nz === viewport.zoom) return;
+	const w = screenToWorld(sx, sy);
+	viewport = { zoom: nz, panX: sx - w.x * nz, panY: sy - w.y * nz };
+	updateZoomBadge();
+}
+function updateZoomBadge() {
+	const b = document.getElementById('zoom-badge');
+	if (b) b.textContent = Math.round(viewport.zoom * 100) + '%';
+}
+function fitToView(padding) {
+	padding = padding || 40;
+	const visible = gnodes.filter(isVisible);
+	if (visible.length === 0 || W <= 0 || H <= 0) {
+		viewport = { zoom: 1, panX: 0, panY: 0 };
+		updateZoomBadge();
+		return;
+	}
+	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+	for (const n of visible) {
+		if (n.x - n.r < minX) minX = n.x - n.r;
+		if (n.y - n.r < minY) minY = n.y - n.r;
+		if (n.x + n.r > maxX) maxX = n.x + n.r;
+		if (n.y + n.r > maxY) maxY = n.y + n.r;
+	}
+	const bboxW = Math.max(1, maxX - minX);
+	const bboxH = Math.max(1, maxY - minY);
+	const availW = Math.max(1, W - padding * 2);
+	const availH = Math.max(1, H - padding * 2);
+	const z = clampZoom(Math.min(availW / bboxW, availH / bboxH));
+	const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+	viewport = { zoom: z, panX: W / 2 - cx * z, panY: H / 2 - cy * z };
+	updateZoomBadge();
+}
 
 // 描画ノード群（力学は同じ配列を in-place で更新）
 const gnodes = NODES.map(n => ({
@@ -535,10 +596,11 @@ const baseEdges = gnodes.filter(n => n.parent && gById[n.parent])
 
 function resizeCanvas() {
 	const rect = cv.getBoundingClientRect();
-	const dpr = window.devicePixelRatio || 1;
+	DPR = window.devicePixelRatio || 1;
 	W = rect.width; H = rect.height;
-	cv.width = W * dpr; cv.height = H * dpr;
-	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+	cv.width = W * DPR; cv.height = H * DPR;
+	// v0.5.25: base transform は draw() 内で毎フレーム viewport を反映して再設定する。
+	ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 }
 function seedPositions() {
 	gnodes.forEach((n, i) => {
@@ -605,10 +667,15 @@ function neighborsOf(n, edges) {
 }
 
 function draw(ts, edges) {
+	// v0.5.25: 背景はスクリーン座標で（zoom の影響を受けない宇宙感）→ その後ワールド座標系へ切替
+	ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 	ctx.clearRect(0, 0, W, H);
 	const g = ctx.createRadialGradient(W / 2, H / 2, 60, W / 2, H / 2, Math.max(W, H) / 1.2);
 	g.addColorStop(0, '#191b24'); g.addColorStop(1, '#111218');
 	ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+	// v0.5.25: ワールド座標系（zoom * pan 適用）に切替 — 以降のノード/エッジ/ラベルはワールド座標のまま描画
+	ctx.setTransform(DPR * viewport.zoom, 0, 0, DPR * viewport.zoom, DPR * viewport.panX, DPR * viewport.panY);
 
 	const hi = hover ? neighborsOf(hover, edges) : null;
 
@@ -658,9 +725,13 @@ function draw(ts, edges) {
 		}
 		ctx.globalAlpha = dim ? 0.1 : 0.92;
 		ctx.fillStyle = '#dfe3ee';
-		ctx.font = '11.5px "Hiragino Kaku Gothic ProN","Yu Gothic UI",sans-serif';
+		// v0.5.25: ラベルの実サイズがズーム倍率に反比例して過大/過小にならないよう補正
+		//   9〜18px の範囲で見た目のフォント高を安定させる。
+		const targetPx = Math.max(9, Math.min(18, 11.5));
+		const fontPx = targetPx / viewport.zoom;
+		ctx.font = fontPx + 'px "Hiragino Kaku Gothic ProN","Yu Gothic UI",sans-serif';
 		ctx.textAlign = 'center';
-		ctx.fillText(n.label, n.x, n.y + n.r + 15);
+		ctx.fillText(n.label, n.x, n.y + n.r + 15 / viewport.zoom);
 	}
 	ctx.globalAlpha = 1;
 }
@@ -671,17 +742,25 @@ function loop(ts) {
 	raf = requestAnimationFrame(loop);
 }
 
-function pickNode(mx, my) {
+// v0.5.25: 命中判定はワールド座標で行う（マウスは screenToWorld で必ず変換してから使う）。
+function pickNode(worldX, worldY) {
 	return gnodes.find(n => {
 		if (!isVisible(n)) return false;
-		const dx = n.x - mx, dy = n.y - my;
-		return dx * dx + dy * dy < (n.r + 6) * (n.r + 6);
+		const dx = n.x - worldX, dy = n.y - worldY;
+		// クリック許容半径もワールド単位（6px 相当を zoom で補正）
+		const tol = 6 / viewport.zoom;
+		return dx * dx + dy * dy < (n.r + tol) * (n.r + tol);
 	});
 }
 
 function kickGraph() {
 	resizeCanvas();
-	if (!seeded) seedPositions();
+	if (!seeded) {
+		seedPositions();
+		// v0.5.25: 初期表示は全体フィット（多数エージェント時のカオス対策）
+		// simulateStep で位置が安定する前にフィットすると崩れるので、後続の loop で 1 度だけフィット呼び直し。
+		requestAnimationFrame(() => { fitToView(); });
+	}
 	alpha = 1;
 	if (!raf) requestAnimationFrame(loop);
 }
@@ -689,34 +768,83 @@ function stopGraph() {
 	if (raf) { cancelAnimationFrame(raf); raf = null; }
 }
 
+// マウスイベント: 全て screenToWorld で世界座標へ変換してから使用（ズーム時のずれ防止）
 cv.addEventListener('mousemove', (ev) => {
 	const r = cv.getBoundingClientRect();
-	const mx = ev.clientX - r.left, my = ev.clientY - r.top;
-	if (drag) { drag.x = mx; drag.y = my; alpha = Math.max(alpha, 0.6); return; }
-	hover = pickNode(mx, my);
+	const sx = ev.clientX - r.left, sy = ev.clientY - r.top;
+	// 背景パン中: pan を更新（マウス移動量 / zoom を pan に加算 … と考えがちだが
+	//   スクリーン移動量 = pan の増分そのものなので / zoom 不要）
+	if (panDrag) {
+		viewport = {
+			zoom: viewport.zoom,
+			panX: panDrag.startPanX + (sx - panDrag.startSx),
+			panY: panDrag.startPanY + (sy - panDrag.startSy),
+		};
+		return;
+	}
+	const w = screenToWorld(sx, sy);
+	if (drag) { drag.x = w.x; drag.y = w.y; alpha = Math.max(alpha, 0.6); return; }
+	hover = pickNode(w.x, w.y);
 	cv.style.cursor = hover ? 'pointer' : 'grab';
 });
 cv.addEventListener('mousedown', (ev) => {
+	if (ev.button !== 0) { return; } // 左クリックのみ
 	const r = cv.getBoundingClientRect();
-	drag = pickNode(ev.clientX - r.left, ev.clientY - r.top);
-	if (drag) cv.classList.add('drag');
+	const sx = ev.clientX - r.left, sy = ev.clientY - r.top;
+	const w = screenToWorld(sx, sy);
+	const hit = pickNode(w.x, w.y);
+	if (hit) {
+		// ノード命中 → ノードドラッグ
+		drag = hit;
+		cv.classList.add('drag');
+	} else {
+		// 背景ヒット → パン開始
+		panDrag = { startSx: sx, startSy: sy, startPanX: viewport.panX, startPanY: viewport.panY };
+		cv.classList.add('pan');
+	}
 });
-window.addEventListener('mouseup', () => { drag = null; cv.classList.remove('drag'); });
+window.addEventListener('mouseup', () => {
+	drag = null; panDrag = null;
+	cv.classList.remove('drag'); cv.classList.remove('pan');
+});
 cv.addEventListener('mouseleave', () => { hover = null; });
 cv.addEventListener('click', (ev) => {
-	if (drag) return; // ドラッグ中はクリックしない
+	if (drag || panDrag) return; // ドラッグ/パン中はクリックしない
 	const r = cv.getBoundingClientRect();
-	const n = pickNode(ev.clientX - r.left, ev.clientY - r.top);
+	const w = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
+	const n = pickNode(w.x, w.y);
 	if (n) handleNodeClick(n);
 });
+// v0.5.25: ダブルクリックで全体フィット（判断: 一般的なグラフエディタ慣習に合わせる）
+cv.addEventListener('dblclick', (ev) => {
+	ev.preventDefault();
+	fitToView();
+});
+// v0.5.25: ホイールでカーソル位置ズーム（判断: Miro / tldraw / Excalidraw の慣習に寄せる）
+//   ctrlKey/metaKey は不要 — グラフモードは全画面 Canvas でスクロール概念が無く、ホイール=ズームが直感的。
+//   トラックパッドのピンチは ctrlKey=true が付くが同じくズームになるので問題なし。
+cv.addEventListener('wheel', (ev) => {
+	ev.preventDefault();
+	const r = cv.getBoundingClientRect();
+	const sx = ev.clientX - r.left, sy = ev.clientY - r.top;
+	// deltaY 正 = 下スクロール = ズームアウト（自然な向き）
+	const factor = ev.deltaY < 0 ? 1.1 : (1 / 1.1);
+	zoomAtScreen(sx, sy, factor);
+}, { passive: false });
 window.addEventListener('resize', () => { resizeCanvas(); });
 
 // ────────────────────────── 検索 → センタリング ──────────────────────────
+// v0.5.25: ノード位置を動かすのではなく viewport を pan して該当ノードを中央に来るよう調整。
+//   ついでに軽くズームイン（現在の zoom が 1 未満なら 1 に、それ以外は現状維持）。
 function centerOn(id) {
 	const n = gById[id]; if (!n) return;
-	// センターへ引き寄せる（1 tick で瞬移させず、目標位置に緩やかに寄せる）
-	n.x = W / 2 + (Math.random() - 0.5) * 20;
-	n.y = H / 2 + (Math.random() - 0.5) * 20;
+	const targetZoom = Math.max(viewport.zoom, 1.0);
+	viewport = {
+		zoom: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, targetZoom)),
+		panX: W / 2 - n.x * targetZoom,
+		panY: H / 2 - n.y * targetZoom,
+	};
+	updateZoomBadge();
 	alpha = 1;
 }
 
@@ -877,6 +1005,8 @@ function setMode(m) {
 	else { stopGraph(); }
 	if (m === 'tree') renderTree();
 	if (m === 'group') renderGroup();
+	// v0.5.25: グラフモード以外ではズームコントロール/バッジを隠す
+	updateZoomControlsVisibility();
 }
 document.querySelectorAll('.mode-seg button').forEach(b => {
 	b.addEventListener('click', () => {
@@ -946,6 +1076,31 @@ document.getElementById('btn-hide-other').addEventListener('click', () => {
 	vscode.postMessage({ type: 'setHideOtherProjects', value: HIDE_OTHER });
 });
 
+// ────────────────────────── v0.5.25: ズームコントロール ──────────────────────────
+document.getElementById('btn-zoom-in').addEventListener('click', () => {
+	if (currentMode !== 'graph') return;
+	// 画面中央を基点にズームイン
+	zoomAtScreen(W / 2, H / 2, 1.2);
+	alpha = Math.max(alpha, 0.4);
+});
+document.getElementById('btn-zoom-out').addEventListener('click', () => {
+	if (currentMode !== 'graph') return;
+	zoomAtScreen(W / 2, H / 2, 1 / 1.2);
+	alpha = Math.max(alpha, 0.4);
+});
+document.getElementById('btn-zoom-fit').addEventListener('click', () => {
+	if (currentMode !== 'graph') return;
+	fitToView();
+	alpha = Math.max(alpha, 0.4);
+});
+// グラフモード以外ではズームコントロールを隠す（UI 混乱防止）
+function updateZoomControlsVisibility() {
+	const zc = document.getElementById('zoom-controls');
+	if (zc) zc.style.display = currentMode === 'graph' ? '' : 'none';
+	const zb = document.getElementById('zoom-badge');
+	if (zb) zb.style.display = currentMode === 'graph' ? '' : 'none';
+}
+
 // ────────────────────────── グループ軸切替 ──────────────────────────
 document.querySelectorAll('.gaxis .mtool').forEach(b => {
 	b.addEventListener('click', () => {
@@ -976,6 +1131,9 @@ window.addEventListener('message', (ev) => {
 if (currentMode === 'graph') kickGraph();
 if (currentMode === 'tree') renderTree();
 if (currentMode === 'group') renderGroup();
+// v0.5.25: 起動時にズームコントロール表示/バッジを反映
+updateZoomControlsVisibility();
+updateZoomBadge();
 </script>
 </body>
 </html>`;

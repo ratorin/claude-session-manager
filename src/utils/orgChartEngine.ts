@@ -1,10 +1,11 @@
-// orgChartEngine.ts — v0.5.23 組織図の**純ロジック層**
+// orgChartEngine.ts — v0.5.23〜 組織図の**純ロジック層**
 //
 // 描画（Canvas）に依存しない計算だけをここに置く（vscode 依存なし）。
 // - 力学シミュレーションの 1 ステップ計算（reduce-friendly な純関数群）
 // - 隣接集合の計算
 // - グルーピング関数（部署 / モデル / 状態）
 // - Radius 計算
+// - v0.5.25: ビューポート（zoom / pan）変換とフィット計算
 //
 // これにより Node.js 単体テスト（node --test）で挙動を担保できる。
 
@@ -193,6 +194,144 @@ export function groupByModel(agents: GroupTargetAgent[]): GroupCluster[] {
 		label: k,
 		members: map.get(k)!.slice().sort((a, b) => a.name.localeCompare(b.name)),
 	}));
+}
+
+// ─────────────────────────────────────────────────────────────
+// v0.5.25: ビューポート（zoom / pan）変換
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * ビューポート状態。
+ *
+ * ワールド座標 → スクリーン座標:
+ *   screenX = worldX * zoom + panX
+ *   screenY = worldY * zoom + panY
+ */
+export interface Viewport {
+	zoom: number;
+	panX: number;
+	panY: number;
+}
+
+/** ズーム倍率の下限・上限（UI と一致させる） */
+export const ZOOM_MIN = 0.2;
+export const ZOOM_MAX = 4.0;
+
+/** 数値クランプ */
+function clamp(v: number, lo: number, hi: number): number {
+	return Math.max(lo, Math.min(hi, v));
+}
+
+/** スクリーン → ワールド */
+export function screenToWorld(
+	viewport: Viewport,
+	screenX: number,
+	screenY: number,
+): { x: number; y: number } {
+	return {
+		x: (screenX - viewport.panX) / viewport.zoom,
+		y: (screenY - viewport.panY) / viewport.zoom,
+	};
+}
+
+/** ワールド → スクリーン */
+export function worldToScreen(
+	viewport: Viewport,
+	worldX: number,
+	worldY: number,
+): { x: number; y: number } {
+	return {
+		x: worldX * viewport.zoom + viewport.panX,
+		y: worldY * viewport.zoom + viewport.panY,
+	};
+}
+
+/**
+ * カーソル位置を中心にズームした新しいビューポートを返す（純関数）。
+ * カーソル下のワールド点はズーム前後で同じスクリーン座標に留まる（自然なズーム）。
+ *
+ * @param viewport   現在のビューポート
+ * @param anchorSx   ズーム基点のスクリーン x
+ * @param anchorSy   ズーム基点のスクリーン y
+ * @param factor     倍率係数（例: 1.1 で 10% ズームイン、0.9 でズームアウト）
+ * @param min        ズーム下限（省略時 ZOOM_MIN）
+ * @param max        ズーム上限（省略時 ZOOM_MAX）
+ */
+export function zoomAt(
+	viewport: Viewport,
+	anchorSx: number,
+	anchorSy: number,
+	factor: number,
+	min: number = ZOOM_MIN,
+	max: number = ZOOM_MAX,
+): Viewport {
+	const newZoom = clamp(viewport.zoom * factor, min, max);
+	if (newZoom === viewport.zoom) { return viewport; }
+	// アンカー下のワールド点を計算
+	const w = screenToWorld(viewport, anchorSx, anchorSy);
+	// ズーム変更後もアンカーの世界点がアンカーのスクリーン座標に来るように pan を調整
+	return {
+		zoom: newZoom,
+		panX: anchorSx - w.x * newZoom,
+		panY: anchorSy - w.y * newZoom,
+	};
+}
+
+/**
+ * 指定ワールド点をスクリーン中心に置くビューポートを返す（zoom はそのまま or 指定）。
+ * 検索ヒット時のセンタリングに使用。
+ */
+export function centerViewportOn(
+	viewport: Viewport,
+	worldX: number,
+	worldY: number,
+	stageW: number,
+	stageH: number,
+	newZoom?: number,
+): Viewport {
+	const zoom = newZoom !== undefined ? clamp(newZoom, ZOOM_MIN, ZOOM_MAX) : viewport.zoom;
+	return {
+		zoom,
+		panX: stageW / 2 - worldX * zoom,
+		panY: stageH / 2 - worldY * zoom,
+	};
+}
+
+/**
+ * 与えられたポイント群（ノード中心 + 半径）を包む最小フィット viewport を返す。
+ * padding は左右合計・上下合計それぞれ pxで確保する余白（既定 40）。
+ * 空の場合はデフォルト（zoom=1, ステージ中央 pan）を返す。
+ */
+export function fitToView(
+	points: readonly { x: number; y: number; r?: number }[],
+	stageW: number,
+	stageH: number,
+	padding: number = 40,
+): Viewport {
+	if (!points || points.length === 0 || stageW <= 0 || stageH <= 0) {
+		return { zoom: 1, panX: stageW / 2, panY: stageH / 2 };
+	}
+	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+	for (const p of points) {
+		const r = p.r ?? 0;
+		if (p.x - r < minX) { minX = p.x - r; }
+		if (p.y - r < minY) { minY = p.y - r; }
+		if (p.x + r > maxX) { maxX = p.x + r; }
+		if (p.y + r > maxY) { maxY = p.y + r; }
+	}
+	const bboxW = Math.max(1, maxX - minX);
+	const bboxH = Math.max(1, maxY - minY);
+	const availW = Math.max(1, stageW - padding * 2);
+	const availH = Math.max(1, stageH - padding * 2);
+	const zoom = clamp(Math.min(availW / bboxW, availH / bboxH), ZOOM_MIN, ZOOM_MAX);
+	// bbox 中心をステージ中心に
+	const cx = (minX + maxX) / 2;
+	const cy = (minY + maxY) / 2;
+	return {
+		zoom,
+		panX: stageW / 2 - cx * zoom,
+		panY: stageH / 2 - cy * zoom,
+	};
 }
 
 /** 稼働状態別グルーピング（稼働中 / 待機 / 未紐づけ） */

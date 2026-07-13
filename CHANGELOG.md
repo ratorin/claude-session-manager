@@ -1,5 +1,76 @@
 # 更新履歴
 
+## v0.5.25 (2026-07-13) — 組織図グラフのズーム/パン対応
+
+ユーザーからのフィードバック「グラフモードは気に入ったが、エージェントが増えるとカオスになる」を受け、Obsidian 風力学グラフに **ホイールズーム + 背景ドラッグパン + フィット** を追加しました。
+
+### 🔍 ビューポート（zoom / pan）導入
+
+- **状態**: `{ zoom, panX, panY }` を Canvas 描画層に導入。ズーム範囲は **0.2〜4.0** でクランプ。
+- **座標変換の一元化**: `ctx.setTransform(DPR * zoom, 0, 0, DPR * zoom, DPR * panX, DPR * panY)` でワールド → デバイス変換を 1 か所に集約。ノード座標・エッジ・ラベルは**ワールド座標のまま描画**し、変換は ctx に任せる。
+- **`screenToWorld(sx, sy)`**（クライアント側 + `orgChartEngine.screenToWorld`（純関数））をマウスイベント全てで経由: `mousemove` の `hover` 判定、`mousedown` の `pick`、`click` のノード命中、`wheel` のズーム基点計算、ノードドラッグ中の座標更新 — 全てワールド座標に統一（ズーム時のホバー/ドラッグずれを根絶）。
+
+### 🖱️ 入力
+
+- **ホイール = カーソル基点ズーム**（判断: Miro / tldraw / Excalidraw の慣習に寄せた。全画面 Canvas でスクロール概念が無いため `ctrlKey` 修飾は不要とし、トラックパッド pinch（`ctrlKey=true` が付く）も同じくズーム扱い）。カーソル下のワールド点がズーム前後で同じスクリーン座標に留まるよう `panX/panY` を補正（純関数 `orgChartEngine.zoomAt` を移植）。
+- **背景ドラッグ = パン** / **ノードドラッグ = ノード移動** の区別: `mousedown` で `pickNode(worldX, worldY)` して命中ならノードドラッグ、外れなら `panDrag = { startSx, startSy, startPanX, startPanY }` を保存し、以降の `mousemove` で `panX/panY = startPan + (currentScreen - startScreen)` で更新。
+- **ダブルクリック = 全体フィット**（一般的なグラフエディタ慣習）。
+- **ツールバー ＋ / − / ⤢ ボタン**: 画面中央基点でズーム、フィットで全ノードのバウンディングボックスに `padding=40` の余白付きで合わせる。他モード（階層/グループ）ではボタンとバッジを非表示。
+- **ズーム倍率バッジ**: 右下に `120%` の形で表示（グラフモード時のみ）。
+
+### 🔧 純ロジック分離（テスト可能な形で）
+
+`src/utils/orgChartEngine.ts` に以下を新設:
+
+- `Viewport` 型（`{ zoom, panX, panY }`）と `ZOOM_MIN` / `ZOOM_MAX` 定数
+- `screenToWorld(viewport, sx, sy)` / `worldToScreen(viewport, wx, wy)`
+- `zoomAt(viewport, anchorSx, anchorSy, factor, min?, max?)`: カーソル基点ズーム（不変値変換）
+- `centerViewportOn(viewport, wx, wy, stageW, stageH, newZoom?)`: 指定ワールド点をステージ中心に置く
+- `fitToView(points, stageW, stageH, padding?)`: 全ノードのバウンディングボックスに zoom/pan をフィットさせる
+
+クライアント側の `zoomAtScreen` / `fitToView` / `centerOn` はこれらの純関数と同じ算式で実装（webview で import できないため移植）。
+
+### 🎯 既存機能の維持
+
+- ホバー減光・稼働パルス・連携レイヤー（金色点線）・凡例フィルタ・他プロジェクト減光は全て維持。
+- **検索センタリング**: `centerOn(id)` を viewport pan に変更（旧: ノード座標を強制移動）。現在の zoom が 1 未満なら 1 に軽くズームインしてから中央配置。
+- **初期表示は全体フィット**: `seedPositions()` 後の次フレームで `fitToView()` を呼び、エージェント数が多いケース（v0.5.23 以降の増加ケース）でも初回表示がカオスにならないよう調整。
+- **ラベルの読み取り性**: ズーム倍率に反比例させて `font-size = 11.5 / zoom` で描画（実効フォント高が安定）。ラベルオフセット `n.r + 15` も `15/zoom` に補正。
+
+### 🧪 テスト
+
+`test/unit/agent-hooks-qa.test.js` に **S1〜S7、7 件追加**（合計 **95 pass**）:
+
+- **S1** `screenToWorld` / `worldToScreen`: 3 種の viewport で逆変換恒等性
+- **S2** `zoomAt`: アンカー下のワールド点がズーム前後で同じスクリーン座標
+- **S3** `zoomAt`: `ZOOM_MIN` / `ZOOM_MAX` のクランプ
+- **S4** `fitToView`: 全ノードが `padding` 分の内側に収まる（境界近傍の 1e-6 許容）
+- **S5** `fitToView`: 空配列で既定 viewport（zoom=1, ステージ中央 pan）
+- **S6** `centerViewportOn`: 指定点がスクリーン中心
+- **S7** `orgChartPanel.ts` 静的検証: viewport / screenToWorld / setTransform / wheel リスナー / panDrag / dblclick / 3 ボタン / バッジ / `pickNode(worldX, worldY)` シグネチャが埋め込まれている
+
+### 📖 ドキュメント
+
+- **README.md**: 組織図節「グラフモードの操作」を追記（ホイールズーム・背景ドラッグパン・ダブルクリックフィット・±ボタン・倍率バッジ）。変更履歴に v0.5.25 追加。
+- **guide.html**: セクション 7「エージェント組織図」に **v0.5.25 グラフ操作** 段落を追加。
+
+### 検証
+
+- `npx tsc --noEmit` クリーン。
+- `npm test`: **95 / 95 pass**（88 → 95、S1〜S7 追加）。
+- `package.json` `0.5.24` → **`0.5.25`**。設定新設なし（グラフモード内のクライアント状態のみ、リロードで zoom=1 リセット）。
+
+### 判断・見送り事項
+
+- **ホイール = ズーム（Ctrl 修飾不要）** を採用 — グラフモードは全画面 Canvas でスクロール概念が無く、Miro / tldraw / Excalidraw の慣習が最も直感的。トラックパッド pinch も `ctrlKey=true` 付き wheel として届くため同じく自然にズーム扱いになる。プレーンな wheel をパンにする案（VS Code のエディタ慣習）は却下: 直後にドラッグでパンできるため wheel パンの必要性が薄い。
+- **ズーム倍率の永続化は見送り** — グラフモードは「今開いたときの見え方」が重要で、次回起動時の見え方はノード位置（未保存）ともセットにしないと復元できない。ズーム値だけ復元すると意図せぬ拡大/縮小状態で開くことになる。フィット初期表示のほうがユーザー体験として安定。
+- **ラベルのズーム逆補正は `font-size = 11.5 / zoom`（クランプなし）** — 実効フォントサイズを 11.5px に固定するシンプル式を採用。極端なズームアウト時（0.2x）でも 11.5px、極端なズームイン時（4x）でも 11.5px。UI レイアウトが崩れる懸念より読みやすさを優先。
+- **タッチデバイス（ピンチジェスチャ）専用対応は見送り** — VS Code の webview はブラウザ相当で、`ctrlKey=true` 付き wheel（ブラウザピンチ）が上記実装で自動的にズームになるため、iPad / トラックパッド pinch は自然に動く。マルチタッチイベント（`touchstart` 2 本指）専用の追加コードは需要が読めないため未実装。
+- **背景マウスカーソル**: パン中は `cursor: move`、ノードドラッグ中は `cursor: grabbing`、通常は `cursor: grab`。ホバー時は `pointer`。
+- **フィットボタンのアイコン**: モックにない要素だが「⤢」（U+2922、NORTH EAST AND SOUTH WEST ARROW）を採用（一般的な「フィット」記号）。将来 codicon 差し替えの検討余地あり。
+- **PNG / SVG エクスポートは v0.5.23 で撤去済み**。ズーム対応と併せてエクスポート復活する需要が出れば別 Sprint で対応。
+- **spec の項目 (7) 判断メモ**: 上記「ホイール = ズーム」参照。判断根拠を CHANGELOG と guide.html の両方に明記。
+
 ## v0.5.24 (2026-07-13) — ライブ状態ツリー化 + cwd 推測マッチング撤去
 
 『動かしていないエージェントが稼働中に見える』重大な誤紐付けを根絶し、ライブ状態ビューを **フラット → エージェント別 2 階層ツリー** にリファクタしました。

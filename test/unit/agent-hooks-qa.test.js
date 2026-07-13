@@ -1525,3 +1525,126 @@ test('R7 v0.5.24 elapsedSec 計算: startedAt から (now - startedAt) / 1000 �
 	);
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// S. v0.5.25 組織図グラフのズーム/パン（ビューポート変換の純ロジック）
+// ════════════════════════════════════════════════════════════════════════════
+
+test('S1 orgChartEngine.screenToWorld / worldToScreen: 逆変換が恒等', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const { screenToWorld, worldToScreen } = orgChartEngine;
+	const vps = [
+		{ zoom: 1, panX: 0, panY: 0 },
+		{ zoom: 2, panX: 100, panY: -50 },
+		{ zoom: 0.5, panX: -30, panY: 200 },
+	];
+	for (const v of vps) {
+		for (const [sx, sy] of [[0, 0], [400, 300], [-20, 15]]) {
+			const w = screenToWorld(v, sx, sy);
+			const s2 = worldToScreen(v, w.x, w.y);
+			assert.ok(Math.abs(s2.x - sx) < 1e-9, `sx 復元 (v=${JSON.stringify(v)}, sx=${sx})`);
+			assert.ok(Math.abs(s2.y - sy) < 1e-9, 'sy 復元');
+		}
+	}
+});
+
+test('S2 orgChartEngine.zoomAt: アンカー下のワールド点はズーム前後で同じスクリーン座標に留まる', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const { zoomAt, screenToWorld, worldToScreen } = orgChartEngine;
+	const before = { zoom: 1, panX: 50, panY: 30 };
+	const anchor = { sx: 200, sy: 150 };
+	const worldAtAnchorBefore = screenToWorld(before, anchor.sx, anchor.sy);
+	const after = zoomAt(before, anchor.sx, anchor.sy, 1.5);
+	assert.equal(after.zoom, 1.5, 'ズーム倍率が反映');
+	const worldAtAnchorAfter = screenToWorld(after, anchor.sx, anchor.sy);
+	assert.ok(Math.abs(worldAtAnchorAfter.x - worldAtAnchorBefore.x) < 1e-9, 'カーソル下ワールド点 x 不動');
+	assert.ok(Math.abs(worldAtAnchorAfter.y - worldAtAnchorBefore.y) < 1e-9, 'カーソル下ワールド点 y 不動');
+	// 逆方向: ワールド→スクリーン変換でもアンカー位置に来る
+	const s = worldToScreen(after, worldAtAnchorBefore.x, worldAtAnchorBefore.y);
+	assert.ok(Math.abs(s.x - anchor.sx) < 1e-9);
+	assert.ok(Math.abs(s.y - anchor.sy) < 1e-9);
+});
+
+test('S3 orgChartEngine.zoomAt: 上下限クランプ + 変化なしなら同じ参照を返す（可能なら）', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const { zoomAt, ZOOM_MIN, ZOOM_MAX } = orgChartEngine;
+	// 下限に達している状態でさらに縮小 → クランプ
+	const atMin = { zoom: ZOOM_MIN, panX: 0, panY: 0 };
+	const stillMin = zoomAt(atMin, 100, 100, 0.5);
+	assert.equal(stillMin.zoom, ZOOM_MIN, '下限クランプ');
+	// 上限も同様
+	const atMax = { zoom: ZOOM_MAX, panX: 0, panY: 0 };
+	const stillMax = zoomAt(atMax, 100, 100, 5);
+	assert.equal(stillMax.zoom, ZOOM_MAX, '上限クランプ');
+});
+
+test('S4 orgChartEngine.fitToView: 全ノードが余白 padding 分の内側に収まる', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const { fitToView, worldToScreen } = orgChartEngine;
+	const pts = [
+		{ x: 100, y: 100, r: 10 },
+		{ x: 500, y: 300, r: 15 },
+		{ x: 200, y: 400, r: 12 },
+	];
+	const W = 800, H = 600, padding = 40;
+	const vp = fitToView(pts, W, H, padding);
+	// 各点はスクリーン上で [padding, stage-padding] の範囲内
+	for (const p of pts) {
+		const s = worldToScreen(vp, p.x, p.y);
+		const rs = p.r * vp.zoom;
+		assert.ok(s.x - rs >= padding - 1e-6, `点 (${p.x},${p.y}) 左端が padding 内`);
+		assert.ok(s.x + rs <= W - padding + 1e-6, '右端 padding 内');
+		assert.ok(s.y - rs >= padding - 1e-6, '上端 padding 内');
+		assert.ok(s.y + rs <= H - padding + 1e-6, '下端 padding 内');
+	}
+});
+
+test('S5 orgChartEngine.fitToView: 空配列は既定 viewport（zoom=1、ステージ中央 pan）', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const { fitToView } = orgChartEngine;
+	const vp = fitToView([], 800, 600);
+	assert.equal(vp.zoom, 1);
+	assert.equal(vp.panX, 400);
+	assert.equal(vp.panY, 300);
+});
+
+test('S6 orgChartEngine.centerViewportOn: 指定ワールド点がスクリーン中心に来る', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const { centerViewportOn, worldToScreen } = orgChartEngine;
+	const start = { zoom: 1.5, panX: 0, panY: 0 };
+	const vp = centerViewportOn(start, 300, 200, 800, 600);
+	assert.equal(vp.zoom, 1.5, 'zoom は既定で維持');
+	const s = worldToScreen(vp, 300, 200);
+	assert.ok(Math.abs(s.x - 400) < 1e-9, 'x スクリーン中心');
+	assert.ok(Math.abs(s.y - 300) < 1e-9, 'y スクリーン中心');
+	// zoom を上書きするパターン
+	const vp2 = centerViewportOn(start, 300, 200, 800, 600, 2);
+	assert.equal(vp2.zoom, 2);
+	const s2 = worldToScreen(vp2, 300, 200);
+	assert.ok(Math.abs(s2.x - 400) < 1e-9);
+});
+
+test('S7 v0.5.25 orgChartPanel.ts: ビューポート/座標変換/ズーム制御コードが埋め込まれている', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'panels', 'orgChartPanel.ts'), 'utf-8');
+	// (a) ビューポート状態
+	assert.match(src, /let\s+viewport\s*=\s*\{\s*zoom:\s*1/, 'viewport 初期化');
+	// (b) screenToWorld のクライアント側ヘルパー
+	assert.match(src, /function\s+screenToWorld\s*\(\s*sx\s*,\s*sy\s*\)/, 'screenToWorld ヘルパー');
+	// (c) draw() で DPR * zoom / pan の setTransform を使う
+	assert.match(src, /ctx\.setTransform\(\s*DPR\s*\*\s*viewport\.zoom/, 'draw の setTransform に viewport 反映');
+	// (d) wheel ハンドラでカーソル基点ズーム
+	assert.match(src, /cv\.addEventListener\(\s*['"]wheel['"]/, 'wheel リスナー');
+	assert.match(src, /zoomAtScreen\s*\(\s*sx\s*,\s*sy\s*,\s*factor\s*\)/, 'zoomAtScreen(cursor) 呼び出し');
+	// (e) 背景ドラッグ = パン、ノードドラッグ = 移動
+	assert.match(src, /panDrag\s*=\s*\{\s*startSx/, 'パン開始で panDrag をセット');
+	// (f) ダブルクリック = フィット
+	assert.match(src, /cv\.addEventListener\(\s*['"]dblclick['"]/, 'dblclick でフィット');
+	// (g) ツールバーボタン
+	assert.match(src, /id="btn-zoom-in"/, 'ズームインボタン');
+	assert.match(src, /id="btn-zoom-out"/, 'ズームアウトボタン');
+	assert.match(src, /id="btn-zoom-fit"/, 'フィットボタン');
+	// (h) ズーム倍率バッジ
+	assert.match(src, /id="zoom-badge"/, 'ズーム倍率バッジ');
+	// (i) pickNode がワールド座標を受け取る
+	assert.match(src, /function\s+pickNode\s*\(\s*worldX\s*,\s*worldY\s*\)/, 'pickNode(worldX, worldY)');
+});
+
