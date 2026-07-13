@@ -64,7 +64,7 @@ context.subscriptions.push(
 				);
 				vscode.env.openExternal(uri);
 			},
-			// extensionUri for Cytoscape resource loading
+			// v0.5.23: extensionUri は現在未使用（Cytoscape/ELK 撤去後の後方互換のため引数だけ温存）
 			context.extensionUri
 		);
 	})

@@ -1,0 +1,399 @@
+<title>CSM 組織図リデザイン案</title>
+<style>
+:root{
+	--bg:#f2f3f6; --panel:#ffffff; --ink:#23262e; --muted:#6a7080; --line:#e2e4ea;
+	--accent:#b8912f; --chip:#eceef3;
+	--fable:#e8b84b; --opus:#a98ae8; --sonnet:#5aa3e0; --haiku:#6fbf78; --live:#3fae6a;
+}
+@media (prefers-color-scheme: dark){
+	:root{ --bg:#17181d; --panel:#1f2128; --ink:#dcdfe7; --muted:#8e93a3; --line:#2e313b; --accent:#e8b84b; --chip:#282b34; }
+}
+:root[data-theme="dark"]{ --bg:#17181d; --panel:#1f2128; --ink:#dcdfe7; --muted:#8e93a3; --line:#2e313b; --accent:#e8b84b; --chip:#282b34; }
+:root[data-theme="light"]{ --bg:#f2f3f6; --panel:#ffffff; --ink:#23262e; --muted:#6a7080; --line:#e2e4ea; --accent:#b8912f; --chip:#eceef3; }
+
+*{box-sizing:border-box}
+body{ background:var(--bg); color:var(--ink); margin:0; padding:28px 20px 80px;
+	font-family:"Hiragino Kaku Gothic ProN","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+	font-size:14.5px; line-height:1.75; }
+main{max-width:1060px; margin:0 auto}
+h1{ font-size:26px; font-weight:700; letter-spacing:.02em; margin:0 0 4px; text-wrap:balance }
+.sub{ color:var(--muted); margin:0 0 26px; max-width:62ch }
+.eyebrow{ font-size:11px; letter-spacing:.14em; color:var(--accent); font-weight:700; margin-bottom:6px }
+
+/* タブ */
+.tabs{ display:flex; gap:6px; flex-wrap:wrap; margin:0 0 14px }
+.tab{ border:1px solid var(--line); background:var(--panel); color:var(--muted); border-radius:999px;
+	padding:7px 16px; cursor:pointer; font-size:13px; font-family:inherit; font-weight:600 }
+.tab:hover{ color:var(--ink) }
+.tab.on{ background:var(--accent); border-color:var(--accent); color:#1a1508 }
+.tab:focus-visible{ outline:2px solid var(--accent); outline-offset:2px }
+.pane{ display:none }
+.pane.on{ display:block }
+
+/* 説明ブロック */
+.lead{ display:flex; gap:18px; align-items:baseline; margin:10px 0 12px; flex-wrap:wrap }
+.lead h2{ font-size:18px; margin:0; font-weight:700 }
+.lead .cost{ font-size:12px; color:var(--muted); border:1px solid var(--line); border-radius:6px; padding:2px 10px; white-space:nowrap }
+.desc{ color:var(--muted); margin:0 0 14px; max-width:74ch }
+.desc b{ color:var(--ink); font-weight:600 }
+
+/* VS Code 風フレーム（モックは常にダーク＝VS Code世界の再現） */
+.vsframe{ background:#181920; border:1px solid #30333e; border-radius:10px; overflow:hidden;
+	box-shadow:0 14px 40px rgba(0,0,0,.28) }
+.vsbar{ display:flex; align-items:center; gap:10px; padding:8px 14px; background:#202230; border-bottom:1px solid #30333e;
+	font-size:12px; color:#9aa0b2 }
+.vsbar .dot{ width:10px; height:10px; border-radius:50%; background:#3a3e4d }
+.vsbar .ttl{ margin-left:6px; font-family:ui-monospace,"Cascadia Code",Consolas,monospace }
+.stage{ position:relative; height:560px }
+canvas.graph{ display:block; width:100%; height:100%; cursor:grab }
+canvas.graph.drag{ cursor:grabbing }
+
+/* 凡例・ツールバー（モック内） */
+.mocktools{ position:absolute; top:12px; left:12px; display:flex; gap:8px; z-index:3; flex-wrap:wrap }
+.mtool{ background:rgba(24,25,32,.85); border:1px solid #383c4a; color:#c9cdd9; font-size:12px;
+	border-radius:7px; padding:5px 12px; backdrop-filter:blur(4px) }
+.mtool.search{ display:flex; gap:6px; align-items:center; color:#7d8394 }
+.legend{ position:absolute; bottom:12px; left:12px; display:flex; gap:12px; z-index:3;
+	background:rgba(24,25,32,.85); border:1px solid #383c4a; border-radius:8px; padding:7px 14px; font-size:12px; color:#c9cdd9; flex-wrap:wrap }
+.lg{ display:flex; align-items:center; gap:6px }
+.sw{ width:10px; height:10px; border-radius:50% }
+
+/* カード階層（案B） */
+.tree{ padding:34px 16px 40px; overflow-x:auto }
+.tier{ display:flex; justify-content:center; gap:14px; position:relative }
+.tcol{ display:flex; flex-direction:column; align-items:center; gap:0 }
+.card{ background:#232634; border:1px solid #363b4c; border-radius:10px; padding:10px 14px; min-width:150px;
+	position:relative; transition:transform .15s, border-color .15s }
+.card:hover{ transform:translateY(-2px); border-color:#5b627a }
+.card .nm{ font-weight:700; font-size:13.5px; color:#e6e9f2; display:flex; align-items:center; gap:8px }
+.card .rl{ font-size:11px; color:#8d93a6; margin-top:2px }
+.card .foot{ display:flex; gap:6px; margin-top:8px; align-items:center }
+.mchip{ font-size:10px; font-weight:700; border-radius:4px; padding:1px 7px; letter-spacing:.05em }
+.m-fable{ background:rgba(232,184,75,.16); color:var(--fable); border:1px solid rgba(232,184,75,.35) }
+.m-opus{ background:rgba(169,138,232,.14); color:var(--opus); border:1px solid rgba(169,138,232,.32) }
+.m-sonnet{ background:rgba(90,163,224,.14); color:var(--sonnet); border:1px solid rgba(90,163,224,.32) }
+.m-haiku{ background:rgba(111,191,120,.14); color:var(--haiku); border:1px solid rgba(111,191,120,.32) }
+.pulse{ width:8px; height:8px; border-radius:50%; background:var(--live); box-shadow:0 0 0 0 rgba(63,174,106,.55); animation:pw 1.8s infinite }
+.idle-dot{ width:8px; height:8px; border-radius:50%; background:#4a4f61 }
+.ecount{ font-size:10px; color:#7d8394; margin-left:auto; font-family:ui-monospace,Consolas,monospace }
+@keyframes pw{ 0%{box-shadow:0 0 0 0 rgba(63,174,106,.5)} 70%{box-shadow:0 0 0 9px rgba(63,174,106,0)} 100%{box-shadow:0 0 0 0 rgba(63,174,106,0)} }
+@media (prefers-reduced-motion: reduce){ .pulse{animation:none} .card{transition:none} }
+.vline{ width:1px; height:22px; background:#3c4152 }
+.hbar{ height:1px; background:#3c4152; position:relative; margin:0 70px }
+.hbar::before,.hbar::after{ content:""; position:absolute; top:0; width:1px; height:22px; background:#3c4152 }
+.hbar::before{ left:0 } .hbar::after{ right:0 }
+.subtree{ display:flex; gap:12px; margin-top:22px }
+.morechip{ align-self:center; background:#262a38; border:1px dashed #464c60; color:#8d93a6; border-radius:8px; padding:8px 14px; font-size:12px }
+
+/* 放射状（案C）*/
+.radial-wrap{ display:flex; justify-content:center; padding:10px 0 }
+
+/* グループ（案E）*/
+.gaxis{ display:flex; gap:8px; padding:14px 14px 0 }
+.axbtn{ background:#262a38; border:1px solid #3a3f50; color:#a7adc0; border-radius:7px; padding:5px 14px; font-size:12px; cursor:pointer; font-family:inherit }
+.axbtn.on{ background:rgba(232,184,75,.15); border-color:var(--fable); color:var(--fable); font-weight:700 }
+.gclusters{ display:flex; flex-wrap:wrap; gap:14px; padding:16px }
+.gc{ background:#20232f; border:1px solid #363b4c; border-radius:12px; padding:12px 14px; min-width:190px; flex:1 }
+.gc h4{ margin:0 0 10px; font-size:12px; color:#9aa0b4; letter-spacing:.1em; font-weight:700; display:flex; gap:8px; align-items:center }
+.gc h4 .cnt{ margin-left:auto; font-family:ui-monospace,Consolas,monospace; color:#6f7488; font-weight:400 }
+.gmember{ display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:7px; font-size:12.5px; color:#d4d8e4 }
+.gmember:hover{ background:#2a2e3d }
+.gm-ch{ font-size:10px; font-weight:700; width:16px; height:16px; border-radius:4px; display:flex; align-items:center; justify-content:center }
+
+/* 比較表 */
+table{ border-collapse:collapse; width:100%; margin-top:8px; font-size:13px }
+th,td{ border:1px solid var(--line); padding:8px 12px; text-align:left }
+th{ background:var(--chip); font-weight:700 }
+.tblwrap{ overflow-x:auto }
+.note{ background:var(--chip); border-left:3px solid var(--accent); border-radius:0 8px 8px 0; padding:12px 16px; margin:20px 0; font-size:13.5px }
+</style>
+
+<main>
+<div class="eyebrow">CSM DESIGN PROPOSAL — 2026-07-13</div>
+<h1>組織図リデザイン 5案</h1>
+<p class="sub">実際の組織データ（director 配下 17 エージェント）でモックを作成しました。タブで切り替えて操作感を確認してください。案A・Dはドラッグ／ホバーが効きます。</p>
+
+<div class="tabs" role="tablist">
+	<button class="tab on" data-p="a">案A: Obsidian風グラフ</button>
+	<button class="tab" data-p="b">案B: カード階層</button>
+	<button class="tab" data-p="c">案C: 放射状マップ</button>
+	<button class="tab" data-p="d">「関係」ビュー案</button>
+	<button class="tab" data-p="e">「グループ」ビュー案</button>
+</div>
+
+<!-- ============ 案A ============ -->
+<section class="pane on" id="pane-a">
+	<div class="lead"><h2>案A — Obsidian風 力学グラフ</h2><span class="cost">実装コスト: 中（既存Cytoscape置換 or 自前Canvas）</span></div>
+	<p class="desc">ご提案いただいた方向です。<b>ノードの大きさ＝部下数＋稼働量</b>、色＝モデル、稼働中はふわっと明滅。ホバーで隣接だけを残して他を沈める、ドラッグで再配置。宇宙に浮かぶ知識グラフの気持ちよさをそのまま組織に。</p>
+	<div class="vsframe"><div class="vsbar"><span class="dot"></span><span class="dot"></span><span class="ttl">CSM — 組織図（グラフ）</span></div>
+		<div class="stage">
+			<div class="mocktools"><div class="mtool search">🔍 エージェント検索…</div><div class="mtool">⏸ 物理停止</div></div>
+			<div class="legend"><span class="lg"><span class="sw" style="background:var(--fable)"></span>Fable</span><span class="lg"><span class="sw" style="background:var(--opus)"></span>Opus</span><span class="lg"><span class="sw" style="background:var(--sonnet)"></span>Sonnet</span><span class="lg"><span class="sw" style="background:var(--haiku)"></span>Haiku</span><span class="lg"><span class="sw" style="background:var(--live)"></span>稼働中</span></div>
+			<canvas class="graph" id="cvA"></canvas>
+		</div>
+	</div>
+</section>
+
+<!-- ============ 案B ============ -->
+<section class="pane" id="pane-b">
+	<div class="lead"><h2>案B — カード階層（モダン組織図）</h2><span class="cost">実装コスト: 小（HTML/CSSのみ、Cytoscape不要）</span></div>
+	<p class="desc">「組織図らしさ」を保ったまま今風に。カードに<b>モデルバッジ・稼働ドット・役割・部下数</b>を集約し、ホバーで浮き上がる。会社の組織図として一番読みやすく、印刷やスクショ共有にも向きます。</p>
+	<div class="vsframe"><div class="vsbar"><span class="dot"></span><span class="dot"></span><span class="ttl">CSM — 組織図（階層）</span></div>
+		<div class="tree">
+			<div class="tier"><div class="tcol">
+				<div class="card" style="border-color:rgba(232,184,75,.5)">
+					<div class="nm"><span class="pulse"></span>取締役 director</div>
+					<div class="rl">全体統括・指示起案・エージェント管理</div>
+					<div class="foot"><span class="mchip m-fable">FABLE</span><span class="ecount">部下 17</span></div>
+				</div>
+				<div class="vline"></div>
+			</div></div>
+			<div class="hbar"></div>
+			<div class="subtree" style="justify-content:center">
+				<div class="tcol">
+					<div class="card"><div class="nm"><span class="pulse"></span>CSM開発部</div><div class="rl">csm-dev</div>
+						<div class="foot"><span class="mchip m-opus">OPUS</span><span class="ecount">部下 1</span></div></div>
+					<div class="vline"></div>
+					<div class="card"><div class="nm"><span class="pulse"></span>CSM実装部隊</div><div class="rl">csm-impl</div>
+						<div class="foot"><span class="mchip m-fable">FABLE</span></div></div>
+				</div>
+				<div class="tcol">
+					<div class="card"><div class="nm"><span class="idle-dot"></span>AL開発部</div><div class="rl">al-dev</div>
+						<div class="foot"><span class="mchip m-opus">OPUS</span><span class="ecount">部下 4</span></div></div>
+					<div class="vline"></div>
+					<div class="card"><div class="nm"><span class="idle-dot"></span>ALデバッグ班</div><div class="rl">al-debug ほか3名</div>
+						<div class="foot"><span class="mchip m-sonnet">SONNET</span></div></div>
+				</div>
+				<div class="tcol">
+					<div class="card"><div class="nm"><span class="idle-dot"></span>Darosリード</div><div class="rl">daros-lead</div>
+						<div class="foot"><span class="mchip m-opus">OPUS</span><span class="ecount">部下 3</span></div></div>
+					<div class="vline"></div>
+					<div class="card"><div class="nm"><span class="idle-dot"></span>Daros品質確認</div><div class="rl">daros-qa ほか2名</div>
+						<div class="foot"><span class="mchip m-haiku">HAIKU</span></div></div>
+				</div>
+				<div class="tcol">
+					<div class="card"><div class="nm"><span class="pulse"></span>品質管理部</div><div class="rl">qa</div>
+						<div class="foot"><span class="mchip m-opus">OPUS</span></div></div>
+				</div>
+				<div class="morechip">＋ 直轄 8 部署<br>（調査部・サーバー管理部・総務部…）</div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<!-- ============ 案C ============ -->
+<section class="pane" id="pane-c">
+	<div class="lead"><h2>案C — 放射状マップ</h2><span class="cost">実装コスト: 中（SVG自前描画）</span></div>
+	<p class="desc">取締役を中心に、<b>内輪＝部門長、外輪＝メンバー</b>。組織の「重心」が一目で分かり、50体規模でも円周に沿って破綻しにくいのが利点。稼働中ノードは外側にリングが灯ります。</p>
+	<div class="vsframe"><div class="vsbar"><span class="dot"></span><span class="dot"></span><span class="ttl">CSM — 組織図（放射状）</span></div>
+		<div class="stage radial-wrap"><svg id="svgC" width="1020" height="540" role="img" aria-label="放射状の組織図モック"></svg></div>
+	</div>
+</section>
+
+<!-- ============ 案D ============ -->
+<section class="pane" id="pane-d">
+	<div class="lead"><h2>「関係」ビュー — 何を表示すべきか</h2><span class="cost">現状: 指揮系統を並べ替えただけ＋真っ暗バグ</span></div>
+	<p class="desc">現状の「関係」モードは<b>ツリーと同じ親子エッジを力学配置しただけ</b>で情報が増えません。この案では<b>実際の連携ログ（/csm-ask-agent の送信履歴）を点線で重ね、線の太さ＝やりとり回数</b>にします。指揮系統（実線）と実際の仕事の流れ（点線）のズレが見える＝組織のボトルネック発見ツールになります。</p>
+	<div class="vsframe"><div class="vsbar"><span class="dot"></span><span class="dot"></span><span class="ttl">CSM — 関係（連携フロー）</span></div>
+		<div class="stage">
+			<div class="mocktools"><div class="mtool">表示: 直近7日の連携</div></div>
+			<div class="legend"><span class="lg" style="gap:8px"><span style="display:inline-block;width:22px;height:0;border-top:2px solid #6b7185"></span>指揮系統</span><span class="lg" style="gap:8px"><span style="display:inline-block;width:22px;height:0;border-top:2px dashed #e8b84b"></span>連携実績（太さ=回数）</span></div>
+			<canvas class="graph" id="cvD"></canvas>
+		</div>
+	</div>
+</section>
+
+<!-- ============ 案E ============ -->
+<section class="pane" id="pane-e">
+	<div class="lead"><h2>「グループ」ビュー — 何を表示すべきか</h2><span class="cost">現状: ELK boxレイアウト＋真っ暗バグ</span></div>
+	<p class="desc">グループは<b>「軸を切り替えて眺め直す」ためのビュー</b>にすると価値が出ます。部署別・モデル別・稼働状態別をワンクリックで再クラスタリング。「いまOpusを何体使っているか」「稼働中は誰か」が即答できます。上のチップを押すと切り替わります。</p>
+	<div class="vsframe"><div class="vsbar"><span class="dot"></span><span class="dot"></span><span class="ttl">CSM — グループ</span></div>
+		<div>
+			<div class="gaxis">
+				<button class="axbtn on" data-ax="dept">部署別</button>
+				<button class="axbtn" data-ax="model">モデル別</button>
+				<button class="axbtn" data-ax="status">稼働状態別</button>
+			</div>
+			<div class="gclusters" id="gclusters"></div>
+		</div>
+	</div>
+</section>
+
+<div class="note"><b>「真っ暗」バグについて:</b> 関係・グループのレイアウトライブラリ（cose / ELK box）は同梱されているため、原因はモード切替時のレイアウト実行エラーか描画領域の再フィット漏れとみています。どの案を採用する場合でも該当コードは作り直しになるため、リデザインと同時に解消するのが早道です。</div>
+
+<h2 style="font-size:17px">比較まとめ</h2>
+<div class="tblwrap"><table>
+<tr><th>案</th><th>見た目</th><th>50体規模の耐性</th><th>実装</th><th>向いている用途</th></tr>
+<tr><td><b>A: Obsidian風</b></td><td>★★★★★</td><td>◎（自然に散らばる）</td><td>中</td><td>全体俯瞰・探索・「かっこよさ」</td></tr>
+<tr><td><b>B: カード階層</b></td><td>★★★★</td><td>○（横スクロール前提）</td><td>小</td><td>正式な組織図・共有</td></tr>
+<tr><td><b>C: 放射状</b></td><td>★★★★</td><td>◎（円周で吸収）</td><td>中</td><td>重心・規模感の把握</td></tr>
+<tr><td>関係（D）</td><td>—</td><td>◎</td><td>中（ログ集計含む）</td><td>連携の実態・ボトルネック発見</td></tr>
+<tr><td>グループ（E）</td><td>—</td><td>◎</td><td>小</td><td>軸を変えた棚卸し</td></tr>
+</table></div>
+<p class="desc" style="margin-top:12px">おすすめは <b>A をメインに置き換え、E を第2モードとして再実装、B はエクスポート用</b>（画像/共有）に温存する構成です。D は連携ログの集計が入るため、次のステップとして切り出せます。</p>
+</main>
+
+<script>
+// ================= 共有データ（実組織） =================
+const C = { fable:'#e8b84b', opus:'#a98ae8', sonnet:'#5aa3e0', haiku:'#6fbf78', live:'#3fae6a' };
+const AGENTS = [
+	{id:'director', label:'取締役', model:'fable', live:true, parent:null},
+	{id:'csm-dev', label:'CSM開発部', model:'opus', live:true, parent:'director'},
+	{id:'csm-impl', label:'CSM実装部隊', model:'fable', live:true, parent:'csm-dev'},
+	{id:'al-dev', label:'AL開発部', model:'opus', live:false, parent:'director'},
+	{id:'al-debug', label:'ALデバッグ班', model:'sonnet', live:false, parent:'al-dev'},
+	{id:'al-planner', label:'ALプランナー', model:'sonnet', live:false, parent:'al-dev'},
+	{id:'al-planning', label:'ALプランニング部', model:'sonnet', live:false, parent:'al-dev'},
+	{id:'al-tester', label:'ALテスター', model:'haiku', live:false, parent:'al-dev'},
+	{id:'daros-lead', label:'Darosリード', model:'opus', live:false, parent:'director'},
+	{id:'daros-qa', label:'Daros品質確認', model:'haiku', live:false, parent:'daros-lead'},
+	{id:'daros-spec', label:'Daros仕様調査', model:'sonnet', live:false, parent:'daros-lead'},
+	{id:'daros-reg', label:'Daros登録調査', model:'sonnet', live:false, parent:'daros-lead'},
+	{id:'qa', label:'品質管理部', model:'opus', live:true, parent:'director'},
+	{id:'researcher', label:'調査部', model:'sonnet', live:false, parent:'director'},
+	{id:'server-admin', label:'サーバー管理部', model:'sonnet', live:false, parent:'director'},
+	{id:'admin', label:'総務部', model:'haiku', live:false, parent:'director'},
+	{id:'task-mgr', label:'タスク管理', model:'haiku', live:false, parent:'director'},
+	{id:'doc-writer', label:'ドキュメント作成', model:'sonnet', live:false, parent:'director'},
+];
+const CHILD_COUNT = {};
+AGENTS.forEach(a=>{ if(a.parent){ CHILD_COUNT[a.parent]=(CHILD_COUNT[a.parent]||0)+1; } });
+
+// ================= タブ切替 =================
+const tabs=document.querySelectorAll('.tab'), panes=document.querySelectorAll('.pane');
+tabs.forEach(t=>t.addEventListener('click',()=>{
+	tabs.forEach(x=>x.classList.remove('on')); panes.forEach(x=>x.classList.remove('on'));
+	t.classList.add('on'); document.getElementById('pane-'+t.dataset.p).classList.add('on');
+	if(t.dataset.p==='a') simA.kick(); if(t.dataset.p==='d') simD.kick(); if(t.dataset.p==='c') drawRadial();
+}));
+
+// ================= 力学グラフ（案A/D共通エンジン） =================
+function makeSim(canvasId, opts){
+	const cv=document.getElementById(canvasId), ctx=cv.getContext('2d');
+	const nodes=AGENTS.map(a=>({...a, x:0, y:0, vx:0, vy:0,
+		r: 7 + (CHILD_COUNT[a.id]||0)*2.2 + (a.live?2:0) + (a.id==='director'?4:0)}));
+	const byId=Object.fromEntries(nodes.map(n=>[n.id,n]));
+	const edges=nodes.filter(n=>n.parent).map(n=>({s:byId[n.parent], t:n, kind:'cmd', w:1}));
+	(opts.extraEdges||[]).forEach(e=>edges.push({s:byId[e.s], t:byId[e.t], kind:'collab', w:e.w}));
+	let W=0,H=0,hover=null,drag=null,alpha=1,raf=null,t0=0;
+	function resize(){
+		const rect=cv.parentElement.getBoundingClientRect(); const dpr=window.devicePixelRatio||1;
+		W=rect.width; H=rect.height; cv.width=W*dpr; cv.height=H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+	}
+	function seed(){
+		nodes.forEach((n,i)=>{ const ang=i/nodes.length*Math.PI*2;
+			const rad=n.parent===null?0:(n.parent==='director'?120:210);
+			n.x=W/2+Math.cos(ang)*rad+(Math.random()-.5)*30; n.y=H/2+Math.sin(ang)*rad+(Math.random()-.5)*30; });
+	}
+	function step(){
+		for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){
+			const a=nodes[i],b=nodes[j]; let dx=b.x-a.x,dy=b.y-a.y; let d2=dx*dx+dy*dy||1; const d=Math.sqrt(d2);
+			const f=Math.min(2200/d2,4); dx/=d;dy/=d; a.vx-=dx*f; a.vy-=dy*f; b.vx+=dx*f; b.vy+=dy*f;
+		}
+		edges.forEach(e=>{
+			const dx=e.t.x-e.s.x, dy=e.t.y-e.s.y, d=Math.sqrt(dx*dx+dy*dy)||1;
+			const ideal=e.kind==='cmd'?110:150; const f=(d-ideal)*0.004;
+			e.s.vx+=dx/d*f; e.s.vy+=dy/d*f; e.t.vx-=dx/d*f; e.t.vy-=dy/d*f;
+		});
+		nodes.forEach(n=>{
+			n.vx+=(W/2-n.x)*0.0012; n.vy+=(H/2-n.y)*0.0012;
+			if(drag===n){ n.vx=0; n.vy=0; return; }
+			n.vx*=0.86; n.vy*=0.86; n.x+=n.vx*alpha*2; n.y+=n.vy*alpha*2;
+			n.x=Math.max(30,Math.min(W-30,n.x)); n.y=Math.max(30,Math.min(H-30,n.y));
+		});
+		alpha=Math.max(alpha*0.995,0.25);
+	}
+	function neighbors(n){ const s=new Set([n.id]); edges.forEach(e=>{ if(e.s.id===n.id)s.add(e.t.id); if(e.t.id===n.id)s.add(e.s.id); }); return s; }
+	function draw(ts){
+		ctx.clearRect(0,0,W,H);
+		const g=ctx.createRadialGradient(W/2,H/2,60,W/2,H/2,Math.max(W,H)/1.2);
+		g.addColorStop(0,'#191b24'); g.addColorStop(1,'#111218'); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+		const hi=hover?neighbors(hover):null;
+		edges.forEach(e=>{
+			const dim=hi&&!(hi.has(e.s.id)&&hi.has(e.t.id));
+			ctx.globalAlpha=dim?0.06:(e.kind==='cmd'?0.35:0.8);
+			ctx.beginPath(); ctx.moveTo(e.s.x,e.s.y); ctx.lineTo(e.t.x,e.t.y);
+			if(e.kind==='collab'){ ctx.setLineDash([5,4]); ctx.strokeStyle=C.fable; ctx.lineWidth=Math.min(1+e.w*0.7,5); }
+			else{ ctx.setLineDash([]); ctx.strokeStyle='#6b7185'; ctx.lineWidth=1.1; }
+			ctx.stroke(); ctx.setLineDash([]);
+		});
+		nodes.forEach(n=>{
+			const dim=hi&&!hi.has(n.id); ctx.globalAlpha=dim?0.12:1;
+			const col=C[n.model];
+			if(n.live&&!dim){ const p=(Math.sin(ts/600+n.x)+1)/2;
+				ctx.beginPath(); ctx.arc(n.x,n.y,n.r+5+p*4,0,7); ctx.fillStyle=col+'22'; ctx.fill(); }
+			ctx.beginPath(); ctx.arc(n.x,n.y,n.r,0,7);
+			ctx.fillStyle=col; ctx.shadowColor=col; ctx.shadowBlur=dim?0:12; ctx.fill(); ctx.shadowBlur=0;
+			if(n.live){ ctx.beginPath(); ctx.arc(n.x+n.r*0.72,n.y-n.r*0.72,3,0,7); ctx.fillStyle=C.live; ctx.fill(); }
+			ctx.globalAlpha=dim?0.1:0.92; ctx.fillStyle='#dfe3ee'; ctx.font='11.5px "Hiragino Kaku Gothic ProN","Yu Gothic UI",sans-serif';
+			ctx.textAlign='center'; ctx.fillText(n.label, n.x, n.y+n.r+15);
+		});
+		ctx.globalAlpha=1;
+	}
+	function loop(ts){ if(!t0)t0=ts; step(); draw(ts); raf=requestAnimationFrame(loop); }
+	function pick(mx,my){ return nodes.find(n=>{ const dx=n.x-mx,dy=n.y-my; return dx*dx+dy*dy<(n.r+6)*(n.r+6); }); }
+	cv.addEventListener('mousemove',ev=>{ const r=cv.getBoundingClientRect(); const mx=ev.clientX-r.left,my=ev.clientY-r.top;
+		if(drag){ drag.x=mx; drag.y=my; alpha=Math.max(alpha,0.6); return; }
+		hover=pick(mx,my); cv.style.cursor=hover?'pointer':'grab'; });
+	cv.addEventListener('mousedown',ev=>{ const r=cv.getBoundingClientRect(); drag=pick(ev.clientX-r.left,ev.clientY-r.top); if(drag)cv.classList.add('drag'); });
+	window.addEventListener('mouseup',()=>{ drag=null; cv.classList.remove('drag'); });
+	cv.addEventListener('mouseleave',()=>{ hover=null; });
+	window.addEventListener('resize',()=>{ resize(); });
+	return { kick(){ resize(); if(nodes[0].x===0)seed(); alpha=1; if(!raf)requestAnimationFrame(loop); } };
+}
+const simA=makeSim('cvA',{});
+const simD=makeSim('cvD',{ extraEdges:[
+	{s:'director',t:'csm-impl',w:5},{s:'csm-impl',t:'qa',w:3},{s:'director',t:'qa',w:2},
+	{s:'director',t:'server-admin',w:2},{s:'qa',t:'csm-dev',w:1},{s:'researcher',t:'al-dev',w:1},
+]});
+simA.kick();
+
+// ================= 放射状（案C） =================
+function drawRadial(){
+	const svg=document.getElementById('svgC'); if(svg.dataset.done)return; svg.dataset.done='1';
+	const cx=510, cy=270, ns='http://www.w3.org/2000/svg';
+	const el=(t,at)=>{ const e=document.createElementNS(ns,t); for(const k in at)e.setAttribute(k,at[k]); return e; };
+	svg.appendChild(el('rect',{x:0,y:0,width:1020,height:540,fill:'#14151b'}));
+	const leads=AGENTS.filter(a=>a.parent==='director');
+	const members=AGENTS.filter(a=>a.parent&&a.parent!=='director');
+	const pos={ director:{x:cx,y:cy} };
+	leads.forEach((a,i)=>{ const ang=-Math.PI/2+i/leads.length*Math.PI*2;
+		pos[a.id]={x:cx+Math.cos(ang)*130, y:cy+Math.sin(ang)*130, ang}; });
+	members.forEach(a=>{
+		const sib=members.filter(m=>m.parent===a.parent); const k=sib.indexOf(a);
+		const base=pos[a.parent].ang; const spread=0.32;
+		const ang=base+(k-(sib.length-1)/2)*spread;
+		pos[a.id]={x:cx+Math.cos(ang)*225, y:cy+Math.sin(ang)*225}; });
+	AGENTS.filter(a=>a.parent).forEach(a=>{ const p=pos[a.parent],q=pos[a.id];
+		svg.appendChild(el('path',{d:`M${p.x},${p.y} Q${(p.x+q.x)/2+(q.y-p.y)*0.12},${(p.y+q.y)/2-(q.x-p.x)*0.12} ${q.x},${q.y}`,stroke:'#3a3f52',fill:'none','stroke-width':1.2})); });
+	AGENTS.forEach(a=>{ const q=pos[a.id]; const r=a.id==='director'?22:(CHILD_COUNT[a.id]?13:8);
+		if(a.live) svg.appendChild(el('circle',{cx:q.x,cy:q.y,r:r+5,fill:'none',stroke:C.live,'stroke-width':1.6,'stroke-opacity':0.75}));
+		svg.appendChild(el('circle',{cx:q.x,cy:q.y,r,fill:C[a.model]}));
+		const t=el('text',{x:q.x,y:q.y+r+15,'text-anchor':'middle',fill:'#dfe3ee','font-size':11.5}); t.textContent=a.label; svg.appendChild(t); });
+}
+
+// ================= グループ（案E） =================
+const MODEL_JP={fable:'FABLE',opus:'OPUS',sonnet:'SONNET',haiku:'HAIKU'};
+const DEPTS={ 'csm-dev':'CSM開発', 'al-dev':'AL開発', 'daros-lead':'Daros', director:'経営' };
+function groupBy(ax){
+	if(ax==='dept'){ const g={'経営':[],'CSM開発':[],'AL開発':[],'Daros':[],'直轄部署':[]};
+		AGENTS.forEach(a=>{ const key=a.id==='director'?'経営':(DEPTS[a.id]||DEPTS[a.parent]||'直轄部署'); g[key].push(a); }); return g; }
+	if(ax==='model'){ const g={}; AGENTS.forEach(a=>{ (g[MODEL_JP[a.model]]=g[MODEL_JP[a.model]]||[]).push(a); }); return g; }
+	const g={'🟢 稼働中':[],'⚪ 待機':[]}; AGENTS.forEach(a=>g[a.live?'🟢 稼働中':'⚪ 待機'].push(a)); return g;
+}
+function renderGroups(ax){
+	const host=document.getElementById('gclusters'); host.innerHTML='';
+	const g=groupBy(ax);
+	for(const k in g){ if(!g[k].length)continue;
+		const box=document.createElement('div'); box.className='gc';
+		box.innerHTML=`<h4>${k}<span class="cnt">${g[k].length}</span></h4>`;
+		g[k].forEach(a=>{ const m=document.createElement('div'); m.className='gmember';
+			m.innerHTML=`<span class="gm-ch m-${a.model} mchip">${a.model[0].toUpperCase()}</span>${a.label}${a.live?' <span class="pulse" style="margin-left:4px"></span>':''}`;
+			box.appendChild(m); });
+		host.appendChild(box); }
+}
+document.querySelectorAll('.axbtn').forEach(b=>b.addEventListener('click',()=>{
+	document.querySelectorAll('.axbtn').forEach(x=>x.classList.remove('on')); b.classList.add('on'); renderGroups(b.dataset.ax);
+}));
+renderGroups('dept');
+</script>

@@ -71,6 +71,8 @@ function loadFresh(tmpHome) {
 		pathUtils: require(path.join(REPO, 'out', 'utils', 'pathUtils')),
 		hookService: require(path.join(REPO, 'out', 'services', 'hookService')),
 		sessionLoader: require(path.join(REPO, 'out', 'utils', 'sessionLoader')),
+		orgChartEngine: require(path.join(REPO, 'out', 'utils', 'orgChartEngine')),
+		collabLog: require(path.join(REPO, 'out', 'utils', 'collabLog')),
 	};
 }
 
@@ -1184,5 +1186,180 @@ test('P6 レビュー修正 L4: orchestrationTreeProvider が監視 OFF ガー�
 		/!this\._agentWatcher\.isEnabled\(\)[\s\S]{0,300}?エージェント監視が無効です/,
 		'isEnabled() チェックと専用メッセージが存在',
 	);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Q. v0.5.23 組織図リデザイン（純ロジック）
+// ════════════════════════════════════════════════════════════════════════════
+
+test('Q1 orgChartEngine.computeNodeRadius: 基礎 + 部下数 + ライブ + director', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const r = orgChartEngine.computeNodeRadius;
+	assert.equal(r('csm-impl', 0, false, false), 7, '基礎のみ');
+	assert.equal(r('csm-impl', 3, false, false), 7 + 3 * 2.2, '部下 3 人');
+	assert.equal(r('csm-impl', 0, true, false), 9, 'ライブボーナス +2');
+	assert.equal(r('director', 0, false, true), 11, 'director +4');
+	assert.equal(r('director', 17, true, true), 7 + 17 * 2.2 + 2 + 4, '取締役 実データ');
+});
+
+test('Q2 orgChartEngine.simulateStep: 位置更新と減衰の純ロジック', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const nodes = [
+		{ id: 'a', x: 100, y: 100, vx: 0, vy: 0, r: 10 },
+		{ id: 'b', x: 200, y: 100, vx: 0, vy: 0, r: 10 },
+	];
+	const edges = [{ sId: 'a', tId: 'b', kind: 'cmd' }];
+	orgChartEngine.simulateStep(nodes, edges, 800, 600, 1);
+	const moved = (nodes[0].x !== 100 || nodes[0].y !== 100 || nodes[1].x !== 200 || nodes[1].y !== 100);
+	assert.ok(moved, '1 ステップで位置が更新される');
+	// dragId 指定時は速度がゼロに固定される
+	const nodes2 = [{ id: 'a', x: 100, y: 100, vx: 5, vy: 5, r: 10 }];
+	orgChartEngine.simulateStep(nodes2, [], 800, 600, 1, 'a');
+	assert.equal(nodes2[0].vx, 0, 'drag 中の vx はゼロ');
+	assert.equal(nodes2[0].vy, 0, 'drag 中の vy はゼロ');
+	// 位置境界クランプ
+	const nodes3 = [{ id: 'a', x: 5, y: 5, vx: -100, vy: -100, r: 10 }];
+	orgChartEngine.simulateStep(nodes3, [], 800, 600, 1);
+	assert.ok(nodes3[0].x >= 30, '左端クランプ');
+	assert.ok(nodes3[0].y >= 30, '上端クランプ');
+});
+
+test('Q3 orgChartEngine.computeNeighbors: 自身を含む隣接集合（無向）', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const edges = [
+		{ sId: 'director', tId: 'csm-dev', kind: 'cmd' },
+		{ sId: 'csm-dev', tId: 'csm-impl', kind: 'cmd' },
+		{ sId: 'director', tId: 'qa', kind: 'cmd' },
+	];
+	const nbrs = orgChartEngine.computeNeighbors('csm-dev', edges);
+	assert.ok(nbrs.has('csm-dev'), '自身を含む');
+	assert.ok(nbrs.has('director'), '親を含む');
+	assert.ok(nbrs.has('csm-impl'), '子を含む');
+	assert.ok(!nbrs.has('qa'), '無関係ノードは含まない');
+});
+
+test('Q4 orgChartEngine.groupByDept: 最上位系統でクラスタリング（循環参照防御）', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const agents = [
+		{ name: 'director' },
+		{ name: 'csm-dev', parentAgent: 'director' },
+		{ name: 'csm-impl', parentAgent: 'csm-dev' },
+		{ name: 'al-dev', parentAgent: 'director' },
+		{ name: 'qa' },
+	];
+	const clusters = orgChartEngine.groupByDept(agents);
+	const director = clusters.find((c) => c.key === 'director');
+	assert.ok(director, 'director クラスタ');
+	assert.equal(director.members.length, 4, 'director 系統は 4 件');
+	const qa = clusters.find((c) => c.key === 'qa');
+	assert.equal(qa.members.length, 1, 'qa 単独');
+});
+
+test('Q5 orgChartEngine.groupByModel: MODEL_CATALOG 順で並ぶ', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const agents = [
+		{ name: 'a', model: 'haiku' },
+		{ name: 'b', model: 'opus' },
+		{ name: 'c', model: 'fable' },
+	];
+	const clusters = orgChartEngine.groupByModel(agents);
+	assert.deepEqual(clusters.map((c) => c.key), ['fable', 'opus', 'haiku'], 'カタログ順');
+});
+
+test('Q6 orgChartEngine.groupByStatus: 稼働中/待機/未紐づけの 3 群', () => {
+	const { orgChartEngine } = loadFresh(setupTmpHome());
+	const agents = [
+		{ name: 'a', isLive: true, sessionId: 's1' },
+		{ name: 'b', isLive: false, sessionId: 's2' },
+		{ name: 'c', isLive: false },
+	];
+	const isLinked = (a) => !!a.sessionId;
+	const clusters = orgChartEngine.groupByStatus(agents, isLinked);
+	assert.equal(clusters.find(c => c.key === 'active').members[0].name, 'a');
+	assert.equal(clusters.find(c => c.key === 'idle').members[0].name, 'b');
+	assert.equal(clusters.find(c => c.key === 'unlinked').members[0].name, 'c');
+});
+
+test('Q7 collabLog.aggregateCollabLog: 7 日窓・回数集計・latestTs', () => {
+	const { collabLog } = loadFresh(setupTmpHome());
+	const now = 2_000_000_000_000;
+	const day = 24 * 60 * 60 * 1000;
+	const entries = [
+		{ ts: now - 1 * day, from: 'director', to: 'csm-impl' },
+		{ ts: now - 2 * day, from: 'director', to: 'csm-impl' },
+		{ ts: now - 3 * day, from: 'director', to: 'qa' },
+		{ ts: now - 10 * day, from: 'director', to: 'csm-impl' }, // 窓外
+		{ ts: now - 1 * day, from: 'director', to: 'director' },  // 自己送信
+		{ ts: 'invalid', from: 'x', to: 'y' },
+	];
+	const edges = collabLog.aggregateCollabLog(entries, now, 7);
+	assert.equal(edges.length, 2, '有効エッジは 2 本');
+	const top = edges[0];
+	assert.equal(top.from, 'director');
+	assert.equal(top.to, 'csm-impl');
+	assert.equal(top.count, 2, '窓内 2 回');
+	assert.equal(top.latestTs, now - 1 * day, '最新は直近 1 日前');
+});
+
+test('Q8 collabLog.readCollabLog: 存在しないファイルは空配列（サイレント）', async () => {
+	const { collabLog } = loadFresh(setupTmpHome());
+	const nonExistent = path.join(os.tmpdir(), 'csm-nonexistent-' + Date.now() + '.jsonl');
+	const entries = await collabLog.readCollabLog(nonExistent);
+	assert.deepEqual(entries, [], '空配列を返す');
+});
+
+test('Q9 collabLog.readCollabLog: 合成 JSONL の読み取り + 破損行スキップ', async () => {
+	const { collabLog } = loadFresh(setupTmpHome());
+	const fp = path.join(os.tmpdir(), 'csm-collab-test-' + Date.now() + '.jsonl');
+	const content = [
+		JSON.stringify({ ts: 1000, from: 'director', to: 'csm-impl' }),
+		'{ not a json',
+		JSON.stringify({ ts: 2000, from: 'director', to: 'qa' }),
+		'',
+		JSON.stringify({ ts: 'x', from: 'x', to: 'y' }),
+	].join('\n');
+	fs.writeFileSync(fp, content);
+	try {
+		const entries = await collabLog.readCollabLog(fp);
+		assert.equal(entries.length, 2, '有効な 2 行のみ読める');
+		assert.equal(entries[0].to, 'csm-impl');
+		assert.equal(entries[1].to, 'qa');
+	} finally {
+		try { fs.unlinkSync(fp); } catch { /* */ }
+	}
+});
+
+test('Q10 v0.5.23: package.json に orgChart.defaultMode 設定が宣言されている', () => {
+	const pkg = require(path.join(REPO, 'package.json'));
+	const props = pkg.contributes.configuration.flatMap((c) => Object.entries(c.properties || {}));
+	const mode = props.find(([k]) => k === 'claudeManager.orgChart.defaultMode');
+	assert.ok(mode, 'orgChart.defaultMode');
+	assert.deepEqual(mode[1].enum, ['graph', 'tree', 'group']);
+	assert.equal(mode[1].default, 'graph');
+	const hide = props.find(([k]) => k === 'claudeManager.orgChart.hideOtherProjects');
+	assert.ok(hide, 'orgChart.hideOtherProjects');
+	assert.equal(hide[1].default, false);
+});
+
+test('Q11 v0.5.23: Cytoscape / ELK ライブラリの実利用が撤去されている', () => {
+	// 資源ファイルが消えていること
+	const res = path.join(REPO, 'resources');
+	assert.equal(fs.existsSync(path.join(res, 'cytoscape.min.js')), false, 'cytoscape.min.js は撤去');
+	assert.equal(fs.existsSync(path.join(res, 'cytoscape-elk.js')), false, 'cytoscape-elk.js は撤去');
+	assert.equal(fs.existsSync(path.join(res, 'elk.bundled.js')), false, 'elk.bundled.js は撤去');
+	// orgChartPanel.ts が cytoscape / elk ライブラリを実利用していないこと（コメント言及は許容）
+	const src = fs.readFileSync(path.join(REPO, 'src', 'panels', 'orgChartPanel.ts'), 'utf-8');
+	assert.doesNotMatch(src, /require\(['"]cytoscape['"]\)/, 'require cytoscape なし');
+	assert.doesNotMatch(src, /from\s+['"]cytoscape['"]/, 'import from cytoscape なし');
+	assert.doesNotMatch(src, /cytoscape\.min\.js|cytoscape-elk\.js|elk\.bundled\.js/, 'ライブラリファイル参照なし');
+	assert.doesNotMatch(src, /new\s+cytoscape\b|window\.cytoscape\b/, 'cytoscape のグローバル利用なし');
+});
+
+test('Q12 v0.5.23: csm-ask-agent.py に collab-log 追記コードが入っている', () => {
+	const src = fs.readFileSync(path.join(REPO, 'templates', 'csm-ask-agent.py'), 'utf-8');
+	assert.match(src, /def append_collab_log/, 'append_collab_log 関数');
+	assert.match(src, /csm-collab-log\.jsonl/, 'ログファイル名');
+	assert.match(src, /CSM_AGENT_NAME/, 'sender は環境変数優先');
+	assert.match(src, /pass\s*#\s*追記失敗/, '書き込み失敗はサイレント（pass）');
 });
 

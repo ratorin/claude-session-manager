@@ -1,11 +1,15 @@
 /**
- * orgChartPanel.ts — v0.5.0 Sprint 2 T2.18〜T2.21
- * エージェント組織図 — Cytoscape.js + ELK レイアウト刷新
+ * orgChartPanel.ts — v0.5.23 組織図リデザイン
  *
- * T2.18: Cytoscape描画基盤（ELK layeredデフォルト）
- * T2.19: モード切替（ツリー/関係/グループ）
- * T2.20: フィルタ + PNG/SVGエクスポート
- * T2.21: プロジェクト詳細用ミニ組織図はsendMiniOrgChart()で外部公開
+ * 全面刷新（オーナー承認モック `docs/mockups/orgchart-redesign-mock.html` の makeSim を移植・発展）:
+ * - **メイン**: Obsidian 風力学グラフ（自前 Canvas 力学エンジン）— ダーク固定
+ * - **サブ**: 階層 / グループ（カードベース、VS Code テーマ追従）
+ * - Cytoscape / ELK 依存を全撤去。関係/グループの「真っ暗バグ」も実装ごと消滅。
+ *
+ * 責務分離:
+ * - 力計算・隣接・グルーピングの純ロジック → `utils/orgChartEngine.ts`
+ * - /csm-ask-agent の連携ログ集計 → `utils/collabLog.ts`
+ * - 本ファイルは "vscode WebView への配線と HTML/JS 生成" のみ。
  */
 
 import * as vscode from 'vscode';
@@ -13,6 +17,9 @@ import * as crypto from 'crypto';
 import { AgentInfo, getAgents, enrichAgentsWithSessions } from '../agents/agentManager';
 import { ParsedSession } from '../models/types';
 import { shouldShowInOrgChart } from '../utils/agentUtils';
+import { isContainedIn } from '../utils/pathUtils';
+import { readCollabLog, aggregateCollabLog, CollabEdge } from '../utils/collabLog';
+import { MODEL_CATALOG, CsmModel } from '../models/modelCatalog';
 
 // -------------------------------------------------------------------
 // 状態管理
@@ -27,13 +34,13 @@ let onOpenInClaude: ((sessionId: string) => void) | undefined;
 // パブリック API
 // -------------------------------------------------------------------
 
-/** フル組織図パネルを開く（T2.18〜T2.20） */
+/** 組織図パネルを開く（v0.5.23 Canvas 版） */
 export async function showOrgChart(
 	getSessions: () => ParsedSession[],
 	isLive: (id: string) => boolean,
 	openSession?: (sessionId: string) => void,
 	openInClaude?: (sessionId: string) => void,
-	extensionUri?: vscode.Uri
+	_extensionUri?: vscode.Uri, // v0.5.23: 未使用（Cytoscape 撤去のため）
 ): Promise<void> {
 	onOpenSession = openSession;
 	onOpenInClaude = openInClaude;
@@ -56,33 +63,44 @@ export async function showOrgChart(
 	const nonce = crypto.randomBytes(16).toString('hex');
 	const title = 'エージェント組織図';
 
-	// パネルを先に生成/取得してから HTML を組む
-	// (HTML 生成は webview.asWebviewUri を使うため、パネルが存在している必要がある。
-	//  以前は buildOrgChartHtml を生成前に呼んでいたため、初回のみ Cytoscape URI が空になり
-	//  一覧フォールバックに落ちるバグがあった)
 	if (!orgPanel) {
 		orgPanel = vscode.window.createWebviewPanel(
 			'claudeOrgChart',
 			title,
 			vscode.ViewColumn.One,
-			{
-				enableScripts: true,
-				localResourceRoots: extensionUri ? [extensionUri] : [],
-			}
+			{ enableScripts: true },
 		);
 		orgPanel.onDidDispose(() => { orgPanel = undefined; });
-
 		orgPanel.webview.onDidReceiveMessage((message) => {
-			handleOrgChartMessage(message);
+			void handleOrgChartMessage(message);
 		});
 	}
 
-	const html = buildOrgChartHtml(enriched, liveIds, nonce, extensionUri);
+	// 連携ログ集計（初期表示分。オンデマンドで再取得もできる）
+	const collabEdges = aggregateCollabLog(await readCollabLog(), Date.now());
+
+	// ワークスペース群
+	const wsFolders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+
+	// 設定
+	const cfg = vscode.workspace.getConfiguration('claudeManager');
+	const defaultMode = cfg.get<'graph' | 'tree' | 'group'>('orgChart.defaultMode', 'graph');
+	const hideOtherProjects = cfg.get<boolean>('orgChart.hideOtherProjects', false);
+
+	const html = buildOrgChartHtml({
+		agents: enriched,
+		liveIds,
+		wsFolders,
+		collabEdges,
+		nonce,
+		defaultMode,
+		hideOtherProjects,
+	});
 	orgPanel.webview.html = html;
 	orgPanel.reveal(vscode.ViewColumn.One);
 }
 
-/** ミニ組織図データを WebviewView へ送る（T2.21 用） */
+/** ミニ組織図データ（プロジェクト詳細用）— 従来 API 温存 */
 export async function buildMiniOrgChartData(
 	projectAgentNames: string[]
 ): Promise<MiniOrgChartNode[]> {
@@ -110,55 +128,103 @@ export interface MiniOrgChartNode {
 // メッセージハンドラ
 // -------------------------------------------------------------------
 
-function handleOrgChartMessage(message: Record<string, unknown>): void {
-	if (message.type === 'copyId') {
-		vscode.env.clipboard.writeText(String(message.id)).then(() => {
-			vscode.window.showInformationMessage(`コピー: ${message.id}`);
-		});
-	} else if (message.type === 'openSession' && onOpenSession) {
+async function handleOrgChartMessage(message: Record<string, unknown>): Promise<void> {
+	const type = message.type;
+	if (type === 'copyId') {
+		await vscode.env.clipboard.writeText(String(message.id));
+		vscode.window.showInformationMessage(`コピー: ${message.id}`);
+	} else if (type === 'openSession' && onOpenSession) {
 		onOpenSession(String(message.sessionId));
-	} else if (message.type === 'openInClaude' && onOpenInClaude) {
+	} else if (type === 'openInClaude' && onOpenInClaude) {
 		onOpenInClaude(String(message.sessionId));
+	} else if (type === 'refreshCollab' && orgPanel) {
+		// 連携トグル ON 時のオンデマンド再集計
+		const edges = aggregateCollabLog(await readCollabLog(), Date.now());
+		orgPanel.webview.postMessage({ type: 'collabData', edges });
+	} else if (type === 'setHideOtherProjects') {
+		// v0.5.23 レビュー修正: 「他プロジェクトを隠す」トグルを Global 設定に永続化。
+		// ドキュメント（CHANGELOG/README/step5）が「設定 orgChart.hideOtherProjects で永続化」と明記しているため、
+		// UI 操作を必ず vscode 設定に反映して整合を取る。
+		try {
+			await vscode.workspace
+				.getConfiguration('claudeManager')
+				.update('orgChart.hideOtherProjects', Boolean(message.value), vscode.ConfigurationTarget.Global);
+		} catch { /* 書き込み失敗はサイレント（次回起動時に既定に戻るのみ） */ }
+	} else if (type === 'setDefaultMode') {
+		// v0.5.23 レビュー修正: モードセグメントの選択を既定モード設定に永続化。
+		// これにより次回パネル起動時にユーザーが最後に選んだモードで開ける。
+		const v = String(message.value);
+		if (v === 'graph' || v === 'tree' || v === 'group') {
+			try {
+				await vscode.workspace
+					.getConfiguration('claudeManager')
+					.update('orgChart.defaultMode', v, vscode.ConfigurationTarget.Global);
+			} catch { /* 書き込み失敗はサイレント */ }
+		}
 	}
 }
 
 // -------------------------------------------------------------------
-// HTML生成 — Cytoscape.js + ELK
+// HTML 生成
 // -------------------------------------------------------------------
 
-function buildOrgChartHtml(
-	agents: AgentInfo[],
-	liveIds: Set<string>,
-	nonce: string,
-	extensionUri?: vscode.Uri
-): string {
-	// エレメント JSON 生成
-	const elements = buildCytoscapeElements(agents, liveIds);
-	const elementsJson = JSON.stringify(elements);
+interface BuildArgs {
+	agents: AgentInfo[];
+	liveIds: Set<string>;
+	wsFolders: string[];
+	collabEdges: CollabEdge[];
+	nonce: string;
+	defaultMode: 'graph' | 'tree' | 'group';
+	hideOtherProjects: boolean;
+}
 
-	// 利用可能なモデル/プロジェクト/役割リスト（T2.20 フィルタ用）
-	const models  = [...new Set(agents.map(a => a.model))].sort();
-	const parents = [...new Set(agents.filter(a => a.parentAgent).map(a => a.parentAgent || ''))].sort();
+interface OrgNodeData {
+	id: string;
+	label: string;
+	model: string;
+	live: boolean;
+	parent: string | null;
+	sessionId: string;
+	role: string;
+	workDir: string;
+	inWorkspace: boolean;
+	color: string;
+}
 
-	// Cytoscape スクリプトURI
-	let cytoscapeUri = '';
-	let elkBundledUri = '';
-	let cytoscapeElkUri = '';
-	let cspScript = `'nonce-${nonce}'`;
+/** エージェント → クライアント側描画用データに変換 */
+function toOrgNodeData(agents: AgentInfo[], liveIds: Set<string>, wsFolders: string[]): OrgNodeData[] {
+	const knownNames = new Set(agents.map((a) => a.name));
+	return agents.map((a) => {
+		const live = !!(a.sessionId && liveIds.has(a.sessionId));
+		// workDir 未設定 → 全プロジェクト共通とみなし常に inWorkspace=true
+		const inWorkspace = a.workDir
+			? wsFolders.some((ws) => isContainedIn(a.workDir!, ws) || isContainedIn(ws, a.workDir!))
+			: true;
+		const mdef = MODEL_CATALOG[a.model as CsmModel];
+		return {
+			id: a.name,
+			label: a.displayName || a.name,
+			model: a.model,
+			live,
+			// 親不明な参照は null に落として orphan として扱う（力計算が破綻しないよう）
+			parent: a.parentAgent && knownNames.has(a.parentAgent) ? a.parentAgent : null,
+			sessionId: a.sessionId || '',
+			role: a.displayRole || a.role || '',
+			workDir: a.workDir || '',
+			inWorkspace,
+			color: mdef?.colorHex || '#9aa0b2',
+		};
+	});
+}
 
-	if (extensionUri && orgPanel) {
-		const webview = orgPanel.webview;
-		cytoscapeUri  = webview.asWebviewUri(
-			vscode.Uri.joinPath(extensionUri, 'resources', 'cytoscape.min.js')
-		).toString();
-		elkBundledUri = webview.asWebviewUri(
-			vscode.Uri.joinPath(extensionUri, 'resources', 'elk.bundled.js')
-		).toString();
-		cytoscapeElkUri = webview.asWebviewUri(
-			vscode.Uri.joinPath(extensionUri, 'resources', 'cytoscape-elk.js')
-		).toString();
-		cspScript = `'nonce-${nonce}'`;
-	}
+function buildOrgChartHtml(args: BuildArgs): string {
+	const { agents, liveIds, wsFolders, collabEdges, nonce, defaultMode, hideOtherProjects } = args;
+	const nodes = toOrgNodeData(agents, liveIds, wsFolders);
+	const nodesJson = JSON.stringify(nodes);
+	const collabJson = JSON.stringify(collabEdges);
+	const modelColorsJson = JSON.stringify(
+		Object.fromEntries(Object.entries(MODEL_CATALOG).map(([k, v]) => [k, v.colorHex]))
+	);
 
 	return `<!DOCTYPE html>
 <html lang="ja">
@@ -166,29 +232,23 @@ function buildOrgChartHtml(
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy"
-	content="default-src 'none'; style-src 'nonce-${nonce}'; script-src ${cspScript}${cytoscapeUri ? ' ' + new URL(cytoscapeUri).origin : ''};">
+	content="default-src 'none'; style-src 'nonce-${nonce}' 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src data:; font-src data:;">
 <style nonce="${nonce}">
 :root {
 	--bg: var(--vscode-editor-background);
+	--panel: var(--vscode-sideBar-background);
 	--surface: var(--vscode-textBlockQuote-background);
 	--border: var(--vscode-panel-border);
 	--text: var(--vscode-foreground);
 	--text-dim: var(--vscode-descriptionForeground);
-	/* v0.5.18 §4-10 テーマ追従: 直書き HEX を VS Code テーマ変数へ寄せる。
-	   モデル色（--opus/--sonnet/--haiku）は modelCatalog 由来を維持し、
-	   light/high-contrast オーバーライドを body クラスセレクタで実施する。 */
 	--accent: var(--vscode-charts-orange, #e27e4a);
 	--accent-fg: var(--vscode-button-foreground, #fff);
 	--live: var(--vscode-charts-green, #4ec94e);
-	--opus: var(--vscode-charts-purple, #b388ff);
-	--sonnet: var(--vscode-charts-blue, #64b5f6);
-	--haiku: var(--vscode-charts-green, #81c784);
-}
-body.vscode-light {
-	--accent-fg: #fff;
-}
-body.vscode-high-contrast {
-	--accent-fg: var(--vscode-editor-background);
+	--fable: #e8b84b;
+	--opus: #b388ff;
+	--sonnet: #64b5f6;
+	--haiku: #81c784;
+	--collab: #e8b84b;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 html, body { height:100%; overflow:hidden; }
@@ -206,7 +266,7 @@ body {
 	align-items: center;
 	gap: 6px;
 	padding: 6px 10px;
-	background: var(--vscode-sideBar-background);
+	background: var(--panel);
 	border-bottom: 1px solid var(--border);
 	flex-shrink: 0;
 	flex-wrap: wrap;
@@ -222,165 +282,148 @@ body {
 	gap: 4px;
 	align-items: center;
 }
-.toolbar-label {
-	font-size: 11px;
-	color: var(--text-dim);
-}
-.mode-btn {
-	padding: 3px 8px;
-	font-size: 11px;
-	background: transparent;
-	border: 1px solid var(--border);
-	border-radius: 3px;
-	color: var(--text);
-	cursor: pointer;
-	font-family: inherit;
-}
-.mode-btn:hover { background: var(--vscode-list-hoverBackground); }
-.mode-btn.active {
-	background: var(--accent);
-	color: var(--accent-fg);
-	border-color: transparent;
-}
-/* v0.5.18 §4-11: 凡例チップ */
-.legend-chip {
+.toolbar-label { font-size: 11px; color: var(--text-dim); }
+.mode-seg {
 	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	padding: 2px 8px;
-	font-size: 10.5px;
-	background: transparent;
 	border: 1px solid var(--border);
-	border-radius: 10px;
-	color: var(--text);
-	cursor: pointer;
-	font-family: inherit;
-	transition: background 0.1s, border-color 0.1s;
+	border-radius: 4px;
+	overflow: hidden;
+}
+.mode-seg button {
+	padding: 3px 12px; font-size: 11px; background: transparent; border: none;
+	color: var(--text); cursor: pointer; font-family: inherit; border-right: 1px solid var(--border);
+}
+.mode-seg button:last-child { border-right: none; }
+.mode-seg button.active { background: var(--accent); color: var(--accent-fg); }
+.mtool {
+	padding: 3px 10px; font-size: 11px; background: transparent;
+	border: 1px solid var(--border); border-radius: 3px; color: var(--text);
+	cursor: pointer; font-family: inherit;
+}
+.mtool:hover { background: var(--vscode-list-hoverBackground); }
+.mtool.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+input.search-box {
+	background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+	border: 1px solid var(--border); border-radius: 3px; padding: 3px 8px; font-size: 11px;
+	max-width: 180px; font-family: inherit;
+}
+input.search-box:focus { outline: none; border-color: var(--vscode-focusBorder); }
+
+/* 凡例チップ */
+.legend {
+	display: flex; gap: 6px; flex-wrap: wrap;
+}
+.legend-chip {
+	display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; font-size: 10.5px;
+	background: transparent; border: 1px solid var(--border); border-radius: 10px;
+	color: var(--text); cursor: pointer; font-family: inherit;
 }
 .legend-chip:hover { background: var(--vscode-list-hoverBackground); }
 .legend-chip.active {
-	border-color: var(--accent);
-	background: var(--vscode-list-activeSelectionBackground);
+	border-color: var(--accent); background: var(--vscode-list-activeSelectionBackground);
 }
-.legend-dot {
-	width: 8px;
-	height: 8px;
-	border-radius: 50%;
-	display: inline-block;
-}
-/* v0.5.18 §4-11 レビュー修正 (2): Cytoscape は canvas 描画のため CSS ルールは効かない。
-   dimm 挙動は buildStyle() 配列の .cy-node-dimmed セレクタで実装（下記参照）。この CSS ブロックは撤去。 */
-.filter-select {
-	padding: 3px 6px;
-	font-size: 11px;
-	background: var(--vscode-dropdown-background, var(--surface));
-	border: 1px solid var(--border);
-	border-radius: 3px;
-	color: var(--text);
-	font-family: inherit;
-	max-width: 120px;
-}
-.export-btn {
-	padding: 3px 8px;
-	font-size: 11px;
-	background: var(--vscode-button-secondaryBackground, transparent);
-	border: 1px solid var(--border);
-	border-radius: 3px;
-	color: var(--vscode-button-secondaryForeground, var(--text));
-	cursor: pointer;
-	font-family: inherit;
-}
-.export-btn:hover { background: var(--vscode-list-hoverBackground); }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 
-/* ---- Cytoscape コンテナ ---- */
-#cy-container {
-	flex: 1;
-	position: relative;
-	overflow: hidden;
+/* ---- ステージ共通 ---- */
+#stage-wrap { flex: 1; overflow: hidden; position: relative; }
+.pane { display: none; height: 100%; overflow: hidden; }
+.pane.on { display: block; }
+
+/* ---- グラフ（ダーク固定） ---- */
+#pane-graph {
+	background: #17181d;
 }
-#cy {
-	width: 100%;
-	height: 100%;
+canvas.graph { display: block; width: 100%; height: 100%; cursor: grab; }
+canvas.graph.drag { cursor: grabbing; }
+.hint-overlay {
+	position: absolute; top: 12px; right: 12px; padding: 6px 10px; font-size: 11px;
+	background: rgba(24,25,32,.85); border: 1px solid #383c4a; color: #c9cdd9;
+	border-radius: 6px; z-index: 3; max-width: 260px; pointer-events: none;
 }
 
-/* ---- ローディング ---- */
-#loading {
-	position: absolute;
-	top: 50%;
-	left: 50%;
-	transform: translate(-50%, -50%);
-	font-size: 13px;
-	color: var(--text-dim);
-	text-align: center;
+/* ---- 階層（カード階層、テーマ追従） ---- */
+#pane-tree { overflow: auto; background: var(--bg); padding: 20px; }
+.tree { min-width: min-content; }
+.tier { display: flex; justify-content: center; gap: 14px; flex-wrap: nowrap; }
+.tcol { display: flex; flex-direction: column; align-items: center; gap: 0; }
+.card {
+	background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+	padding: 8px 12px; min-width: 150px; position: relative; cursor: pointer;
+	transition: transform .12s, border-color .12s;
+}
+.card:hover { transform: translateY(-2px); border-color: var(--accent); }
+.card.dimmed { opacity: 0.35; }
+.card.hidden { display: none; }
+.card .nm { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.card .rl { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.card .foot { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+.mchip { font-size: 10px; font-weight: 700; border-radius: 4px; padding: 1px 6px; letter-spacing: .05em; }
+.m-fable  { background: rgba(232,184,75,.16);  color: var(--fable);  border: 1px solid rgba(232,184,75,.35); }
+.m-opus   { background: rgba(179,136,255,.14); color: var(--opus);   border: 1px solid rgba(179,136,255,.32); }
+.m-sonnet { background: rgba(100,181,246,.14); color: var(--sonnet); border: 1px solid rgba(100,181,246,.32); }
+.m-haiku  { background: rgba(129,199,132,.14); color: var(--haiku);  border: 1px solid rgba(129,199,132,.32); }
+.pulse {
+	width: 8px; height: 8px; border-radius: 50%; background: var(--live);
+	box-shadow: 0 0 0 0 rgba(63,174,106,.55); animation: pw 1.8s infinite;
+}
+.idle-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); opacity: 0.5; }
+.ecount { font-size: 10px; color: var(--text-dim); margin-left: auto; font-family: ui-monospace, Consolas, monospace; }
+.vline { width: 1px; height: 20px; background: var(--border); }
+.subtree { display: flex; gap: 10px; margin-top: 20px; flex-wrap: nowrap; }
+@keyframes pw {
+	0% { box-shadow: 0 0 0 0 rgba(63,174,106,.5); }
+	70% { box-shadow: 0 0 0 9px rgba(63,174,106,0); }
+	100% { box-shadow: 0 0 0 0 rgba(63,174,106,0); }
+}
+@media (prefers-reduced-motion: reduce) {
+	.pulse { animation: none; }
+	.card { transition: none; }
 }
 
-/* ---- ツールチップ ---- */
-#tooltip {
-	position: absolute;
-	background: var(--surface);
-	border: 1px solid var(--border);
-	border-radius: 4px;
-	padding: 6px 10px;
-	font-size: 11px;
-	pointer-events: none;
-	opacity: 0;
-	transition: opacity 0.15s;
-	max-width: 220px;
-	z-index: 100;
+/* ---- グループ（軸切替、テーマ追従） ---- */
+#pane-group { overflow: auto; background: var(--bg); padding: 12px; }
+.gaxis { display: flex; gap: 6px; margin-bottom: 10px; }
+.gclusters { display: flex; flex-wrap: wrap; gap: 12px; }
+.gc {
+	background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+	padding: 10px 14px; min-width: 200px; flex: 1;
 }
-#tooltip.visible { opacity: 1; }
-.tooltip-name { font-weight: 600; margin-bottom: 2px; }
-.tooltip-role { color: var(--text-dim); }
-.tooltip-session { font-size: 10px; color: var(--text-dim); margin-top: 4px; font-family: monospace; }
+.gc h4 {
+	margin: 0 0 8px; font-size: 12px; letter-spacing: .06em; font-weight: 700;
+	color: var(--text-dim); display: flex; gap: 6px; align-items: center;
+}
+.gc h4 .cnt { margin-left: auto; font-family: ui-monospace, Consolas, monospace; opacity: 0.7; font-weight: 400; }
+.gmember {
+	display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px;
+	font-size: 12px; cursor: pointer;
+}
+.gmember:hover { background: var(--vscode-list-hoverBackground); }
+.gmember.dimmed { opacity: 0.35; }
+.gmember.hidden { display: none; }
+.gm-ch { font-size: 10px; font-weight: 700; width: 16px; height: 16px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
 
-/* ---- フォールバック（Cytoscapeロード失敗時） ---- */
-#fallback {
-	display: none;
-	padding: 16px;
-	overflow: auto;
-	flex: 1;
+/* 空状態 */
+.empty-hint {
+	padding: 40px 20px; text-align: center; color: var(--text-dim); font-size: 13px;
 }
 </style>
 </head>
 <body>
-
-<!-- ツールバー -->
 <div id="toolbar">
 	<h1>組織図</h1>
-
-	<!-- T2.19: モード切替 -->
-	<div class="toolbar-group">
-		<span class="toolbar-label">レイアウト:</span>
-		<button class="mode-btn active" data-mode="tree" title="ツリー (ELK layered)">ツリー</button>
-		<button class="mode-btn" data-mode="force" title="関係 (force-directed)">関係</button>
-		<button class="mode-btn" data-mode="group" title="グループ (ELK box)">グループ</button>
+	<div class="mode-seg" role="tablist">
+		<button data-mode="graph" class="${defaultMode === 'graph' ? 'active' : ''}">グラフ</button>
+		<button data-mode="tree"  class="${defaultMode === 'tree'  ? 'active' : ''}">階層</button>
+		<button data-mode="group" class="${defaultMode === 'group' ? 'active' : ''}">グループ</button>
 	</div>
 
-	<!-- v0.5.18 §4-11: 検索ボックス -->
 	<div class="toolbar-group">
-		<input type="search" class="filter-select" id="org-search" placeholder="🔎 検索（名前・役割）" style="max-width:180px;" aria-label="組織図ノード検索">
+		<input type="search" id="org-search" class="search-box" placeholder="🔎 名前・役割で検索" aria-label="組織図ノード検索">
 	</div>
 
-	<!-- T2.20: フィルタ -->
-	<div class="toolbar-group">
-		<span class="toolbar-label">モデル:</span>
-		<select class="filter-select" id="filter-model" aria-label="モデルフィルタ">
-			<option value="">すべて</option>
-			${models.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')}
-		</select>
-	</div>
-	<div class="toolbar-group">
-		<span class="toolbar-label">親:</span>
-		<select class="filter-select" id="filter-parent" aria-label="親エージェントフィルタ">
-			<option value="">すべて</option>
-			${parents.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('')}
-		</select>
-	</div>
-
-	<!-- v0.5.18 §4-11: 凡例チップ（クリックで該当色モデル or 稼働状態のみハイライト） -->
 	<div class="toolbar-group" id="legend-chips" role="group" aria-label="凡例フィルタ">
 		<button class="legend-chip" data-chip-type="model" data-chip-value="fable" title="Fable モデルのみハイライト">
-			<span class="legend-dot" style="background:var(--vscode-charts-yellow, #ffd54f);"></span>Fable
+			<span class="legend-dot" style="background:var(--fable);"></span>Fable
 		</button>
 		<button class="legend-chip" data-chip-type="model" data-chip-value="opus" title="Opus モデルのみハイライト">
 			<span class="legend-dot" style="background:var(--opus);"></span>Opus
@@ -396,487 +439,544 @@ body {
 		</button>
 	</div>
 
-	<!-- T2.20: エクスポート -->
 	<div class="toolbar-group" style="margin-left:auto;">
-		<button class="export-btn" id="btn-export-png" title="PNG として保存">PNG</button>
-		<button class="export-btn" id="btn-export-svg" title="SVG として保存">SVG</button>
+		<button class="mtool" id="btn-collab" title="/csm-ask-agent の直近 7 日の送信を金色点線で重ね描き">連携</button>
+		<button class="mtool ${hideOtherProjects ? 'active' : ''}" id="btn-hide-other" title="現ワークスペース外のエージェントを非表示">他プロジェクトを隠す</button>
 	</div>
 </div>
 
-<!-- Cytoscapeコンテナ -->
-<div id="cy-container">
-	<div id="cy" role="img" aria-label="エージェント組織図"></div>
-	<div id="loading">組織図を読み込み中...</div>
-	<div id="tooltip" role="tooltip"></div>
+<div id="stage-wrap">
+	<!-- グラフモード -->
+	<div class="pane ${defaultMode === 'graph' ? 'on' : ''}" id="pane-graph" role="tabpanel">
+		<div class="hint-overlay" id="collab-hint" style="display:none;"></div>
+		<canvas id="graph-cv" class="graph"></canvas>
+	</div>
+
+	<!-- 階層モード -->
+	<div class="pane ${defaultMode === 'tree' ? 'on' : ''}" id="pane-tree" role="tabpanel">
+		<div class="tree" id="tree-root"></div>
+	</div>
+
+	<!-- グループモード -->
+	<div class="pane ${defaultMode === 'group' ? 'on' : ''}" id="pane-group" role="tabpanel">
+		<div class="gaxis">
+			<button class="mtool active" data-ax="dept">部署別</button>
+			<button class="mtool" data-ax="model">モデル別</button>
+			<button class="mtool" data-ax="status">稼働状態別</button>
+		</div>
+		<div class="gclusters" id="gclusters"></div>
+	</div>
 </div>
 
-<!-- フォールバック（Cytoscapeロード失敗時用） -->
-<div id="fallback"></div>
-
-${cytoscapeUri
-	? `<script nonce="${nonce}" src="${cytoscapeUri}"></script>
-<script nonce="${nonce}" src="${elkBundledUri}"></script>
-<script nonce="${nonce}" src="${cytoscapeElkUri}"></script>`
-	: ''}
-
 <script nonce="${nonce}">
-// ================================================================
-// データ
-// ================================================================
+"use strict";
 const vscode = acquireVsCodeApi();
+const NODES = ${nodesJson};
+const MODEL_COLORS = ${modelColorsJson};
+let COLLAB = ${collabJson}; // [{ from, to, count, latestTs }]
 
-const ELEMENTS = ${elementsJson};
+// ────────────────────────── ユーティリティ ──────────────────────────
+const byId = Object.fromEntries(NODES.map(n => [n.id, n]));
+const CHILD_COUNT = {};
+NODES.forEach(n => { if (n.parent && byId[n.parent]) { CHILD_COUNT[n.parent] = (CHILD_COUNT[n.parent] || 0) + 1; } });
 
-const LAYOUT_CONFIGS = {
-	tree: {
-		name: 'elk',
-		elk: {
-			algorithm: 'layered',
-			'elk.direction': 'DOWN',
-			'elk.layered.spacing.nodeNodeBetweenLayers': 40,
-			'elk.spacing.nodeNode': 20,
-		},
-	},
-	force: {
-		name: 'cose',
-		animate: true,
-		animationDuration: 500,
-		idealEdgeLength: 120,
-		nodeOverlap: 20,
-		refresh: 20,
-		fit: true,
-		padding: 30,
-		randomize: false,
-		componentSpacing: 100,
-		nodeRepulsion: 400000,
-		edgeElasticity: 100,
-		nestingFactor: 5,
-		gravity: 80,
-		numIter: 1000,
-		coolingFactor: 0.99,
-		minTemp: 1.0,
-	},
-	group: {
-		name: 'elk',
-		elk: {
-			algorithm: 'box',
-			'elk.spacing.nodeNode': 15,
-		},
-	},
-};
+function modelClass(m) {
+	if (m === 'fable' || m === 'fable-1m') return 'm-fable';
+	if (m === 'opus'  || m === 'opus-1m')  return 'm-opus';
+	if (m === 'haiku') return 'm-haiku';
+	return 'm-sonnet';
+}
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-// ================================================================
-// Cytoscape 初期化
-// ================================================================
-let cy = null;
-let currentMode = 'tree';
-let activeFilters = { model: '', parent: '' };
-
-// v0.5.14: Fable 5 対応（#ffd54f 金）
-function modelColor(model) {
-	switch (model) {
-		case 'fable':
-		case 'fable-1m': return '#ffd54f';
-		case 'opus':
-		case 'opus-1m': return '#b388ff';
-		case 'haiku':   return '#81c784';
-		default:        return '#64b5f6';
-	}
+// hideOtherProjects の反映
+let HIDE_OTHER = ${hideOtherProjects};
+function isVisible(node) {
+	if (HIDE_OTHER && !node.inWorkspace) return false;
+	return true;
 }
 
-function initCytoscape(elements) {
-	if (typeof cytoscape === 'undefined') {
-		showFallback(elements);
+// 検索 / 凡例フィルタの状態
+let searchQ = '';
+let chipFilter = null; // { type: 'model'|'status', value: string } | null
+let collabOn = false;
+
+// マッチ判定
+function matchesSearch(n) {
+	if (!searchQ) return true;
+	const q = searchQ.toLowerCase();
+	return String(n.label || '').toLowerCase().includes(q)
+		|| String(n.id || '').toLowerCase().includes(q)
+		|| String(n.role || '').toLowerCase().includes(q);
+}
+function matchesChip(n) {
+	if (!chipFilter) return true;
+	if (chipFilter.type === 'model') return String(n.model || '').toLowerCase().includes(chipFilter.value);
+	if (chipFilter.type === 'status') return chipFilter.value === 'live' ? !!n.live : true;
+	return true;
+}
+
+// ────────────────────────── 力学グラフ ──────────────────────────
+// 実装はモック makeSim を移植。純ロジックは utils/orgChartEngine と等価。
+const cv = document.getElementById('graph-cv');
+const ctx = cv.getContext('2d');
+let W = 0, H = 0, hover = null, drag = null, alpha = 1, raf = null, seeded = false;
+const REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// 描画ノード群（力学は同じ配列を in-place で更新）
+const gnodes = NODES.map(n => ({
+	...n,
+	x: 0, y: 0, vx: 0, vy: 0,
+	r: 7 + (CHILD_COUNT[n.id] || 0) * 2.2 + (n.live ? 2 : 0) + (n.id === 'director' ? 4 : 0),
+}));
+const gById = Object.fromEntries(gnodes.map(n => [n.id, n]));
+// エッジ: 親子のみ（連携は collabOn で動的追加）
+const baseEdges = gnodes.filter(n => n.parent && gById[n.parent])
+	.map(n => ({ s: gById[n.parent], t: n, kind: 'cmd', w: 1 }));
+
+function resizeCanvas() {
+	const rect = cv.getBoundingClientRect();
+	const dpr = window.devicePixelRatio || 1;
+	W = rect.width; H = rect.height;
+	cv.width = W * dpr; cv.height = H * dpr;
+	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+function seedPositions() {
+	gnodes.forEach((n, i) => {
+		const ang = i / gnodes.length * Math.PI * 2;
+		const rad = n.parent === null ? 0 : (n.parent === 'director' ? 120 : 210);
+		n.x = W / 2 + Math.cos(ang) * rad + (Math.random() - 0.5) * 30;
+		n.y = H / 2 + Math.sin(ang) * rad + (Math.random() - 0.5) * 30;
+	});
+	seeded = true;
+}
+
+function currentEdges() {
+	// 連携 ON なら base + collab を返す
+	if (!collabOn) return baseEdges;
+	const extra = [];
+	for (const e of COLLAB) {
+		const s = gById[e.from];
+		const t = gById[e.to];
+		if (!s || !t) continue;
+		extra.push({ s, t, kind: 'collab', w: e.count });
+	}
+	return baseEdges.concat(extra);
+}
+
+function step(edges) {
+	if (REDUCED && seeded) { alpha = 0; return; } // reduced-motion: 位置固定
+	for (let i = 0; i < gnodes.length; i++) {
+		for (let j = i + 1; j < gnodes.length; j++) {
+			const a = gnodes[i], b = gnodes[j];
+			let dx = b.x - a.x, dy = b.y - a.y;
+			const d2 = dx * dx + dy * dy || 1; const d = Math.sqrt(d2);
+			const f = Math.min(2200 / d2, 4);
+			dx /= d; dy /= d;
+			a.vx -= dx * f; a.vy -= dy * f;
+			b.vx += dx * f; b.vy += dy * f;
+		}
+	}
+	for (const e of edges) {
+		const dx = e.t.x - e.s.x, dy = e.t.y - e.s.y;
+		const d = Math.sqrt(dx * dx + dy * dy) || 1;
+		const ideal = e.kind === 'cmd' ? 110 : 150;
+		const f = (d - ideal) * 0.004;
+		e.s.vx += dx / d * f; e.s.vy += dy / d * f;
+		e.t.vx -= dx / d * f; e.t.vy -= dy / d * f;
+	}
+	for (const n of gnodes) {
+		n.vx += (W / 2 - n.x) * 0.0012; n.vy += (H / 2 - n.y) * 0.0012;
+		if (drag === n) { n.vx = 0; n.vy = 0; continue; }
+		n.vx *= 0.86; n.vy *= 0.86;
+		n.x += n.vx * alpha * 2; n.y += n.vy * alpha * 2;
+		n.x = Math.max(30, Math.min(W - 30, n.x));
+		n.y = Math.max(30, Math.min(H - 30, n.y));
+	}
+	alpha = Math.max(alpha * 0.995, 0.25);
+}
+
+function neighborsOf(n, edges) {
+	const s = new Set([n.id]);
+	for (const e of edges) {
+		if (e.s.id === n.id) s.add(e.t.id);
+		if (e.t.id === n.id) s.add(e.s.id);
+	}
+	return s;
+}
+
+function draw(ts, edges) {
+	ctx.clearRect(0, 0, W, H);
+	const g = ctx.createRadialGradient(W / 2, H / 2, 60, W / 2, H / 2, Math.max(W, H) / 1.2);
+	g.addColorStop(0, '#191b24'); g.addColorStop(1, '#111218');
+	ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+	const hi = hover ? neighborsOf(hover, edges) : null;
+
+	// エッジ
+	for (const e of edges) {
+		if (!isVisible(e.s) || !isVisible(e.t)) continue;
+		const dim = hi && !(hi.has(e.s.id) && hi.has(e.t.id));
+		ctx.globalAlpha = dim ? 0.06 : (e.kind === 'cmd' ? 0.35 : 0.8);
+		ctx.beginPath();
+		ctx.moveTo(e.s.x, e.s.y); ctx.lineTo(e.t.x, e.t.y);
+		if (e.kind === 'collab') {
+			ctx.setLineDash([5, 4]);
+			ctx.strokeStyle = 'var(--collab)';
+			ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--collab') || '#e8b84b';
+			ctx.lineWidth = Math.min(1 + (e.w || 1) * 0.7, 5);
+		} else {
+			ctx.setLineDash([]);
+			ctx.strokeStyle = '#6b7185';
+			ctx.lineWidth = 1.1;
+		}
+		ctx.stroke(); ctx.setLineDash([]);
+	}
+
+	// ノード
+	for (const n of gnodes) {
+		if (!isVisible(n)) continue;
+		// ワークスペース外は既定で減光
+		const outOfWs = !n.inWorkspace;
+		// マッチ/隣接に基づく減光
+		const dimByHover = hi && !hi.has(n.id);
+		const dimByFilter = (searchQ && !matchesSearch(n)) || (chipFilter && !matchesChip(n));
+		const dim = dimByHover || dimByFilter || outOfWs;
+		ctx.globalAlpha = dim ? (outOfWs ? 0.25 : 0.12) : 1;
+		const col = n.color;
+		if (n.live && !dim) {
+			const p = (Math.sin(ts / 600 + n.x) + 1) / 2;
+			ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 5 + p * 4, 0, Math.PI * 2);
+			ctx.fillStyle = col + '22'; ctx.fill();
+		}
+		ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+		ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = dim ? 0 : 12;
+		ctx.fill(); ctx.shadowBlur = 0;
+		if (n.live) {
+			ctx.beginPath(); ctx.arc(n.x + n.r * 0.72, n.y - n.r * 0.72, 3, 0, Math.PI * 2);
+			ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--live') || '#3fae6a';
+			ctx.fill();
+		}
+		ctx.globalAlpha = dim ? 0.1 : 0.92;
+		ctx.fillStyle = '#dfe3ee';
+		ctx.font = '11.5px "Hiragino Kaku Gothic ProN","Yu Gothic UI",sans-serif';
+		ctx.textAlign = 'center';
+		ctx.fillText(n.label, n.x, n.y + n.r + 15);
+	}
+	ctx.globalAlpha = 1;
+}
+
+function loop(ts) {
+	const edges = currentEdges();
+	step(edges); draw(ts, edges);
+	raf = requestAnimationFrame(loop);
+}
+
+function pickNode(mx, my) {
+	return gnodes.find(n => {
+		if (!isVisible(n)) return false;
+		const dx = n.x - mx, dy = n.y - my;
+		return dx * dx + dy * dy < (n.r + 6) * (n.r + 6);
+	});
+}
+
+function kickGraph() {
+	resizeCanvas();
+	if (!seeded) seedPositions();
+	alpha = 1;
+	if (!raf) requestAnimationFrame(loop);
+}
+function stopGraph() {
+	if (raf) { cancelAnimationFrame(raf); raf = null; }
+}
+
+cv.addEventListener('mousemove', (ev) => {
+	const r = cv.getBoundingClientRect();
+	const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+	if (drag) { drag.x = mx; drag.y = my; alpha = Math.max(alpha, 0.6); return; }
+	hover = pickNode(mx, my);
+	cv.style.cursor = hover ? 'pointer' : 'grab';
+});
+cv.addEventListener('mousedown', (ev) => {
+	const r = cv.getBoundingClientRect();
+	drag = pickNode(ev.clientX - r.left, ev.clientY - r.top);
+	if (drag) cv.classList.add('drag');
+});
+window.addEventListener('mouseup', () => { drag = null; cv.classList.remove('drag'); });
+cv.addEventListener('mouseleave', () => { hover = null; });
+cv.addEventListener('click', (ev) => {
+	if (drag) return; // ドラッグ中はクリックしない
+	const r = cv.getBoundingClientRect();
+	const n = pickNode(ev.clientX - r.left, ev.clientY - r.top);
+	if (n) handleNodeClick(n);
+});
+window.addEventListener('resize', () => { resizeCanvas(); });
+
+// ────────────────────────── 検索 → センタリング ──────────────────────────
+function centerOn(id) {
+	const n = gById[id]; if (!n) return;
+	// センターへ引き寄せる（1 tick で瞬移させず、目標位置に緩やかに寄せる）
+	n.x = W / 2 + (Math.random() - 0.5) * 20;
+	n.y = H / 2 + (Math.random() - 0.5) * 20;
+	alpha = 1;
+}
+
+// ────────────────────────── 階層モード（カード） ──────────────────────────
+function renderTree() {
+	const root = document.getElementById('tree-root');
+	root.innerHTML = '';
+	// ルート = parent === null
+	const roots = NODES.filter(n => n.parent === null);
+	if (roots.length === 0) {
+		root.innerHTML = '<div class="empty-hint">エージェントが登録されていません</div>';
 		return;
 	}
+	// 全階層を再帰的にレンダリング
+	const tier = document.createElement('div'); tier.className = 'tier';
+	root.appendChild(tier);
+	for (const r of roots) tier.appendChild(renderCardCol(r));
+	applyTreeFilter();
+}
 
-	document.getElementById('loading').style.display = 'block';
-
-	// ELK拡張を登録（利用可能な場合）
-	if (typeof cytoscapeElk !== 'undefined') {
-		cytoscape.use(cytoscapeElk);
+function renderCardCol(node) {
+	const col = document.createElement('div'); col.className = 'tcol';
+	col.appendChild(renderCard(node));
+	const children = NODES.filter(n => n.parent === node.id);
+	if (children.length > 0) {
+		const vline = document.createElement('div'); vline.className = 'vline'; col.appendChild(vline);
+		const sub = document.createElement('div'); sub.className = 'subtree';
+		for (const c of children) sub.appendChild(renderCardCol(c));
+		col.appendChild(sub);
 	}
-
-	cy = cytoscape({
-		container: document.getElementById('cy'),
-		elements,
-		style: buildStyle(),
-		minZoom: 0.1,
-		maxZoom: 3,
-		wheelSensitivity: 0.3,
-	});
-
-	applyLayout(currentMode, () => {
-		document.getElementById('loading').style.display = 'none';
-	});
-
-	// ツールチップ
-	const tooltip = document.getElementById('tooltip');
-	cy.on('mouseover', 'node', (evt) => {
-		const node = evt.target;
-		const data = node.data();
-		if (!data || data.isCompound) return;
-		const pos = evt.renderedPosition;
-		tooltip.innerHTML =
-			'<div class="tooltip-name">' + escHtml(data.label || data.id) + '</div>' +
-			(data.role ? '<div class="tooltip-role">' + escHtml(data.role) + '</div>' : '') +
-			(data.sessionId
-				? '<div class="tooltip-session">' + data.sessionId.substring(0, 20) + '...</div>'
-				: '');
-		tooltip.style.left = (pos.x + 12) + 'px';
-		tooltip.style.top  = (pos.y + 12) + 'px';
-		tooltip.classList.add('visible');
-	});
-	cy.on('mouseout', 'node', () => {
-		tooltip.classList.remove('visible');
-	});
-
-	// クリック — セッション操作
-	cy.on('tap', 'node', (evt) => {
-		const data = evt.target.data();
-		if (data && data.sessionId) {
-			vscode.postMessage({ type: 'openSession', sessionId: data.sessionId });
-		}
+	return col;
+}
+function renderCard(node) {
+	const card = document.createElement('div'); card.className = 'card';
+	card.dataset.nodeId = node.id;
+	const cc = CHILD_COUNT[node.id] || 0;
+	const dot = node.live ? '<span class="pulse"></span>' : '<span class="idle-dot"></span>';
+	const chip = modelClass(node.model);
+	card.innerHTML =
+		'<div class="nm">' + dot + esc(node.label) + '</div>' +
+		(node.role ? '<div class="rl">' + esc(node.role) + '</div>' : '') +
+		'<div class="foot">' +
+			'<span class="mchip ' + chip + '">' + esc(String(node.model || '').toUpperCase()) + '</span>' +
+			(cc > 0 ? '<span class="ecount">部下 ' + cc + '</span>' : '') +
+		'</div>';
+	card.addEventListener('click', () => handleNodeClick(node));
+	return card;
+}
+function applyTreeFilter() {
+	document.querySelectorAll('#tree-root .card').forEach((el) => {
+		const id = el.dataset.nodeId;
+		const n = byId[id]; if (!n) return;
+		const visible = isVisible(n) && matchesSearch(n) && matchesChip(n);
+		el.classList.toggle('hidden', HIDE_OTHER && !n.inWorkspace);
+		el.classList.toggle('dimmed', !visible && !(HIDE_OTHER && !n.inWorkspace));
 	});
 }
 
-function buildStyle() {
+// ────────────────────────── グループモード ──────────────────────────
+let groupAxis = 'dept';
+function renderGroup() {
+	const box = document.getElementById('gclusters');
+	box.innerHTML = '';
+	let clusters;
+	if (groupAxis === 'dept') clusters = clustersByDept();
+	else if (groupAxis === 'model') clusters = clustersByModel();
+	else clusters = clustersByStatus();
+	if (clusters.length === 0) {
+		box.innerHTML = '<div class="empty-hint">エージェントが登録されていません</div>';
+		return;
+	}
+	for (const c of clusters) {
+		const gc = document.createElement('div'); gc.className = 'gc';
+		const h = document.createElement('h4');
+		h.innerHTML = esc(c.label) + '<span class="cnt">' + c.members.length + '</span>';
+		gc.appendChild(h);
+		for (const m of c.members) {
+			const row = document.createElement('div'); row.className = 'gmember';
+			row.dataset.nodeId = m.id;
+			const dot = m.live ? '<span class="pulse"></span>' : '<span class="idle-dot"></span>';
+			const chip = modelClass(m.model);
+			row.innerHTML = dot + '<span>' + esc(m.label) + '</span>' +
+				'<span class="gm-ch mchip ' + chip + '">' + esc((m.model || '').substring(0, 1).toUpperCase()) + '</span>';
+			row.addEventListener('click', () => handleNodeClick(m));
+			gc.appendChild(row);
+		}
+		box.appendChild(gc);
+	}
+	applyGroupFilter();
+}
+function clustersByDept() {
+	// 最上位まで parent を辿ってグルーピング
+	const map = new Map();
+	for (const a of NODES) {
+		let root = a.id;
+		const seen = new Set([a.id]);
+		let cur = a;
+		while (cur && cur.parent && byId[cur.parent] && !seen.has(cur.parent)) {
+			root = cur.parent; seen.add(cur.parent); cur = byId[cur.parent];
+		}
+		const key = root; const label = (byId[root] && byId[root].label) || root;
+		if (!map.has(key)) map.set(key, { key, label, members: [] });
+		map.get(key).members.push(a);
+	}
+	return [...map.values()].sort((a, b) => b.members.length - a.members.length);
+}
+function clustersByModel() {
+	const map = new Map();
+	for (const a of NODES) {
+		const k = a.model || 'unknown';
+		if (!map.has(k)) map.set(k, { key: k, label: k, members: [] });
+		map.get(k).members.push(a);
+	}
+	const order = ['fable', 'fable-1m', 'opus', 'opus-1m', 'sonnet', 'sonnet-1m', 'haiku', 'unknown'];
+	return [...map.keys()].sort((a, b) => {
+		const ai = order.indexOf(a); const bi = order.indexOf(b);
+		return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+	}).map(k => map.get(k));
+}
+function clustersByStatus() {
+	const active = [], idle = [], unlinked = [];
+	for (const a of NODES) {
+		if (a.live) active.push(a);
+		else if (a.sessionId) idle.push(a);
+		else unlinked.push(a);
+	}
 	return [
-		{
-			selector: 'node',
-			style: {
-				'background-color': (ele) => modelColor(ele.data('model')),
-				'background-opacity': 0.15,
-				'border-color': (ele) => modelColor(ele.data('model')),
-				'border-width': (ele) => ele.data('isLive') ? 2.5 : 1.5,
-				'border-style': (ele) => ele.data('isDirector') ? 'solid' : 'solid',
-				'border-opacity': 1,
-				'label': 'data(label)',
-				'text-valign': 'center',
-				'text-halign': 'center',
-				'color': 'var(--vscode-foreground, #cccccc)',
-				'font-family': 'var(--vscode-font-family, monospace)',
-				'font-size': '11px',
-				'text-wrap': 'wrap',
-				'text-max-width': '120px',
-				'width': 130,
-				'height': 36,
-				'shape': 'roundrectangle',
-				'padding': '6px',
-			},
-		},
-		{
-			selector: 'node[isDirector]',
-			style: {
-				'background-color': '#e27e4a',
-				'background-opacity': 0.2,
-				'border-color': '#e27e4a',
-				'border-width': 2.5,
-				'font-weight': 'bold',
-				'font-size': '13px',
-				'width': 160,
-				'height': 44,
-			},
-		},
-		{
-			selector: 'node[isLive]',
-			style: {
-				'border-width': 2.5,
-				'box-shadow': '0 0 6px 2px var(--live, #4ec94e)',
-			},
-		},
-		{
-			selector: 'edge',
-			style: {
-				'width': 1.5,
-				'line-color': 'var(--vscode-editorIndentGuide-background, #555)',
-				'target-arrow-color': 'var(--vscode-editorIndentGuide-background, #555)',
-				'target-arrow-shape': 'triangle',
-				'curve-style': 'bezier',
-				'arrow-scale': 0.8,
-			},
-		},
-		{
-			selector: '.faded',
-			style: {
-				'opacity': 0.25,
-			},
-		},
-		{
-			// v0.5.18 §4-11 レビュー修正 (2): 検索・凡例チップの dimm 表示
-			//   Cytoscape の style で opacity を指定しないと canvas 描画に反映されない
-			//   （CSS ルールはデッドコードだったため上記 buildStyle 側に集約）。
-			selector: '.cy-node-dimmed',
-			style: {
-				'opacity': 0.2,
-			},
-		},
-	];
+		{ key: 'active',   label: '🟢 稼働中',  members: active },
+		{ key: 'idle',     label: '⚪ 待機',    members: idle },
+		{ key: 'unlinked', label: '🔗 未紐づけ', members: unlinked },
+	].filter(g => g.members.length > 0);
+}
+function applyGroupFilter() {
+	document.querySelectorAll('#gclusters .gmember').forEach((el) => {
+		const id = el.dataset.nodeId;
+		const n = byId[id]; if (!n) return;
+		el.classList.toggle('hidden', HIDE_OTHER && !n.inWorkspace);
+		const visible = isVisible(n) && matchesSearch(n) && matchesChip(n);
+		el.classList.toggle('dimmed', !visible && !(HIDE_OTHER && !n.inWorkspace));
+	});
 }
 
-function applyLayout(mode, callback) {
-	if (!cy) return;
-	const config = LAYOUT_CONFIGS[mode] || LAYOUT_CONFIGS.tree;
-	const layout = cy.layout(config);
-	if (callback) {
-		layout.on('layoutstop', callback);
+// ────────────────────────── ノードクリック（既存動作維持） ──────────────────────────
+function handleNodeClick(n) {
+	if (n.sessionId) {
+		vscode.postMessage({ type: 'openSession', sessionId: n.sessionId });
 	}
-	layout.run();
 }
 
-function applyFilters() {
-	if (!cy) return;
-	const { model: mf, parent: pf } = activeFilters;
-
-	cy.elements().removeClass('faded');
-
-	if (!mf && !pf) return;
-
-	cy.nodes().forEach(node => {
-		const data = node.data();
-		let keep = true;
-		if (mf && data.model !== mf) keep = false;
-		if (pf && data.parent !== pf && data.id !== pf) keep = false;
-		if (!keep) node.addClass('faded');
-	});
-
-	cy.edges().forEach(edge => {
-		const src = edge.source();
-		const tgt = edge.target();
-		if (src.hasClass('faded') || tgt.hasClass('faded')) {
-			edge.addClass('faded');
-		}
-	});
+// ────────────────────────── モード切替 ──────────────────────────
+let currentMode = ${JSON.stringify(defaultMode)};
+function setMode(m) {
+	currentMode = m;
+	document.querySelectorAll('.mode-seg button').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+	document.querySelectorAll('.pane').forEach(p => p.classList.remove('on'));
+	document.getElementById('pane-' + m).classList.add('on');
+	if (m === 'graph') { kickGraph(); }
+	else { stopGraph(); }
+	if (m === 'tree') renderTree();
+	if (m === 'group') renderGroup();
 }
-
-// ================================================================
-// フォールバック（Cytoscapeなし）
-// ================================================================
-function showFallback(elements) {
-	document.getElementById('cy-container').style.display = 'none';
-	const fb = document.getElementById('fallback');
-	fb.style.display = 'block';
-
-	const nodes = elements.filter(e => !e.data.source);
-	let html = '<h2 style="font-size:13px; margin-bottom:8px;">エージェント一覧（Cytoscapeロード失敗）</h2>';
-	html += nodes.map(n =>
-		'<div style="padding:4px 0; border-bottom:1px solid var(--border);">' +
-		'<strong>' + escHtml(n.data.label || n.data.id) + '</strong>' +
-		(n.data.role ? ' <span style="color:var(--text-dim); font-size:10px;">— ' + escHtml(n.data.role) + '</span>' : '') +
-		'</div>'
-	).join('');
-	fb.innerHTML = html;
-}
-
-// ================================================================
-// UI イベント
-// ================================================================
-
-// T2.19: モード切替
-document.querySelectorAll('.mode-btn').forEach(btn => {
-	btn.addEventListener('click', () => {
-		const mode = btn.dataset.mode;
-		currentMode = mode;
-		document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
-		btn.classList.add('active');
-		document.getElementById('loading').style.display = 'block';
-		applyLayout(mode, () => {
-			document.getElementById('loading').style.display = 'none';
-		});
+document.querySelectorAll('.mode-seg button').forEach(b => {
+	b.addEventListener('click', () => {
+		setMode(b.dataset.mode);
+		// v0.5.23 レビュー修正: 選択モードを orgChart.defaultMode 設定に永続化
+		vscode.postMessage({ type: 'setDefaultMode', value: b.dataset.mode });
 	});
 });
 
-// T2.20: フィルタ
-document.getElementById('filter-model').addEventListener('change', (e) => {
-	activeFilters.model = e.target.value;
-	applyFilters();
-});
-document.getElementById('filter-parent').addEventListener('change', (e) => {
-	activeFilters.parent = e.target.value;
-	applyFilters();
-});
-
-// v0.5.18 §4-11: 検索ボックス — cy.filter で一致ノードをハイライト + fit でズーム
-let orgSearchTimer;
+// ────────────────────────── 検索 ──────────────────────────
+let searchTimer;
 document.getElementById('org-search').addEventListener('input', (e) => {
-	if (orgSearchTimer) { clearTimeout(orgSearchTimer); }
-	const q = (e.target.value || '').trim().toLowerCase();
-	// デバウンス 200ms
-	orgSearchTimer = setTimeout(() => {
-		if (!cy) { return; }
-		cy.nodes().removeClass('cy-node-dimmed');
-		if (!q) { return; }
-		const matched = cy.nodes().filter((n) => {
-			const d = n.data();
-			return String(d.label || d.id || '').toLowerCase().includes(q)
-				|| String(d.role || '').toLowerCase().includes(q);
-		});
-		cy.nodes().not(matched).addClass('cy-node-dimmed');
-		if (matched.length > 0) {
-			cy.animate({ fit: { eles: matched, padding: 60 }, duration: 400, easing: 'ease-in-out' });
+	if (searchTimer) clearTimeout(searchTimer);
+	searchQ = (e.target.value || '').trim();
+	searchTimer = setTimeout(() => {
+		// マッチした 1 件目をセンタリング（グラフモード時のみ）
+		if (currentMode === 'graph' && searchQ) {
+			const matched = NODES.find(matchesSearch);
+			if (matched) centerOn(matched.id);
 		}
+		if (currentMode === 'tree') applyTreeFilter();
+		if (currentMode === 'group') applyGroupFilter();
 	}, 200);
 });
 
-// v0.5.18 §4-11: 凡例チップ — クリックでモデル/稼働状態フィルタ
+// ────────────────────────── 凡例チップ ──────────────────────────
 document.querySelectorAll('.legend-chip').forEach((chip) => {
 	chip.addEventListener('click', () => {
-		const wasActive = chip.classList.contains('active');
-		document.querySelectorAll('.legend-chip').forEach((c) => c.classList.remove('active'));
-		if (wasActive) {
-			// トグル OFF: フィルタ解除
-			if (cy) { cy.nodes().removeClass('cy-node-dimmed'); }
-			return;
-		}
+		const active = chip.classList.contains('active');
+		document.querySelectorAll('.legend-chip').forEach(c => c.classList.remove('active'));
+		if (active) { chipFilter = null; return; }
 		chip.classList.add('active');
-		if (!cy) { return; }
-		const type = chip.dataset.chipType;
-		const value = chip.dataset.chipValue;
-		cy.nodes().removeClass('cy-node-dimmed');
-		const matched = cy.nodes().filter((n) => {
-			const d = n.data();
-			if (type === 'model') {
-				const m = String(d.model || '').toLowerCase();
-				return m.includes(value);
-			}
-			if (type === 'status') {
-				return value === 'live' ? !!d.isLive : true;
-			}
-			return true;
-		});
-		cy.nodes().not(matched).addClass('cy-node-dimmed');
+		chipFilter = { type: chip.dataset.chipType, value: chip.dataset.chipValue };
+		if (currentMode === 'tree') applyTreeFilter();
+		if (currentMode === 'group') applyGroupFilter();
 	});
 });
 
-// T2.20: PNG エクスポート
-document.getElementById('btn-export-png').addEventListener('click', () => {
-	if (!cy) return;
-	const png64 = cy.png({ scale: 2, full: true, bg: 'transparent' });
-	const link = document.createElement('a');
-	link.href = png64;
-	link.download = 'org-chart.png';
-	link.click();
+// ────────────────────────── 連携トグル ──────────────────────────
+document.getElementById('btn-collab').addEventListener('click', () => {
+	collabOn = !collabOn;
+	document.getElementById('btn-collab').classList.toggle('active', collabOn);
+	// 連携 ON 時にログが空なら「連携ログはまだありません」を表示
+	const hint = document.getElementById('collab-hint');
+	if (collabOn && COLLAB.length === 0) {
+		hint.textContent = '連携ログはまだありません（/csm-ask-agent の利用で蓄積されます）';
+		hint.style.display = 'block';
+	} else if (collabOn) {
+		hint.textContent = '直近 7 日の連携（' + COLLAB.length + '本、金色点線）を重ね描き中';
+		hint.style.display = 'block';
+	} else {
+		hint.style.display = 'none';
+	}
+	// 集計を再取得（拡張側から postMessage で最新を返してくる）
+	if (collabOn) vscode.postMessage({ type: 'refreshCollab' });
+	alpha = 1;
 });
 
-// T2.20: SVG エクスポート（cytoscape-svg がなければ canvas→SVG変換）
-document.getElementById('btn-export-svg').addEventListener('click', () => {
-	if (!cy) return;
-	// Cytoscapeには cy.svg() が標準では無いため PNG を SVG foreignObject でラップ
-	const png64 = cy.png({ scale: 2, full: true, bg: 'transparent' });
-	const bbox = cy.elements().boundingBox();
-	const w = Math.ceil(bbox.w * 2) || 800;
-	const h = Math.ceil(bbox.h * 2) || 600;
-	const svgStr = [
-		'<?xml version="1.0" encoding="UTF-8"?>',
-		'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"',
-		'     width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">',
-		'  <image href="' + png64 + '" x="0" y="0" width="' + w + '" height="' + h + '"/>',
-		'</svg>',
-	].join('\\n');
-	const blob = new Blob([svgStr], { type: 'image/svg+xml' });
-	const url = URL.createObjectURL(blob);
-	const link = document.createElement('a');
-	link.href = url;
-	link.download = 'org-chart.svg';
-	link.click();
-	URL.revokeObjectURL(url);
+// ────────────────────────── 他プロジェクトを隠す ──────────────────────────
+document.getElementById('btn-hide-other').addEventListener('click', () => {
+	HIDE_OTHER = !HIDE_OTHER;
+	document.getElementById('btn-hide-other').classList.toggle('active', HIDE_OTHER);
+	if (currentMode === 'tree') applyTreeFilter();
+	if (currentMode === 'group') applyGroupFilter();
+	alpha = 1;
+	// v0.5.23 レビュー修正: 設定 orgChart.hideOtherProjects に永続化（拡張側で書き込み）
+	vscode.postMessage({ type: 'setHideOtherProjects', value: HIDE_OTHER });
 });
 
-// ================================================================
-// ユーティリティ
-// ================================================================
-function escHtml(str) {
-	if (!str) return '';
-	return String(str)
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;');
-}
+// ────────────────────────── グループ軸切替 ──────────────────────────
+document.querySelectorAll('.gaxis .mtool').forEach(b => {
+	b.addEventListener('click', () => {
+		document.querySelectorAll('.gaxis .mtool').forEach(x => x.classList.remove('active'));
+		b.classList.add('active');
+		groupAxis = b.dataset.ax;
+		renderGroup();
+	});
+});
 
-// ================================================================
-// 初期化
-// ================================================================
-initCytoscape(ELEMENTS);
+// ────────────────────────── 拡張から postMessage 受信 ──────────────────────────
+window.addEventListener('message', (ev) => {
+	const m = ev.data;
+	if (!m) return;
+	if (m.type === 'collabData') {
+		COLLAB = m.edges || [];
+		const hint = document.getElementById('collab-hint');
+		if (collabOn) {
+			hint.textContent = COLLAB.length === 0
+				? '連携ログはまだありません（/csm-ask-agent の利用で蓄積されます）'
+				: '直近 7 日の連携（' + COLLAB.length + '本、金色点線）を重ね描き中';
+			hint.style.display = 'block';
+		}
+	}
+});
 
+// ────────────────────────── 初期化 ──────────────────────────
+if (currentMode === 'graph') kickGraph();
+if (currentMode === 'tree') renderTree();
+if (currentMode === 'group') renderGroup();
 </script>
 </body>
 </html>`;
-}
-
-// -------------------------------------------------------------------
-// Cytoscape エレメント生成
-// -------------------------------------------------------------------
-
-function buildCytoscapeElements(
-	agents: AgentInfo[],
-	liveIds: Set<string>
-): CytoscapeElement[] {
-	const elements: CytoscapeElement[] = [];
-	const validAgents = agents.filter(a => shouldShowInOrgChart(a));
-	const agentNames = new Set(validAgents.map(a => a.name));
-
-	for (const a of validAgents) {
-		const isLive = a.sessionId ? liveIds.has(a.sessionId) : false;
-		const isDirector = a.name === 'director';
-
-		elements.push({
-			data: {
-				id: a.name,
-				label: a.displayName || a.name,
-				model: a.model,
-				role: a.role || '',
-				sessionId: a.sessionId || '',
-				parent: (a.parentAgent && agentNames.has(a.parentAgent)) ? a.parentAgent : undefined,
-				isLive: isLive || undefined,
-				isDirector: isDirector || undefined,
-			},
-		});
-	}
-
-	// エッジ: parentAgent → 子
-	for (const a of validAgents) {
-		if (a.parentAgent && agentNames.has(a.parentAgent)) {
-			elements.push({
-				data: {
-					id: `${a.parentAgent}-->${a.name}`,
-					source: a.parentAgent,
-					target: a.name,
-				},
-			});
-		}
-	}
-
-	return elements;
-}
-
-// -------------------------------------------------------------------
-// 型
-// -------------------------------------------------------------------
-
-interface CytoscapeElement {
-	data: {
-		id: string;
-		label?: string;
-		model?: string;
-		role?: string;
-		sessionId?: string;
-		parent?: string;
-		isLive?: true;
-		isDirector?: true;
-		source?: string;
-		target?: string;
-	};
-}
-
-// -------------------------------------------------------------------
-// ユーティリティ
-// -------------------------------------------------------------------
-
-function escapeHtml(text: string): string {
-	return text
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;');
 }

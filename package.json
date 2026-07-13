@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager — 会話履歴・エージェント運用",
 	"description": "Claude Code の会話履歴・メモリ・マルチエージェント運用を管理する VS Code 拡張機能。ブックマーク、タグ、検索、組織図、大容量セッションの高速ビューワー、利用制限モニターに対応。",
-	"version": "0.5.22",
+	"version": "0.5.23",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -746,7 +746,6 @@
 				}
 			],
 			"view/item/context": [
-				
 				{
 					"command": "claudeManager.previewSession",
 					"when": "view == claudeSessions && viewItem =~ /^session/",
@@ -817,7 +816,6 @@
 					"when": "view == claudeTags && viewItem == taggedSession",
 					"group": "inline"
 				},
-				
 				{
 					"command": "claudeManager.addAgentFavorite",
 					"when": "view == claudeAgents && viewItem =~ /^agentItem/ && !(viewItem =~ /Bookmarked/)",
@@ -828,7 +826,6 @@
 					"when": "(view == claudeAgents || view == claudeAgentsFavorites) && (viewItem =~ /^agentItem.*Bookmarked/ || viewItem =~ /^favoriteAgent/)",
 					"group": "inline"
 				},
-				
 				{
 					"command": "claudeManager.previewAgent",
 					"when": "(view == claudeAgents || view == claudeAgentsFavorites) && viewItem =~ /(agentItemLinked|favoriteAgentLinked)/",
@@ -859,7 +856,6 @@
 					"when": "view == claudeAgents && viewItem =~ /agentItemLinked/",
 					"group": "0_open@6"
 				},
-				
 				{
 					"command": "claudeManager.editAgent",
 					"when": "view == claudeAgents && viewItem =~ /^agentItem/",
@@ -875,7 +871,6 @@
 					"when": "view == claudeAgents && viewItem =~ /^agentItem/",
 					"group": "3_danger@1"
 				},
-				
 				{
 					"command": "claudeManager.previewMemory",
 					"when": "view == claudeMemory && viewItem == memoryFile",
@@ -1206,6 +1201,26 @@
 						"default": true,
 						"description": "ライブ状態ビューに CSM 未登録のセッションも表示します（旧 `claudeAgentsIntegration.showUnregistered` の後継。v0.5.22 追加）"
 					},
+					"claudeManager.orgChart.defaultMode": {
+						"type": "string",
+						"default": "graph",
+						"enum": [
+							"graph",
+							"tree",
+							"group"
+						],
+						"enumDescriptions": [
+							"Obsidian 風力学グラフ（既定・宇宙感の Canvas ダーク UI）",
+							"カード階層（VS Code テーマ追従・共有向き）",
+							"グループ（部署別 / モデル別 / 稼働状態別のチップ切替）"
+						],
+						"description": "組織図の起動時のサブモードです（v0.5.23 追加）"
+					},
+					"claudeManager.orgChart.hideOtherProjects": {
+						"type": "boolean",
+						"default": false,
+						"description": "組織図で現ワークスペース外のエージェントを非表示にします。既定は減光のみ（v0.5.23 追加）"
+					},
 					"claudeManager.agents.defaultExpand": {
 						"type": "array",
 						"items": {
@@ -1312,8 +1327,6 @@
 	"devDependencies": {
 		"@types/node": "^20.0.0",
 		"@types/vscode": "^1.85.0",
-		"cytoscape": "^3.33.2",
-		"cytoscape-elk": "^2.3.0",
 		"typescript": "^5.3.0"
 	}
 }

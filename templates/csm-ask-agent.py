@@ -245,6 +245,30 @@ def list_pending():
             pass
 
 
+def append_collab_log(sender, recipient):
+    """v0.5.23: /csm-ask-agent の送信履歴を ~/.claude/csm-collab-log.jsonl に 1 行 append する。
+
+    仕様:
+      - フォーマット: {"ts": epoch_ms, "from": <sender>, "to": <recipient>}
+      - sender は環境変数 CSM_AGENT_NAME（呼び出し元エージェント名）を優先、無ければ "director"（近似）
+      - ログ書き込み失敗（権限・IO エラー等）は本処理に影響させず**サイレント**に握りつぶす
+    """
+    try:
+        import time
+        home = os.path.expanduser("~")
+        log_path = os.path.join(home, ".claude", "csm-collab-log.jsonl")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        entry = {
+            "ts": int(time.time() * 1000),
+            "from": sender or "director",
+            "to": recipient or "",
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass  # 追記失敗は本処理に影響させない（サイレント）
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python ask-agent.py <agent-name>", file=sys.stderr)
@@ -257,7 +281,11 @@ def main():
     elif sys.argv[1] == "--pending":
         list_pending()
     else:
-        get_agent_info(sys.argv[1])
+        agent_name = sys.argv[1]
+        # v0.5.23: 連携ログを append（本処理より先に実行してサイレント）
+        sender = os.environ.get("CSM_AGENT_NAME") or "director"
+        append_collab_log(sender, agent_name)
+        get_agent_info(agent_name)
 
 
 if __name__ == "__main__":

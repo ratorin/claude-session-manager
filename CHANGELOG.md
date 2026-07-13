@@ -1,5 +1,85 @@
 # 更新履歴
 
+## v0.5.23 (2026-07-13) — 組織図リデザイン（Obsidian 風グラフに全面刷新、Cytoscape/ELK 撤去）
+
+### 🩹 コミット前レビュー修正（HIGH 2 + LOW 2）
+
+- **HIGH-1 `media/walkthrough/step5.md` を新 UI に合わせ全面書き直し** — 旧記述（Cytoscape / 「ツリー・関係・グループ」/ 親エージェント別フィルタ / PNG・SVG エクスポート）を撤去し、新 UI（Obsidian 風グラフ / `[グラフ | 階層 | グループ]` サブモード / 連携トグル / 他プロジェクト減光）に置換。**存在しないボタンを初見ユーザーに案内する事故を防止**。
+- **HIGH-2 「他プロジェクトを隠す」トグルと モードセグメントの選択を Global 設定に永続化** — Webview 側でボタン click 時に `postMessage({type:'setHideOtherProjects', value})` / `postMessage({type:'setDefaultMode', value})` を送り、拡張側 `handleOrgChartMessage` で `workspace.getConfiguration('claudeManager').update(..., ConfigurationTarget.Global)`。CHANGELOG/README/step5 の「設定 `orgChart.hideOtherProjects` で永続化」表記との不一致を解消。書き込み失敗はサイレント（次回起動時に既定へ戻るのみで安全）。
+- **LOW-1 `src/commands/orgChartCommands.ts:67` の古いコメント更新** — `// extensionUri for Cytoscape resource loading` → `// v0.5.23: extensionUri は現在未使用（Cytoscape/ELK 撤去後の後方互換のため引数だけ温存）` に差し替え。
+- **LOW-2 `src/utils/collabLog.ts` の集計キー衝突対策** — 従来の 1 文字区切りだと `a b`+`c` と `a`+`b c` が衝突する余地があったため、`JSON.stringify([from, to])` に置換。名前に空白を含むエージェント（現状は無いが将来対応）でも安全。
+- 検証: `npx tsc --noEmit` クリーン / `npm test` 81 / 81 pass 維持。
+
+オーナー承認済みモック（`docs/mockups/orgchart-redesign-mock.html`）を実データで実装。**破壊的変更として Cytoscape.js / cytoscape-elk / elk.bundled の 3 ファイル同梱と実装依存を撤去** — 旧「関係」「グループ」モードで発生していた真っ暗バグも実装ごと消滅した。
+
+### ✨ メインモード: Obsidian 風力学グラフ（Canvas 自前実装）
+
+- **モック `makeSim` を `src/utils/orgChartEngine.ts` の純ロジックへ移植・発展** — Node.js 単体テストで力計算・隣接・グルーピング挙動を検証可能に。
+- **ノード**: 半径 = `7 + 部下数 * 2.2 + ライブボーナス(2) + director ボーナス(4)`、色 = `modelCatalog.colorHex`、稼働中はパルス + 緑ドット、**全ノードのラベルを常時表示**、ホバーで隣接以外を減光、ドラッグ再配置、`prefers-reduced-motion` で物理アニメ抑制（位置固定）。
+- **既存機能を維持**: 検索ボックスは v0.5.18 相当の挙動（マッチノードをセンタリング）、凡例チップは Fable/Opus/Sonnet/Haiku/稼働中 の 5 種でフィルタ、ノードクリックは既存 `onOpenSession` 経路（`postMessage`）を踏襲、`agentWatcher` からのライブ状態は初期表示時に反映。
+- **ダーク固定** — モックの宇宙感（放射グラデーション + Canvas グロー）を尊重。VS Code テーマの Light/HC はグラフモードでは適用しない（**設計判断**: 力学グラフの視認性はダーク前提で調整済みで、テーマ追従すると Canvas 色計算が二重管理になる）。階層/グループのサブモードは `var(--vscode-*)` でテーマ追従する。
+
+### 🔗 連携レイヤー（連携トグル OFF が既定）
+
+- **`~/.claude/csm-collab-log.jsonl` を新設**。フォーマット: `{"ts": epoch_ms, "from": "director", "to": "csm-impl"}` の 1 行 append。
+- **`templates/csm-ask-agent.py:append_collab_log()` で追記実装** — `sender` は環境変数 `CSM_AGENT_NAME` があればそれ、無ければ `"director"` を近似的に使用。**書き込み失敗は本処理に影響させずサイレント**（`pass` で握りつぶし）。
+- **`src/utils/collabLog.ts` に集計ロジック分離** — `readCollabLog(path?)` + `aggregateCollabLog(entries, nowMs, windowDays=7)` — 純関数でテスト容易。破損行はスキップ、自己送信は集計対象外、ts 数値以外は除外。
+- **UI**: ツールバー右の「連携」トグル ON で、直近 7 日の集計エッジを金色点線（太さ = 回数、最大 5px）で重ね描き。ログ未蓄積時は「連携ログはまだありません（/csm-ask-agent の利用で蓄積されます）」のヒント表示。集計は ON 時に `postMessage` でオンデマンド再取得。
+
+### 🌫 ワークスペース減光 / 非表示
+
+- **`agent.workDir` を `pathUtils.isContainedIn` で現ワークスペース群と照合**（v0.5.16 の `isSessionInAnyWorkspace` と同じ流儀）。範囲外エージェントは既定で opacity 0.25 の減光表示。
+- **`workDir` 未設定 は全プロジェクト共通とみなし通常表示** — グローバル汎用エージェント（QA・ドキュメント作成等）が減光されない。
+- **「他プロジェクトを隠す」トグル**（設定 `claudeManager.orgChart.hideOtherProjects` で永続化）で完全非表示化も可能。
+
+### 🗂 サブモード（ツールバーセグメント: グラフ / 階層 / グループ）
+
+- **階層モード**: モックのカードツリーを実データで**動的生成**（全階層、横スクロール、カードに `displayName / モデルバッジ / 稼働ドット / 部下数`、クリックで既存の `openSession` 経路）。VS Code テーマ追従。
+- **グループモード**: 部署別（最上位系統でクラスタリング・循環参照防御あり）/ モデル別（`MODEL_CATALOG` の順）/ 稼働状態別（稼働中 / 待機 / 未紐づけ）のチップ切替で再クラスタリング。
+- **設定 `claudeManager.orgChart.defaultMode`**（`graph` / `tree` / `group`、既定 `graph`）を新設。
+
+### 🎨 テーマ（設計判断）
+
+- **グラフモードはダーク固定**（モックの宇宙感を尊重、Canvas 色計算の二重管理を回避）。CHANGELOG に判断を明記。
+- **階層 / グループは `var(--vscode-*)` でテーマ追従**（Light / High Contrast にも自動対応）。
+
+### 🧪 テスト（Q1〜Q12、12 件新規追加）
+
+- **Q1〜Q6**: `orgChartEngine` の純ロジック — `computeNodeRadius` / `simulateStep`（位置更新 + drag 固定 + 境界クランプ） / `computeNeighbors` / `groupByDept`（循環参照防御含む） / `groupByModel`（カタログ順） / `groupByStatus`
+- **Q7〜Q9**: `collabLog` — 7 日窓集計 + `latestTs` / 存在しないファイルの空配列（サイレント） / 合成 JSONL の読み取り + 破損行スキップ
+- **Q10**: `package.json` に `orgChart.defaultMode` / `orgChart.hideOtherProjects` 設定が宣言されている
+- **Q11**: Cytoscape / ELK ライブラリの実利用が撤去されている（resources/ ファイル削除 + import/require/グローバル参照が消えていること）
+- **Q12**: `csm-ask-agent.py` に `append_collab_log` 関数と `CSM_AGENT_NAME` 環境変数対応、失敗時サイレント（`pass`）が入っている
+- **69 → 81 pass**
+
+### 🗑 破壊的変更 / 撤去
+
+- **`resources/cytoscape.min.js` / `resources/cytoscape-elk.js` / `resources/elk.bundled.js` を `.trash/orgchart-v0.5.22/` へ退避**（rm 禁止ルール準拠）。
+- `orgChartPanel.ts` は Cytoscape の `webview.asWebviewUri` 経路と CSP 追加ホストを撤去。CSP を `default-src 'none'` に絞りつつ `style-src` に `unsafe-inline` を追加（Canvas + 動的 style の必要最低限）。
+- `showOrgChart` の `extensionUri` 引数は互換のため残置（呼び出し元は無変更）。
+
+### 📖 ドキュメント更新
+
+- **README.md**: 「🌳 組織図」節を全面刷新（Cytoscape.js 表記撤去、新 3 モード + 連携 + ワークスペース減光を追記）。変更履歴に v0.5.23 追加。
+- **guide.html**: セクション 7「エージェント組織図」に **v0.5.23 リデザイン** 段落を追加（メイン / サブ / 連携 / ワークスペース / Cytoscape 撤去）。
+
+### 検証
+
+- `npx tsc --noEmit` クリーン。
+- `npm test`: **81 / 81 pass**（69 → 81、Q1〜Q12 追加）。
+- `package.json` `0.5.22` → **`0.5.23`**、`orgChart.defaultMode` / `orgChart.hideOtherProjects` の 2 設定を新設。
+
+### 判断・見送り事項
+
+- **モックの「案C 放射状マップ」は移植せず** — メイン（グラフ）と階層 / グループの 3 モードで用途を満たすと判断。将来ユーザ要望が出れば別 Sprint で追加。
+- **PNG / SVG エクスポート**は Canvas ベースへの移行に伴い一旦撤去。将来 `canvas.toBlob()` で PNG 復活は容易だが、需要が低いため今回はスコープ外。
+- **`onOpenInClaude` コールバックは実質未使用**（クリック時は `openSession` に統一）。旧 API は温存し、将来ノード右クリックメニュー実装時に再利用できるようにする。
+- **物理停止ボタン**はモックにあったが未実装（`prefers-reduced-motion` で十分と判断）。
+- **collab-log の書き込みは `csm-ask-agent.py` の `get_agent_info` 経路のみ**。`--list` / `--pending` は集計対象外（コマンド発行者と受信者の関係が薄いため）。
+- **モックの HTML との差分**: モックはハードコード 17 エージェントだが実装は `dataStore.getAgents()` から動的取得。ノード ID は `agent.name`、色は `MODEL_CATALOG.colorHex` から取得。
+- **`csm-collab-log.jsonl` の肥大化対策**（ローテーション等）は未実装 — 現状 1 行 100 バイト前後 × 週 100 回程度で問題なしと想定。将来 1 万行を超えたら別 Sprint で対応。
+- **Cytoscape 復活**は仕様上ない想定のため撤去確定。将来グラフ描画が必要になったら新設で対応する。
+
 ## v0.5.22 (2026-07-13) — CC 追従スプリント（P0 バックログ + 死蔵撤去 + Fable 5d 投機追加）
 
 `docs/v0.6.0-roadmap.md` の P0 積み残しと QA レポート §5 の要確認事項を一括対応。CC 2.1.20x（実機確認: 2.1.207）に追従。**破壊的変更として `claudeAgentsService.ts` と `claudeManager.claudeAgentsIntegration.*` 4 設定を撤去** — 移行注記は下記参照。

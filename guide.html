@@ -2079,11 +2079,20 @@
 
 <div class="section">
 
-	<div class="section-title"><span class="num">7</span>エージェント組織図</div>
+	<div class="section-title"><span class="num">7</span>エージェント組織図（v0.5.23 全面リデザイン）</div>
 
 
 
 	<p>登録済みエージェントを<strong>組織図として視覚的に表示</strong>。<code>agents/*.md</code> の <code>parentAgent</code> フィールドから親子関係を自動構築し、動作状態・モデルを一目で把握。</p>
+
+	<h4 style="color: #d97757; margin: 24px 0 12px;">v0.5.23 リデザイン</h4>
+	<ul style="margin: 12px 0 12px 24px;">
+		<li><b>メイン: Obsidian 風力学グラフ</b> — Canvas 自前実装、ダーク固定の宇宙感 UI。ノード大きさ = 部下数 + 稼働ボーナス、色 = モデル、稼働中はパルス。ドラッグ再配置・ホバー減光対応。</li>
+		<li><b>サブ: 階層 / グループ</b> — ツールバー左のセグメントで切替。階層はカード階層、グループは部署別 / モデル別 / 稼働状態別のチップ切替。VS Code テーマ追従。</li>
+		<li><b>連携トグル</b> — <code>/csm-ask-agent</code> の送信履歴（<code>~/.claude/csm-collab-log.jsonl</code>、直近 7 日）を金色点線で重ね描き。指揮系統（実線）と実際の仕事の流れ（点線）のズレを可視化。</li>
+		<li><b>ワークスペース減光</b> — 現ワークスペース外のエージェントは既定で減光。「他プロジェクトを隠す」で完全非表示化も可能。</li>
+		<li><b>Cytoscape / ELK 依存を撤去</b>。旧「関係」「グループ」の真っ暗バグは実装ごと消滅。</li>
+	</ul>
 
 
 
