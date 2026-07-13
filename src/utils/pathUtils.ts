@@ -177,6 +177,15 @@ export function isFolderInAnyWorkspace(
  *
  * allowNewWindow=false（設定 OFF）なら常に false を返す。
  * 対象フォルダが空なら false（新ウィンドウを開いても意味がない）。
+ *
+ * v0.5.28 レビュー修正 (LOW-4) 記録:
+ *   `workspaceFolders.length === 0` の場合（VS Code の「Welcome / 空ウィンドウ」状態）
+ *   常に true を返す挙動は、現在のウィンドウが空でも新ウィンドウを開くことになり
+ *   空の元ウィンドウが残る点に留意。ただし対象フォルダが分かっているのに現ウィンドウで
+ *   自動 openFolder してしまうとユーザーの意図（例: Welcome を意図的に開いている）を
+ *   壊す恐れがあるため、この判断は現状維持とする。空ウィンドウが気になる場合は
+ *   ユーザーが手動で閉じる。将来 UX 要望が出れば「現ウィンドウが空なら同一ウィンドウで開く」
+ *   分岐を追加検討する（別 Sprint）。
  */
 export function needsNewWindowForClaudeOpen(
 	targetFolder: string,

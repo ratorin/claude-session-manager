@@ -1,5 +1,68 @@
 # 更新履歴
 
+## v0.5.28 (2026-07-13) — v0.5.27 レビュー修正（HIGH 1 + MEDIUM 2 + LOW 1）
+
+v0.5.27 のコードレビューで検出された堅牢性の穴 4 件を修正。ユーザー可視の挙動を修復し、UNC パスや存在しないフォルダでのエッジケースを潰した。
+
+### 🩹 (HIGH-1) `openAgentInClaude` の else 分岐に警告メッセージを復活
+
+`package.json` の設定 `agent.openInNewWindowWhenFolderMismatch` の説明は「OFF にすると従来の警告メッセージのみ」だが、v0.5.27 リファクタで旧 `showInformationMessage` が削除されて **設定 OFF + フォルダ不一致時に無言**（説明との矛盾）だった。
+
+- `agentCommands.ts` の `else` 分岐に条件付き警告を復活: `!allowNewWindow && targetFolder && wsFolders.length > 0 && !isFolderInAnyWorkspace(targetFolder, wsFolders)`。
+- `isFolderInAnyWorkspace` を `pathUtils` から import。
+- メッセージ本文に「設定 `claudeManager.agent.openInNewWindowWhenFolderMismatch` を有効にすると自動で新ウィンドウを起動できます」を追記し、ユーザーが設定 ON への導線を得られるようにした。
+
+### 🩹 (MEDIUM-2) `revealAgentFolder` を共通ヘルパー化 + 存在確認 + reject 通知
+
+v0.5.27 の `onRevealFolder` は 2 か所で同一ロジックを重複させ、`void vscode.commands.executeCommand(...)` で **reject を握りつぶし**、また **存在しないパスで無反応** だった。
+
+- 新関数 `revealAgentFolder(workDir)` を `agentCommands.ts` に追加:
+  1. `translateWorkDirPath` で HGFS 変換
+  2. `fs.existsSync(resolved)` で存在確認 → 無ければ `showWarningMessage(『フォルダが見つかりません: ...』)`
+  3. `executeCommand('revealFileInOS', ...).then(undefined, err => showWarningMessage(『エクスプローラを開けませんでした: ...』))`
+- `fs.existsSync` を try/catch で包み、権限エラー等でも UI にフィードバック。
+- 2 箇所の `onRevealFolder: (workDir) => { ... }` を `onRevealFolder: (workDir) => revealAgentFolder(workDir)` に集約（コピペ二重管理の解消）。
+
+### 🩹 (MEDIUM-3) `translateWorkDirPath` の UNC パス保持
+
+UNC パス（`\\server\share\...`）を旧実装は `.replace(/\\/g, '/')` で `\\` を単一 `/` に潰していたため、`//server` にすべき先頭が `/server` になり `revealFileInOS` が誤場所を開いていた（実質的に開けない）。
+
+- 関数冒頭で **UNC 判定** `^(?:\\\\|\/\/)[^\\/]/` を先に行い、UNC の場合は先頭 `\\` or `//` を `//` に固定してから残りを `/` に正規化し **先頭 2 連スラッシュを保持**。
+- 非 UNC の Windows 通常パス（`C:\xampp\...`）と Linux HGFS マッピング（`c:/GDrive/... → /mnt/hgfs/GDrive/...`）の挙動は不変。
+- エッジケース: 先頭 `\` 1 文字（`\localonly\path` 等）は UNC 判定にヒットしないため従来通り単一 `/` に潰す（後方互換）。
+
+### 📝 (LOW-4 記録) `needsNewWindowForClaudeOpen` の空ウィンドウ挙動
+
+修正不要のレビュー指摘。空ワークスペース（Welcome 画面）状態で `needsNewWindow=true` を返し新ウィンドウを開くと **元の空ウィンドウが残る** 点に留意。
+
+- `pathUtils.ts` の JSDoc に **`LOW-4` の記録コメント**を追記: 「対象フォルダが分かっているのに現ウィンドウで自動 `openFolder` してしまうとユーザーの意図（例: Welcome を意図的に開いている）を壊す恐れがあるため、この判断は現状維持とする。将来 UX 要望が出れば別 Sprint で追加検討」。
+- コード変更はなし。テスト V4 でコメント存在を静的確認。
+
+### 🧪 テスト（V1〜V4、4 件新規、合計 112 pass）
+
+- **V1** HIGH-1: `agentCommands.ts` に `isFolderInAnyWorkspace` の import と else 分岐 3 条件警告があること、「別フォルダ...で作成されています」メッセージが含まれることを静的確認
+- **V2** MEDIUM-2: `revealAgentFolder` 関数、`fs.existsSync`、「フォルダが見つかりません」文字列、`.then(undefined, (err) => ...)` reject 拾い、「エクスプローラを開けませんでした」文字列を静的確認
+- **V3** MEDIUM-3: `translateWorkDirPath` の UNC 往復（`\\server\share` → `//server/share`、深いパス、既に `//` 形式のもの）+ 非 UNC の Windows/HGFS が壊れていないこと + 先頭 `\` 1 文字のみは従来通り単一 `/` に潰す（後方互換）ケース
+- **V4** LOW-4: `needsNewWindowForClaudeOpen('', [], true) === false`（対象空なら空ウィンドウ開かない）+ ソースコメントに `LOW-4` と「空ウィンドウ」の記載
+- **U6 更新**: 旧「`onRevealFolder: (workDir) => { ... }` が 2 回」から新「`onRevealFolder: (workDir) => revealAgentFolder(workDir)` が 2 回」に変更（共通ヘルパー化を反映）。
+- **U6 (e)**: `.then(undefined, err=>...)` の regex を `[^)]*` 制限（`)` を含めない）から自由形に緩和（`Uri.file(resolved)` の `)` で切れていた）。
+
+### 検証
+
+- `npx tsc --noEmit` クリーン
+- `npm test`: **112 / 112 pass**（108 → 112、V1〜V4 追加、U6 更新）
+- `package.json` `0.5.27` → **`0.5.28`**。設定新設なし（v0.5.27 の設定をそのまま利用）。
+
+### 判断・見送り事項
+
+- **`revealAgentFolder` を共通ヘルパー化**（v0.5.27 レビューの明示的要望 = 「2 箇所とも同一修正」）— 単一の関数に集約することでコピペ二重管理を解消。将来同種のリンクが増えても 1 か所改修で対応可。
+- **`fs.existsSync` を採用**（非同期 `fs.promises.access` ではない）— 同期でも十分軽量（1 パス check）+ 呼び出し元がクリック応答内で同期完結できる方が UX 良好（await タイミングで別 UI 状態変化を待たない）。
+- **UNC 判定の regex `^(?:\\\\|\/\/)[^\\/]/`** — 先頭 `\\` or `//` が **2 連続** で **その後に非区切り文字**（=サーバー名の最初の 1 文字）があることを要件化。`\\\\` 3 連続や `\\localonly\path`（先頭 `\` 1 文字）は UNC ではないので従来通り扱う。
+- **`revealFileInOS` の失敗を warning にとどめる**（error 表示にしない）— UX 上「ちょっとした失敗」で赤い error banner を出すのは過剰。warning（黄色）が適切な重要度。
+- **LOW-4 は現状維持** — 「対象空 → false」は既存 U3 でも保証済み。追加のテスト V4 は「コメント記載の追跡」の意味合いが大きい（レビュー指摘への説明責任の明示）。
+- **V3 テストの `\\localonly\path` ケース** — 先頭 `\` 1 文字は UNC ではないため単一 `/` に潰す（`/localonly/path`）。従来動作を維持することで後方互換を担保。
+- **`else` 分岐の警告メッセージは新ウィンドウ起動を促す文言を含める** — ユーザーが「なぜ開かないんだろう」から設定変更に辿り着けるよう、`claudeManager.agent.openInNewWindowWhenFolderMismatch` のキー名を本文に明示。
+
 ## v0.5.27 (2026-07-13) — エージェントフォルダパス表示 + Claude で開くの新ウィンドウ起動
 
 ユーザー要望 2 点を実装。

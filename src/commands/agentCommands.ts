@@ -14,7 +14,7 @@ import { showAgentPreview } from '../panels/agentPreviewPanel';
 import { resolveRuleFilePath } from '../agents/agentManager';
 import { normalizeModel, translateWorkDirPath } from '../utils/agentUtils';
 import { isWorkDirCompatible } from '../utils/cliBuilder';
-import { resolveOpenInClaudeTargetFolder, needsNewWindowForClaudeOpen } from '../utils/pathUtils';
+import { resolveOpenInClaudeTargetFolder, needsNewWindowForClaudeOpen, isFolderInAnyWorkspace } from '../utils/pathUtils';
 import { syncParentRuleFile } from '../agents/parentChildSync';
 import { AgentWatcher } from '../watchers/agentWatcher';
 import {
@@ -57,6 +57,40 @@ function buildResumeArgs(agent: AgentConfig): string[] | null {
 		return null;
 	}
 	return args;
+}
+
+// v0.5.28 レビュー修正 (MEDIUM-2): エージェントフォルダを OS のエクスプローラで開く共通ヘルパー。
+//   旧 v0.5.27 は 2 か所で同一ロジックを重複させつつ、存在確認なし・エラー握りつぶしで
+//   フォルダが実在しない場合に無反応だった。
+//   ここでは:
+//     1) translateWorkDirPath で HGFS 変換
+//     2) fs.existsSync で存在確認 → 無ければ showWarningMessage で通知
+//     3) executeCommand の reject も .then(undefined, ...) で拾って通知
+function revealAgentFolder(workDir: string | undefined): void {
+	if (!workDir) { return; }
+	const resolved = translateWorkDirPath(workDir);
+	try {
+		if (!fs.existsSync(resolved)) {
+			vscode.window.showWarningMessage(
+				`フォルダが見つかりません: ${resolved}（元の workDir: ${workDir}）`,
+			);
+			return;
+		}
+	} catch (err) {
+		vscode.window.showWarningMessage(
+			`フォルダの存在確認に失敗しました: ${resolved}（${String(err)}）`,
+		);
+		return;
+	}
+	// executeCommand は Thenable を返す。reject は握りつぶさず必ずユーザーに見せる。
+	vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(resolved)).then(
+		undefined,
+		(err) => {
+			vscode.window.showWarningMessage(
+				`エクスプローラを開けませんでした: ${resolved}（${String(err)}）`,
+			);
+		},
+	);
 }
 
 export function registerAgentCommands(
@@ -266,11 +300,8 @@ context.subscriptions.push(
 				vscode.commands.executeCommand('claudeManager.linkSession', { agent: a });
 			},
 			// v0.5.27: 基本情報のフォルダリンクから OS エクスプローラで開く
-			onRevealFolder: (workDir) => {
-				if (!workDir) { return; }
-				const resolved = translateWorkDirPath(workDir);
-				void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(resolved));
-			},
+			// v0.5.28 レビュー修正: 共通ヘルパー revealAgentFolder に集約（存在確認 + エラー通知）
+			onRevealFolder: (workDir) => revealAgentFolder(workDir),
 		});
 	})
 );
@@ -317,11 +348,8 @@ context.subscriptions.push(
 				vscode.commands.executeCommand('claudeManager.linkSession', { agent: a });
 			},
 			// v0.5.27: 基本情報のフォルダリンクから OS エクスプローラで開く
-			onRevealFolder: (workDir) => {
-				if (!workDir) { return; }
-				const resolved = translateWorkDirPath(workDir);
-				void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(resolved));
-			},
+			// v0.5.28 レビュー修正: 共通ヘルパー revealAgentFolder に集約（存在確認 + エラー通知）
+			onRevealFolder: (workDir) => revealAgentFolder(workDir),
 		});
 	})
 );
@@ -692,8 +720,21 @@ context.subscriptions.push(
 			//   再度「Claude で開く」を押せば復元できる。
 			setTimeout(() => { void vscode.env.openExternal(uri); }, 1500);
 		} else {
-			// 既存動作: 現ワークスペースに包含されていれば URI ハンドラだけで OK
-			// （openExternal を待つ必要はないので await しない）
+			// v0.5.28 レビュー修正 (HIGH-1): 設定 OFF + フォルダ不一致時にも警告を復活させる。
+			//   package.json の説明「OFF にすると従来の警告メッセージのみ」との整合性確保。
+			//   条件: 設定が OFF (allowNewWindow=false) かつ 対象フォルダあり かつ ワークスペースが 1 つ以上開いていて
+			//         その中に対象が包含されていない場合、旧 v0.5.26 相当の警告を出す。
+			if (!allowNewWindow
+				&& targetFolder
+				&& wsFolders.length > 0
+				&& !isFolderInAnyWorkspace(targetFolder, wsFolders)) {
+				vscode.window.showInformationMessage(
+					`このセッションは別フォルダ (${targetFolder}) で作成されています。` +
+					`Claude Code 拡張側で新しいウィンドウが開く場合があります。` +
+					`（設定 claudeManager.agent.openInNewWindowWhenFolderMismatch を有効にすると自動で新ウィンドウを起動できます）`,
+				);
+			}
+			// 現ワークスペースに包含されていれば URI ハンドラだけで OK。await しない。
 			void vscode.env.openExternal(uri);
 		}
 	})

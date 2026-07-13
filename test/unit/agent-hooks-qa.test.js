@@ -1871,9 +1871,74 @@ test('U6 v0.5.27 agentCommands.ts: openAgentInClaude が新ウィンドウ経路
 	// (d) 案内メッセージ
 	assert.match(src, /新しいウィンドウで開きます/, '案内メッセージ');
 	// (e) onRevealFolder が両プレビュー呼び出しに配線されている（2 回）
-	const matches = src.match(/onRevealFolder:\s*\(workDir\)\s*=>/g) || [];
-	assert.equal(matches.length, 2, 'onRevealFolder が 2 箇所（openAgentPreview / previewAgentByName）で配線');
-	// (f) revealFileInOS 呼び出し
+	//   v0.5.28 レビュー修正: 共通ヘルパー revealAgentFolder(workDir) に集約された形。
+	const matches = src.match(/onRevealFolder:\s*\(workDir\)\s*=>\s*revealAgentFolder\(workDir\)/g) || [];
+	assert.equal(matches.length, 2, 'onRevealFolder が 2 箇所で revealAgentFolder(workDir) に集約されている');
+	// (f) revealFileInOS 呼び出し（共通ヘルパー内部）
 	assert.match(src, /executeCommand\(\s*['"]revealFileInOS['"]/, 'revealFileInOS を呼ぶ');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// V. v0.5.28 レビュー修正
+// ════════════════════════════════════════════════════════════════════════════
+
+test('V1 レビュー修正 HIGH-1: openAgentInClaude の else 分岐に警告メッセージ復活（設定 OFF + フォルダ不一致）', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'commands', 'agentCommands.ts'), 'utf-8');
+	// isFolderInAnyWorkspace を import
+	assert.match(
+		src,
+		/import\s*\{[^}]*isFolderInAnyWorkspace[^}]*\}\s*from\s*['"]\.\.\/utils\/pathUtils['"]/,
+		'isFolderInAnyWorkspace を import',
+	);
+	// else 分岐に 3 条件（!allowNewWindow / targetFolder あり / 包含なし）の警告
+	assert.match(
+		src,
+		/!allowNewWindow[\s\S]{0,120}?targetFolder[\s\S]{0,120}?wsFolders\.length\s*>\s*0[\s\S]{0,120}?!isFolderInAnyWorkspace/,
+		'条件: !allowNewWindow && targetFolder && wsFolders.length>0 && !isFolderInAnyWorkspace(...)',
+	);
+	assert.match(src, /別フォルダ.*で作成されています/, '案内メッセージ');
+});
+
+test('V2 レビュー修正 MEDIUM-2: revealAgentFolder が存在確認 + reject を通知する', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'commands', 'agentCommands.ts'), 'utf-8');
+	assert.match(src, /function\s+revealAgentFolder\s*\(\s*workDir/, 'revealAgentFolder 関数');
+	assert.match(src, /fs\.existsSync\(resolved\)/, '存在確認');
+	assert.match(src, /フォルダが見つかりません/, '未存在時の警告メッセージ');
+	// executeCommand の reject を .then(undefined, err=>...) で拾う
+	assert.match(src, /\.then\(\s*undefined\s*,\s*\(err\)\s*=>/, 'reject を .then(undefined, (err)=>...) で拾う');
+	assert.match(src, /エクスプローラを開けませんでした/, 'reject 時のメッセージ');
+});
+
+test('V3 レビュー修正 MEDIUM-3: translateWorkDirPath が UNC パスの先頭 // を保持する', () => {
+	const home = setupTmpHome();
+	const { agentUtils } = loadFresh(home);
+	const t = agentUtils.translateWorkDirPath;
+	// バックスラッシュ UNC
+	assert.equal(t('\\\\server\\share'), '//server/share', 'UNC (\\\\server\\share) → //server/share');
+	assert.equal(t('\\\\server\\share\\dir\\file.txt'), '//server/share/dir/file.txt', 'UNC 深いパス');
+	// スラッシュ UNC（既に POSIX 形式）
+	assert.equal(t('//server/share'), '//server/share', 'スラッシュ UNC はそのまま');
+	assert.equal(t('//server/share/x'), '//server/share/x', 'スラッシュ UNC 深いパス');
+	// 非 UNC の Windows パスは従来通り
+	if (process.platform === 'win32') {
+		assert.equal(t('C:\\xampp\\Project\\csm'), 'C:/xampp/Project/csm', '通常 Windows パスは / に正規化');
+	} else {
+		// Linux 上の HGFS 変換は非 UNC に対して従来通り動く
+		assert.equal(t('C:\\xampp\\Project\\csm'), '/mnt/hgfs/Project/csm', 'HGFS 変換（非 UNC）');
+	}
+	// 空・undefined は空を返す（従来と一致）
+	assert.equal(t(''), '', '空');
+	// エッジケース: 先頭 `\` 1 文字だけ（UNC ではない） → 従来通り単一 / に正規化
+	assert.equal(t('\\localonly\\path'), '/localonly/path', 'UNC でない先頭 \\ は単一 / に潰す（従来動作維持）');
+});
+
+test('V4 レビュー修正 LOW-4 記録: needsNewWindowForClaudeOpen の WS 未オープン挙動が現状維持でコメント記載', () => {
+	// 挙動テスト（既存 U3 と重複しない側面: WS 未オープン + 対象空 → false）
+	const { pathUtils } = loadFresh(setupTmpHome());
+	assert.equal(pathUtils.needsNewWindowForClaudeOpen('', [], true), false, '対象空なら空ウィンドウは開かない');
+	// ソースコメントに「LOW-4」の記録があること
+	const src = fs.readFileSync(path.join(REPO, 'src', 'utils', 'pathUtils.ts'), 'utf-8');
+	assert.match(src, /LOW-4/, 'LOW-4 の記録コメント');
+	assert.match(src, /空ウィンドウ/, '空ウィンドウ挙動への言及');
 });
 

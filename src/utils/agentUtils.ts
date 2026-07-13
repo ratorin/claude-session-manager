@@ -14,9 +14,24 @@ import { normalizeModel as normalizeModelFromCatalog, CsmModel } from '../models
  *   c:/workspace/...      → /mnt/hgfs/workspace/...
  *   c:/xampp/Project/...  → /mnt/hgfs/Project/...
  *   c:/GDrive/...         → /mnt/hgfs/GDrive/...
+ *
+ * v0.5.28 レビュー修正 (MEDIUM-3): UNC パス（\\server\share\...）の先頭 `\\` を
+ *   従来は単一 `/` に潰していたため `//server` ではなく `/server` になり、
+ *   revealFileInOS が誤場所を開いていた（実質的に開けない）。
+ *   UNC を先に判定し、変換後も `//server/...` の 2 連スラッシュを保持する。
  */
 export function translateWorkDirPath(workDir: string): string {
 	if (!workDir) { return workDir; }
+
+	// v0.5.28 レビュー修正 (MEDIUM-3): UNC パス判定（`\\server\share\...` または
+	//   `//server/share/...`）を最優先。バックスラッシュのみの `\\` を `//` に置換し
+	//   残りをバックスラッシュ→スラッシュに正規化する。先頭 2 連スラッシュを保つ。
+	const isUnc = /^(?:\\\\|\/\/)[^\\/]/.test(workDir);
+	if (isUnc) {
+		// 先頭の 2 連スラッシュ（バックスラッシュ形も）を `//` に固定してから、残りを / に正規化
+		const body = workDir.replace(/^(?:\\\\|\/\/)/, '').replace(/\\/g, '/');
+		return '//' + body;
+	}
 
 	// バックスラッシュ（1重・2重）を / に正規化
 	const normalized = workDir.replace(/\\\\/g, '/').replace(/\\/g, '/');
