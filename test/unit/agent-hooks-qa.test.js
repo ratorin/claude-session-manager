@@ -1855,40 +1855,44 @@ test('U5 v0.5.27 agentPreviewPanel.ts: フォルダ行 + revealFolder メッセ�
 	assert.match(src, /onRevealFolder\?\s*:\s*\(workDir:\s*string\)\s*=>\s*void/, 'onRevealFolder 型');
 });
 
-test('U6 v0.5.27 agentCommands.ts: openAgentInClaude が新ウィンドウ経路を持ち onRevealFolder が両プレビューに配線されている', () => {
-	const src = fs.readFileSync(path.join(REPO, 'src', 'commands', 'agentCommands.ts'), 'utf-8');
-	// (a) 新ウィンドウ判定ヘルパーをインポート
+test('U6 v0.5.27/29 openInClaudeHelper.ts + agentCommands.ts: 新ウィンドウ経路がヘルパーに集約 + onRevealFolder が両プレビューに配線', () => {
+	const helperSrc = fs.readFileSync(path.join(REPO, 'src', 'commands', 'openInClaudeHelper.ts'), 'utf-8');
+	const agentSrc = fs.readFileSync(path.join(REPO, 'src', 'commands', 'agentCommands.ts'), 'utf-8');
+	// v0.5.29 以降: 新ウィンドウ経路の実体は openInClaudeHelper.ts に一本化されている。
+	// (a) ヘルパーが pathUtils から 3 純関数を import
 	assert.match(
-		src,
-		/import\s*\{[^}]*resolveOpenInClaudeTargetFolder[^}]*needsNewWindowForClaudeOpen[^}]*\}\s*from\s*['"]\.\.\/utils\/pathUtils['"]/,
-		'pathUtils から純関数を import',
+		helperSrc,
+		/import\s*\{[^}]*resolveOpenInClaudeTargetFolder[^}]*needsNewWindowForClaudeOpen[^}]*isFolderInAnyWorkspace[^}]*\}\s*from\s*['"]\.\.\/utils\/pathUtils['"]/,
+		'openInClaudeHelper が pathUtils から 3 純関数を import',
 	);
-	// (b) 設定キーを参照
-	assert.match(src, /agent\.openInNewWindowWhenFolderMismatch/, '設定キーを参照');
-	// (c) vscode.openFolder を呼び forceNewWindow: true を渡す
-	assert.match(src, /['"]vscode\.openFolder['"]/, 'vscode.openFolder 文字列');
-	assert.match(src, /forceNewWindow:\s*true/, 'forceNewWindow: true');
-	// (d) 案内メッセージ
-	assert.match(src, /新しいウィンドウで開きます/, '案内メッセージ');
-	// (e) onRevealFolder が両プレビュー呼び出しに配線されている（2 回）
-	//   v0.5.28 レビュー修正: 共通ヘルパー revealAgentFolder(workDir) に集約された形。
-	const matches = src.match(/onRevealFolder:\s*\(workDir\)\s*=>\s*revealAgentFolder\(workDir\)/g) || [];
+	// (b) 設定キーを参照（ヘルパー内）
+	assert.match(helperSrc, /agent\.openInNewWindowWhenFolderMismatch/, 'ヘルパーが設定キーを参照');
+	// (c) vscode.openFolder + forceNewWindow: true をヘルパー内で呼ぶ
+	assert.match(helperSrc, /['"]vscode\.openFolder['"]/, 'ヘルパーが vscode.openFolder を呼ぶ');
+	assert.match(helperSrc, /forceNewWindow:\s*true/, 'ヘルパーが forceNewWindow: true');
+	// (d) 案内メッセージ（ヘルパー内）
+	assert.match(helperSrc, /新しいウィンドウで開きます/, 'ヘルパーが案内メッセージを出す');
+	// (e) agentCommands.ts の openAgentInClaude はヘルパーを呼び出すだけ（インライン展開なし）
+	assert.match(agentSrc, /openSessionInClaudeSmart\(\s*\{[\s\S]{0,120}?sessionId:\s*item\.agent\.sessionId[\s\S]{0,80}?workDir:\s*item\.agent\.workDir/, 'openAgentInClaude が helper を呼ぶ');
+	// (f) onRevealFolder が両プレビュー呼び出しに配線されている（2 回、v0.5.28 の集約形）
+	const matches = agentSrc.match(/onRevealFolder:\s*\(workDir\)\s*=>\s*revealAgentFolder\(workDir\)/g) || [];
 	assert.equal(matches.length, 2, 'onRevealFolder が 2 箇所で revealAgentFolder(workDir) に集約されている');
-	// (f) revealFileInOS 呼び出し（共通ヘルパー内部）
-	assert.match(src, /executeCommand\(\s*['"]revealFileInOS['"]/, 'revealFileInOS を呼ぶ');
+	// (g) revealFileInOS 呼び出し（agentCommands の revealAgentFolder 内部）
+	assert.match(agentSrc, /executeCommand\(\s*['"]revealFileInOS['"]/, 'revealFileInOS を呼ぶ');
 });
 
 // ════════════════════════════════════════════════════════════════════════════
 // V. v0.5.28 レビュー修正
 // ════════════════════════════════════════════════════════════════════════════
 
-test('V1 レビュー修正 HIGH-1: openAgentInClaude の else 分岐に警告メッセージ復活（設定 OFF + フォルダ不一致）', () => {
-	const src = fs.readFileSync(path.join(REPO, 'src', 'commands', 'agentCommands.ts'), 'utf-8');
+test('V1 レビュー修正 HIGH-1（v0.5.29 でヘルパー移設後）: openInClaudeHelper.ts に設定 OFF + フォルダ不一致の警告条件が保持されている', () => {
+	// v0.5.29: 警告は openInClaudeHelper.ts の中で行われる（openAgentInClaude はヘルパー呼び出しだけ）。
+	const src = fs.readFileSync(path.join(REPO, 'src', 'commands', 'openInClaudeHelper.ts'), 'utf-8');
 	// isFolderInAnyWorkspace を import
 	assert.match(
 		src,
 		/import\s*\{[^}]*isFolderInAnyWorkspace[^}]*\}\s*from\s*['"]\.\.\/utils\/pathUtils['"]/,
-		'isFolderInAnyWorkspace を import',
+		'ヘルパーが isFolderInAnyWorkspace を import',
 	);
 	// else 分岐に 3 条件（!allowNewWindow / targetFolder あり / 包含なし）の警告
 	assert.match(
@@ -1940,5 +1944,136 @@ test('V4 レビュー修正 LOW-4 記録: needsNewWindowForClaudeOpen の WS 未
 	const src = fs.readFileSync(path.join(REPO, 'src', 'utils', 'pathUtils.ts'), 'utf-8');
 	assert.match(src, /LOW-4/, 'LOW-4 の記録コメント');
 	assert.match(src, /空ウィンドウ/, '空ウィンドウ挙動への言及');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// W. v0.5.29 全『Claudeで開く』経路を openInClaudeHelper.ts に統一
+// ════════════════════════════════════════════════════════════════════════════
+
+test('W1 openInClaudeHelper.ts が存在し、期待の export と分岐を持つ', () => {
+	const p = path.join(REPO, 'src', 'commands', 'openInClaudeHelper.ts');
+	assert.equal(fs.existsSync(p), true, 'openInClaudeHelper.ts が新設');
+	const src = fs.readFileSync(p, 'utf-8');
+	// 主要 export
+	assert.match(src, /export\s+async\s+function\s+openSessionInClaudeSmart\s*\(\s*opts:\s*OpenInClaudeOptions/, 'openSessionInClaudeSmart export');
+	assert.match(src, /export\s+async\s+function\s+resolveSessionCwd\s*\(\s*sessionId:/, 'resolveSessionCwd export（JSONL 走査の重複排除）');
+	assert.match(src, /export\s+interface\s+OpenInClaudeOptions/, 'OpenInClaudeOptions 型');
+	// setTimeout ベースの URI ベストエフォート送信（v0.5.27 のロジック保持）
+	assert.match(src, /setTimeout\(\s*\(\)\s*=>\s*\{\s*void\s+vscode\.env\.openExternal/, 'setTimeout で URI ベストエフォート送信');
+	// ヘルパーは opts.sessionCwd を優先使用（呼び出し側が持っている cwd を尊重）
+	assert.match(src, /opts\.sessionCwd\s*\?\?\s*await\s+resolveSessionCwd/, 'sessionCwd 優先、無ければ JSONL 走査');
+});
+
+test('W2 openExternal(uri) を直接呼ぶ「Claude で開く」経路が撤去されていること', () => {
+	// v0.5.29 統一後、URI ハンドラ経由の openInClaude で openExternal を直接呼ぶ経路は
+	// openInClaudeHelper.ts の中身のみ許可（他の場所で anthropic.claude-code URI を組み立て → openExternal は禁止）。
+	// v0.5.19 で追加された「openLink」の openExternal（webviewPanel）は URL 用途で対象外だが、
+	// "anthropic.claude-code/open?session=" の組み立てが helper 以外に残っていないことを確認する。
+	const candidates = [
+		'src/commands/agentCommands.ts',
+		'src/commands/sessionCommands.ts',
+		'src/commands/orgChartCommands.ts',
+		'src/extension.ts',
+		'src/panels/webviewPanel.ts',
+		'src/panels/orgChartPanel.ts',
+	];
+	for (const rel of candidates) {
+		const p = path.join(REPO, rel);
+		if (!fs.existsSync(p)) { continue; }
+		const src = fs.readFileSync(p, 'utf-8');
+		assert.doesNotMatch(
+			src,
+			/anthropic\.claude-code\/open\?session=/,
+			`${rel} に anthropic.claude-code URI 組み立てが残っていないこと（helper 経由へ移行済み）`,
+		);
+	}
+	// ヘルパーには当然残る
+	const helper = fs.readFileSync(path.join(REPO, 'src', 'commands', 'openInClaudeHelper.ts'), 'utf-8');
+	assert.match(helper, /anthropic\.claude-code\/open\?session=/, 'ヘルパーには URI 組み立てが残る（唯一の集約点）');
+});
+
+test('W3 各コマンドが openSessionInClaudeSmart を呼び出している', () => {
+	const cases = [
+		{
+			file: 'src/commands/agentCommands.ts',
+			match: /openSessionInClaudeSmart\(/,
+			hint: 'openAgentInClaude / エージェントプレビュー onOpenInClaude x2',
+		},
+		{
+			file: 'src/commands/sessionCommands.ts',
+			match: /openSessionInClaudeSmart\(/,
+			hint: 'openInClaude / openLiveSessionInClaude',
+		},
+		{
+			file: 'src/commands/orgChartCommands.ts',
+			match: /openSessionInClaudeSmart\(/,
+			hint: '組織図ノード',
+		},
+		{
+			file: 'src/extension.ts',
+			match: /openSessionInClaudeSmart\(/,
+			hint: 'openSessionInOrchestration / openOrchestrationSessionInClaude',
+		},
+		{
+			file: 'src/panels/webviewPanel.ts',
+			match: /openSessionInClaudeSmart\(/,
+			hint: '会話ビューワーヘッダ ▶ Claude で開く',
+		},
+	];
+	for (const c of cases) {
+		const src = fs.readFileSync(path.join(REPO, c.file), 'utf-8');
+		assert.match(src, c.match, `${c.file}: ${c.hint}`);
+	}
+});
+
+test('W4 agentCommands.ts の 2 か所のプレビュー onOpenInClaude が agent.workDir を渡している', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'commands', 'agentCommands.ts'), 'utf-8');
+	const matches = src.match(/openSessionInClaudeSmart\(\s*\{\s*sessionId,\s*workDir:\s*agent\.workDir\s*\}\s*\)/g) || [];
+	assert.ok(matches.length >= 2, `agent.workDir 渡しの closure は 2 か所以上（実際: ${matches.length}）`);
+});
+
+test('W5 sessionCommands.ts の openInClaude 系が sessionCwd を渡すか自動解決する', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'commands', 'sessionCommands.ts'), 'utf-8');
+	// openInClaude: SessionItem.session.cwd を渡す（JSONL 再走査回避）
+	assert.match(src, /sessionId:\s*item\.session\.id[\s\S]{0,120}?sessionCwd:\s*item\.session\.cwd/, 'openInClaude が sessionCwd を渡す');
+	// openLiveSessionInClaude: sessionId 単独（sessionCwd は helper 内で JSONL 解決）
+	assert.match(src, /openSessionInClaudeSmart\(\{\s*sessionId\s*\}\)/, 'openLiveSessionInClaude は sessionId のみ渡す');
+});
+
+test('W6 package.json: 設定 description が全経路適用に更新されている', () => {
+	const pkg = require(path.join(REPO, 'package.json'));
+	const props = pkg.contributes.configuration.flatMap((c) => Object.entries(c.properties || {}));
+	const found = props.find(([k]) => k === 'claudeManager.agent.openInNewWindowWhenFolderMismatch');
+	assert.ok(found, '設定は継続して存在');
+	assert.match(found[1].description, /全経路/, 'description に「全経路」の言及');
+	assert.match(found[1].description, /v0\.5\.29/, 'v0.5.29 の言及');
+	// CLI 起動系は対象外の明記
+	assert.match(found[1].description, /CLI/, 'CLI 対象外の明記');
+});
+
+test('W7 resolveSessionCwd: 存在しない sid は undefined を返す（グレースフル）', async () => {
+	const home = setupTmpHome();
+	loadFresh(home);
+	const helper = require(path.join(REPO, 'out', 'commands', 'openInClaudeHelper'));
+	// projects ディレクトリ空 → undefined
+	const r = await helper.resolveSessionCwd('nonexistent-sid-' + Date.now());
+	assert.equal(r, undefined, '存在しない sid は undefined');
+});
+
+test('W8 resolveSessionCwd: 存在する JSONL の先頭 cwd を返す', async () => {
+	const home = setupTmpHome();
+	loadFresh(home);
+	const helper = require(path.join(REPO, 'out', 'commands', 'openInClaudeHelper'));
+	// 疑似 JSONL を配置
+	const projectsDir = path.join(home, '.claude', 'projects', 'test-proj');
+	fs.mkdirSync(projectsDir, { recursive: true });
+	const sid = 'test-sid-' + Date.now();
+	const jsonl = [
+		JSON.stringify({ type: 'user', cwd: 'c:/xampp/Project/csm', sessionId: sid, timestamp: '2026-01-01T00:00:00Z' }),
+		JSON.stringify({ type: 'assistant', timestamp: '2026-01-01T00:00:01Z' }),
+	].join('\n') + '\n';
+	fs.writeFileSync(path.join(projectsDir, `${sid}.jsonl`), jsonl);
+	const r = await helper.resolveSessionCwd(sid);
+	assert.equal(r, 'c:/xampp/Project/csm', 'JSONL 先頭の cwd を取り出す');
 });
 

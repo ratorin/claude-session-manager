@@ -12,6 +12,7 @@ import * as dataStore from '../models/dataStore';
 import { showSessionPreview, showMemoryPreview, updatePreviewTitle } from '../panels/webviewPanel';
 import { loadMemoryFiles, deleteMemoryFile, mergeMemoryFiles, extractFromMemory, addToIndex } from '../utils/memoryManager';
 import { getConfig } from '../utils/config';
+import { openSessionInClaudeSmart } from './openInClaudeHelper';
 
 export interface SessionCommandsDeps {
 	sessionProvider: SessionTreeProvider;
@@ -254,28 +255,24 @@ export function registerSessionCommands(
 	);
 
 	// Claude Codeで開く
+	// v0.5.29: 共通ヘルパー openSessionInClaudeSmart 経由。sessionCwd は SessionItem.session に既にある
+	//   （JSONL 解析済み）ので明示的に渡し、余計な JSONL 再走査を回避する。
 	context.subscriptions.push(
-		vscode.commands.registerCommand('claudeManager.openInClaude', (item: SessionItem) => {
-			const scheme = vscode.env.uriScheme;
-			const uri = vscode.Uri.parse(
-				`${scheme}://anthropic.claude-code/open?session=` +
-				encodeURIComponent(item.session.id)
-			);
-			vscode.env.openExternal(uri);
+		vscode.commands.registerCommand('claudeManager.openInClaude', async (item: SessionItem) => {
+			await openSessionInClaudeSmart({
+				sessionId: item.session.id,
+				sessionCwd: item.session.cwd,
+			});
 		})
 	);
 
 	// v0.5.24: ライブ状態の『未定義』グループ配下セッションから Claude Code を開く
-	// （SessionItem を持たないため sessionId 文字列を直接受け取る派生コマンド）
+	//   （SessionItem を持たないため sessionId 文字列を直接受け取る派生コマンド）
+	// v0.5.29: 共通ヘルパー openSessionInClaudeSmart 経由（sessionCwd は JSONL から自動解決）。
 	context.subscriptions.push(
-		vscode.commands.registerCommand('claudeManager.openLiveSessionInClaude', (sessionId: string) => {
+		vscode.commands.registerCommand('claudeManager.openLiveSessionInClaude', async (sessionId: string) => {
 			if (!sessionId) { return; }
-			const scheme = vscode.env.uriScheme;
-			const uri = vscode.Uri.parse(
-				`${scheme}://anthropic.claude-code/open?session=` +
-				encodeURIComponent(sessionId)
-			);
-			vscode.env.openExternal(uri);
+			await openSessionInClaudeSmart({ sessionId });
 		})
 	);
 }

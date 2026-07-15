@@ -16,6 +16,7 @@ import { shouldShowInOrgChart } from '../utils/agentUtils';
 import { ensureSubagentHooks, writeOrgInfoToMemory } from '../services/hookService';
 import { prepareDirectorRule, addAffinitySettings } from '../services/agentService';
 import { getConfig } from '../utils/config';
+import { openSessionInClaudeSmart } from './openInClaudeHelper';
 
 export interface OrgChartCommandsDeps {
 	sessionProvider: SessionTreeProvider;
@@ -56,13 +57,11 @@ context.subscriptions.push(
 				}
 			},
 			// Claude Codeで開く
+			// v0.5.29: 共通ヘルパー経由。組織図のノードクリックからも新ウィンドウ経路が有効に。
+			//   workDir は組織図側で解決可能だがコールバック署名は sessionId のみなので、ヘルパー内の
+			//   sessionCwd 解決に任せる（agent の workDir を渡したい場合は将来コールバック署名拡張の余地あり）。
 			(sessionId) => {
-				const scheme = vscode.env.uriScheme;
-				const uri = vscode.Uri.parse(
-					`${scheme}://anthropic.claude-code/open?session=` +
-					encodeURIComponent(sessionId)
-				);
-				vscode.env.openExternal(uri);
+				void openSessionInClaudeSmart({ sessionId });
 			},
 			// v0.5.23: extensionUri は現在未使用（Cytoscape/ELK 撤去後の後方互換のため引数だけ温存）
 			context.extensionUri

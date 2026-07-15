@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager — 会話履歴・エージェント運用",
 	"description": "Claude Code の会話履歴・メモリ・マルチエージェント運用を管理する VS Code 拡張機能。ブックマーク、タグ、検索、組織図、大容量セッションの高速ビューワー、利用制限モニターに対応。",
-	"version": "0.5.28",
+	"version": "0.5.29",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -1234,7 +1234,7 @@
 					"claudeManager.agent.openInNewWindowWhenFolderMismatch": {
 						"type": "boolean",
 						"default": true,
-						"description": "『Claudeで開く』のとき、セッション作成時 cwd（または agent.workDir）が現在のワークスペース外にあれば、対象フォルダを新しい VS Code ウィンドウで開いてからセッション復元を試みます。OFF にすると従来の警告メッセージのみ（v0.5.27 追加）"
+						"description": "『Claude で開く』（拡張 UI 起動）全経路で、セッション作成時 cwd（または agent.workDir）が現在のワークスペース外にあれば、対象フォルダを新しい VS Code ウィンドウで開いてからセッション復元を試みます。適用先: エージェント管理右クリック / エージェントプレビュー / 会話一覧 / ライブ状態未定義 / オーケストレーション / 組織図ノード / 会話ビューワーヘッダ ▶ ボタン。OFF にすると警告メッセージのみ（v0.5.27 追加 / v0.5.29 で全経路に統一）。※ CLI 起動系（『CLI で開く』ボタン等の ターミナル `claude --resume`）はターミナル起動のため対象外"
 					},
 					"claudeManager.agents.defaultExpand": {
 						"type": "array",

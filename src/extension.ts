@@ -18,6 +18,7 @@ import { registerAgentCommands } from './commands/agentCommands';
 import { registerMigrationCommands } from './commands/migrationCommands';
 import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
+import { openSessionInClaudeSmart } from './commands/openInClaudeHelper';
 import { getConfig, getLocaleConfig, getAutoTranslateConfig } from './utils/config';
 import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook, ensureRecapCaptureHook, ensureInjectionDetectHook, migrateHooksToExecForm, healForeignOsHookPaths, removeAllCsmHooks } from './services/hookService';
 import { runV04Migration, runV05Migration } from './services/migrationService';
@@ -636,11 +637,13 @@ export function activate(context: vscode.ExtensionContext) {
 			orchestrationProvider.refresh();
 			vscode.window.showInformationMessage('オーケストレーション状態を更新しました');
 		}),
+		// v0.5.29: 共通ヘルパー経由。orchestration session は cwd を既に持っているので直渡し。
 		vscode.commands.registerCommand('claudeManager.openSessionInOrchestration', async (session: import('./services/orchestrationViewModel').OrchestrationSession) => {
 			if (session.sessionId) {
-				const scheme = vscode.env.uriScheme;
-				const uri = vscode.Uri.parse(`${scheme}://anthropic.claude-code/open?session=${encodeURIComponent(session.sessionId)}`);
-				await vscode.env.openExternal(uri);
+				await openSessionInClaudeSmart({
+					sessionId: session.sessionId,
+					sessionCwd: session.cwd,
+				});
 			}
 		}),
 		vscode.commands.registerCommand('claudeManager.copyOrchestrationSessionId', async (item: import('./providers/orchestrationTreeProvider').SessionItem) => {
@@ -650,12 +653,14 @@ export function activate(context: vscode.ExtensionContext) {
 				vscode.window.showInformationMessage(`セッション ID をコピーしました: ${sid.substring(0, 8)}…`);
 			}
 		}),
+		// v0.5.29: 共通ヘルパー経由。orchestration session の cwd を渡す。
 		vscode.commands.registerCommand('claudeManager.openOrchestrationSessionInClaude', async (item: import('./providers/orchestrationTreeProvider').SessionItem) => {
 			const sid = item.session.sessionId;
 			if (sid) {
-				const scheme = vscode.env.uriScheme;
-				const uri = vscode.Uri.parse(`${scheme}://anthropic.claude-code/open?session=${encodeURIComponent(sid)}`);
-				await vscode.env.openExternal(uri);
+				await openSessionInClaudeSmart({
+					sessionId: sid,
+					sessionCwd: item.session.cwd,
+				});
 			}
 		}),
 	);

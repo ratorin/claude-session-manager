@@ -1,5 +1,84 @@
 # 更新履歴
 
+## v0.5.29 (2026-07-14) — 全『Claude で開く』ボタンの新ウィンドウ挙動を統一
+
+### 🩹 背景
+
+v0.5.27 で追加した「対象フォルダが現ワークスペース外なら新しい VS Code ウィンドウを開いて開く」挙動が **`claudeManager.openAgentInClaude`（エージェント管理右クリック）1 箇所にしか入っていなかった**。他の入口（会話一覧の Claude で開く / ライブ状態未定義 / オーケストレーション / 組織図ノード / 会話ビューワーのヘッダ ▶ ボタン / エージェントプレビュー ▶ ボタン）は `openExternal(uri)` を直接呼ぶだけで新ウィンドウにならず、ユーザーが期待する挙動と一貫していなかった。v0.5.29 で 全経路を共通ヘルパー経由に統一。
+
+### 🔧 (1) 共通ヘルパー `openInClaudeHelper.ts` を新設
+
+`src/commands/openInClaudeHelper.ts` に v0.5.27/28 のロジックを移植:
+
+- **`openSessionInClaudeSmart(opts)`** — 唯一のパブリック API。`OpenInClaudeOptions` 型は `{ sessionId: string; workDir?: string; sessionCwd?: string }`。
+- **`resolveSessionCwd(sessionId)`** — `~/.claude/projects/<slug>/<sid>.jsonl` の先頭 16KB 走査で `cwd` を取り出す共通関数（v0.5.27 で `openAgentInClaude` にインライン実装していたものを重複排除）。
+- **分岐ロジック** — `resolveOpenInClaudeTargetFolder(sessionCwd, workDir)` で対象フォルダを決定、`isFolderInAnyWorkspace` / `needsNewWindowForClaudeOpen`（`pathUtils`）で新ウィンドウ要否を判定。設定 `agent.openInNewWindowWhenFolderMismatch=ON` かつ 範囲外なら `vscode.openFolder({ forceNewWindow: true })` + 案内メッセージ + 1500ms 遅延で `openExternal(uri)`。範囲内なら即 `openExternal`。設定 OFF + 不一致時は v0.5.28 の警告メッセージも保持。
+
+### 🔀 (2) 全『Claude で開く』経路をヘルパーに置換
+
+拡張 UI の URI 経路をすべて `openSessionInClaudeSmart` 呼び出しに一本化（**CLI ターミナル系 `claude --resume` は対象外**、これはターミナル起動なので新ウィンドウ概念が無い）:
+
+| 経路 | 呼び出し元 | 渡す情報 |
+|---|---|---|
+| エージェント管理右クリック | `agentCommands.ts:openAgentInClaude` | `sessionId`, `agent.workDir` |
+| エージェントプレビュー ▶ ボタン (`previewAgent`) | `agentCommands.ts:onOpenInClaude` × 2 | `sessionId`, `agent.workDir`（closure） |
+| 会話一覧右クリック | `sessionCommands.ts:openInClaude` | `sessionId`, `SessionItem.session.cwd` |
+| ライブ状態未定義セッション | `sessionCommands.ts:openLiveSessionInClaude` | `sessionId` のみ（JSONL 自動解決） |
+| オーケストレーション「セッションを開く」× 2 | `extension.ts:openSessionInOrchestration` / `openOrchestrationSessionInClaude` | `sessionId`, `OrchestrationSession.cwd` |
+| 組織図ノードクリック | `orgChartCommands.ts` | `sessionId`（JSONL 自動解決） |
+| 会話ビューワーヘッダ ▶ Claude で開く | `webviewPanel.ts:message.type === 'openInClaude'` | `sessionId`, `currentFullSession.cwd` |
+
+### 🔁 (3) 重複コード削減
+
+- v0.5.27 で `openAgentInClaude` にインライン実装されていた JSONL 先頭走査（16KB を読み `cwd` を抽出）を `resolveSessionCwd` として関数化。
+- 呼び出し側が既に `cwd` を持っている場合（`SessionItem.session.cwd` / `OrchestrationSession.cwd` / `currentFullSession.cwd`）は `opts.sessionCwd` に直渡しし、無駄な JSONL 再走査を回避（W5 テストで担保）。
+
+### 🎛 (4) 設定名は据え置き（description のみ更新）
+
+`claudeManager.agent.openInNewWindowWhenFolderMismatch` を全経路で参照。**リネーム見送りの判断**:
+
+- **リネーム案（`claudeManager.openInNewWindowWhenFolderMismatch`）はユーザー設定破壊のリスク**があるため見送り。
+- 代わりに `package.json` の description を更新し、**適用先 7 経路を明示** + **CLI 起動系は対象外**を明記。
+- キー名の `agent.` プレフィックスは歴史的経緯（v0.5.27 でエージェント経路先行実装）。名前は不完全だが、ユーザーが既に設定している値を破壊しないメリットの方が大きいと判断。
+
+### 🧪 テスト（W1〜W8、8 件新規、合計 120 pass）
+
+- **W1** `openInClaudeHelper.ts` が存在し `openSessionInClaudeSmart` / `resolveSessionCwd` / `OpenInClaudeOptions` が export され、setTimeout ベースの URI ベストエフォート送信 + `sessionCwd` 優先ロジックがある
+- **W2** `openExternal(uri)` を直接呼ぶ「anthropic.claude-code URI 組み立て」が **ヘルパー以外の 6 ファイルから撤去** されていること（agentCommands / sessionCommands / orgChartCommands / extension / webviewPanel / orgChartPanel）。ヘルパーには当然残る（唯一の集約点）
+- **W3** 5 ファイル（agentCommands / sessionCommands / orgChartCommands / extension / webviewPanel）が `openSessionInClaudeSmart(` を呼び出している
+- **W4** `agentCommands.ts` の 2 プレビュー callback が `{ sessionId, workDir: agent.workDir }` closure を持つ
+- **W5** `sessionCommands.ts` の `openInClaude` は `sessionCwd: item.session.cwd` を渡し、`openLiveSessionInClaude` は `sessionId` のみ渡す
+- **W6** `package.json` の description に「全経路」「v0.5.29」「CLI」の言及
+- **W7** `resolveSessionCwd(存在しない sid)` は `undefined`（グレースフル）
+- **W8** `resolveSessionCwd(有効な sid)` が JSONL 先頭の `cwd` を返す（実 JSONL ファイル配置で検証）
+
+既存テスト:
+- **U6 更新**: 新ウィンドウ経路の実体は helper に移動したため、helper 側で `pathUtils` の 3 純関数 import / `agent.openInNewWindowWhenFolderMismatch` / `vscode.openFolder` / `forceNewWindow: true` / 案内メッセージを確認。agentCommands.ts 側は `openSessionInClaudeSmart({ sessionId: item.agent.sessionId, workDir: item.agent.workDir })` の呼び出し形を確認。
+- **V1 更新**: 警告メッセージの復活検証を helper 側に移動。
+
+### 📖 ドキュメント
+
+- **CHANGELOG**: 本節を追加
+- **README.md**: 変更履歴に v0.5.29 追加、Claude で開く節を「全経路統一」に更新
+- **guide.html**: 「Claude で開くの新ウィンドウ起動」節を「全経路統一（v0.5.29）」に更新
+
+### 検証
+
+- `npx tsc --noEmit` クリーン
+- `npm test`: **120 / 120 pass**（112 → 120、W1〜W8 追加 + U6 / V1 更新）
+- `package.json` `0.5.28` → **`0.5.29`**。設定新設なし（description のみ更新）
+
+### 判断・見送り事項
+
+- **設定キーのリネーム見送り** — `agent.` プレフィックスは不完全（今や全経路に効く）だが、ユーザー設定破壊リスクを避けるため据え置き。description で全経路適用を明示。将来 v1.0 で SemVer 破壊的変更を伴うタイミングでリネーム検討可。
+- **`resolveSessionCwd` を helper 内に配置**（agentUtils/pathUtils ではなく） — JSONL 先頭走査は Claude Code 特有の実装詳細で、path/agent 汎用 util の責務ではない。helper と密結合させることで責務を絞る。
+- **`orgChartCommands.ts` は sessionId のみ渡す**（agent.workDir を渡していない） — 組織図のノードクリックコールバックは `(sessionId) => void` の署名で、agent オブジェクトが即座に取れない。将来的に署名を `(sessionId, workDir?) => void` に拡張する余地はあるが、`sessionCwd` は helper 内で JSONL 自動解決されるため実用上問題なし（W3 テストで挙動をカバー）。
+- **`webviewPanel.ts` は `currentFullSession?.cwd` を渡す** — この cwd は既に JSONL 解析済みで信頼できる。無駄な再走査を避けるベストプラクティス。
+- **CLI 起動系（`claude --resume` in terminal）は対象外** — ターミナル起動なので新ウィンドウ概念が無く、既存の `terminal.createTerminal({ cwd: translateWorkDirPath(...) })` で正しい cwd に起動される。description に「CLI 対象外」を明記。
+- **W2 テストで `openExternal` 直呼び 0 件を担保** — 将来「新ウィンドウ経路をバイパスして直接 openExternal したい」誘惑が生まれた際にコードレビューで即座に気付ける形。ヘルパーの一貫性を保守で守る仕組み。
+- **U6 更新の理由** — 旧 U6 は agentCommands.ts の中に新ウィンドウ経路本体があった時代の regex。v0.5.29 で経路の実体は helper に移動。テストの意図（「新ウィンドウ経路が存在する」）は同じで、確認先ファイルを差し替えたのみ。
+- **`orgChartPanel.ts` は変更なし** — 組織図の webview 内の `openInClaude` メッセージは既に `onOpenInClaude(sessionId)` コールバック経由（orgChartPanel.ts:164）で orgChartCommands.ts:60 のコールバック実装（ヘルパー呼び出し）に到達する。webview 側 → 拡張側 orgChartCommands まで既存フローを通るため、W2 テストの対象ファイルに含めるだけで OK（追加変更不要）。
+
 ## v0.5.28 (2026-07-13) — v0.5.27 レビュー修正（HIGH 1 + MEDIUM 2 + LOW 1）
 
 v0.5.27 のコードレビューで検出された堅牢性の穴 4 件を修正。ユーザー可視の挙動を修復し、UNC パスや存在しないフォルダでのエッジケースを潰した。

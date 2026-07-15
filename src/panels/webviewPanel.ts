@@ -8,6 +8,7 @@ import { loadSessionFull, loadSessionTail, loadOlderMessages, loadSingleMessageB
 import * as dataStore from '../models/dataStore';
 import { generateModelCss } from '../models/modelCatalog';
 import { translateWorkDirPath } from '../utils/agentUtils';
+import { openSessionInClaudeSmart } from '../commands/openInClaudeHelper';
 
 // ガバナンスイベントの型
 interface GovernanceEvent {
@@ -239,11 +240,12 @@ export async function showSessionPreview(session: ParsedSession, context: vscode
 				// v0.5.19: Claude Code「拡張」のUIでセッションを開く。
 				//   セッションツリー右クリックの claudeManager.openInClaude と同一経路
 				//   （sessionCommands.ts 参照）: URI ハンドラ経由で拡張がセッションを resume する。
-				const scheme = vscode.env.uriScheme;
-				const uri = vscode.Uri.parse(
-					`${scheme}://anthropic.claude-code/open?session=` + encodeURIComponent(sid)
-				);
-				vscode.env.openExternal(uri);
+				// v0.5.29: 共通ヘルパー openSessionInClaudeSmart 経由。currentFullSession.cwd が既に
+				//   JSONL から取れているので sessionCwd を直渡し（JSONL 再走査を回避）。
+				await openSessionInClaudeSmart({
+					sessionId: sid,
+					sessionCwd: currentFullSession?.cwd,
+				});
 			} else if (message.type === 'loadMoreOlder') {
 				// v0.5.20: 「以前のメッセージを読み込む」— 拡張側で追加読み → webview に前置差し込み
 				if (!currentHasOlder) {
