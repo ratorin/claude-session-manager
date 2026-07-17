@@ -8,7 +8,7 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Claude Session Manager v0.5.21 使い方ガイド</title>
+<title>Claude Session Manager v0.5.31 使い方ガイド</title>
 
 <style>
 
@@ -850,7 +850,7 @@
 
 	}
 
-	/* v0.5.14: Fable 5 対応（金 #ffd54f）+ 1M モデルの CSS 補修 */
+	/* Fable / 1M モデルの CSS（金 #ffd54f） */
 	.badge-fable { background: rgba(255,213,79,0.15);  color: #ffd54f; border: 1px solid rgba(255,213,79,0.3); }
 	.badge-fable-1m { background: rgba(255,213,79,0.15);  color: #ffd54f; border: 1px solid rgba(255,213,79,0.3); }
 
@@ -914,7 +914,7 @@
 
 	<p>Claude Codeの会話履歴・メモリ・エージェントを管理するVS Code拡張機能</p>
 
-	<div class="version">v0.5.21</div>
+	<div class="version">v0.5.31</div>
 
 </div>
 
@@ -1023,192 +1023,6 @@
 	<div class="tip">
 
 		<strong>ステータスバー：</strong>画面左下に「🟢 2 👥 5」のような表示が出ます。🟢は動作中のエージェント数、👥は登録エージェント総数。クリックで組織図を表示。
-
-	</div>
-
-</div>
-
-
-
-<!-- ============================================ -->
-
-<!-- セクション 0.5: v0.4.2〜v0.4.4 新機能ハイライト -->
-
-<!-- ============================================ -->
-
-<div class="section">
-
-	<div class="section-title"><span class="num">★</span>v0.4.2〜v0.4.4 新機能ハイライト</div>
-
-
-
-	<p>CSM を v0.4.1 以前から更新した方向けに、この1年の主要な変更点を先にまとめます。</p>
-
-
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">v0.4.2 で追加</h4>
-
-	<div class="step-grid">
-
-		<div class="step-card">
-
-			<h4>🪟 エージェントプレビューパネル</h4>
-
-			<p>サイドバーでエージェントをクリックすると、<strong>配下ツリー・連携先・TODO / HISTORY</strong> を1画面で確認できる Webview が開きます。設定編集ボタン・ルールファイル編集ボタンもヘッダに配置。</p>
-
-		</div>
-
-		<div class="step-card">
-
-			<h4>📋 確認待ち横断ビュー</h4>
-
-			<p>全エージェントの未完了 TODO を1つのビューで横断表示。チェックを付けると各 TODO.md に即時反映され、抜け漏れを一元管理できます。</p>
-
-		</div>
-
-		<div class="step-card">
-
-			<h4>💬 <code>/csm-ask-agent</code> スキル</h4>
-
-			<p>旧 <code>/ask-agent</code> からリネーム。Claude セッション内で <code>/csm-ask-agent &lt;エージェント名&gt; "指示"</code> と書くと、バックグラウンドで起動し完了時に結果を報告します。</p>
-
-		</div>
-
-		<div class="step-card">
-
-			<h4>🧠 SessionStart hook で役割自動注入</h4>
-
-			<p>CSM が紐づけたエージェント定義（YAMLフロントマター＋本文）を、セッション開始時に自動でコンテキストへ読み込み。<code>--append-system-prompt-file</code> の指定忘れがなくなります。</p>
-
-		</div>
-
-		<div class="step-card">
-
-			<h4>🛡 ガバナンス記録</h4>
-
-			<p>Bash / Edit / Write 操作で秘密鍵や危険コマンドを検知し、<code>~/.claude/governance-events.jsonl</code> に記録します。事故の痕跡を後から追跡可能。</p>
-
-		</div>
-
-		<div class="step-card">
-
-			<h4>📝 PreCompact hook</h4>
-
-			<p>コンパクション前に CSM_SUMMARY を自動生成し、HISTORY.md に記録。作業履歴がセッション跨ぎでも失われません。</p>
-
-		</div>
-
-		<div class="step-card">
-
-			<h4>🏗 extension.ts を分割</h4>
-
-			<p>2,776 行 → 347 行に圧縮し、<code>services/</code> と <code>commands/</code> に機能別分離。保守性が大幅に向上。</p>
-
-		</div>
-
-	</div>
-
-
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">v0.4.3 で追加</h4>
-
-	<div class="step-grid">
-
-		<div class="step-card">
-
-			<h4>🪟 Windows <code>.cmd</code> EINVAL 回避</h4>
-
-			<p>Node.js CVE-2024-27980 対応。<code>claude.cmd</code> ラッパーを経由せず、<code>cli.js</code> を <code>node</code> で直接起動することで起動失敗を解消。</p>
-
-		</div>
-
-		<div class="step-card">
-
-			<h4>🔗 他プロジェクトのセッションタイトル解決</h4>
-
-			<p>グローバルエージェントを別ワークスペースから見てもセッションタイトルが正しく表示されるようになりました。</p>
-
-		</div>
-
-		<div class="step-card">
-
-			<h4>📁 <code>workDir</code> への自動 cd</h4>
-
-			<p><code>/csm-ask-agent</code> の <code>--resume</code> がセッション作成時と同じ cwd で動くよう、エージェントの <code>workDir</code> に自動で cd します。</p>
-
-		</div>
-
-		<div class="step-card">
-
-			<h4>🩹 空 <code>sessionId</code> 自動クリーンアップ</h4>
-
-			<p>起動時のマイグレーションで、壊れた紐づけ（空 sessionId）を自動修復します。</p>
-
-		</div>
-
-	</div>
-
-
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">v0.4.4 で追加</h4>
-
-	<div class="step-grid">
-
-		<div class="step-card">
-
-			<h4>⚡ Claude Code v2.1.113 対応</h4>
-
-			<p><code>claude.exe</code> ネイティブバイナリを優先起動。見つからない場合は <code>cli.js</code> にフォールバックするため、旧環境でも動作します。</p>
-
-		</div>
-
-		<div class="step-card">
-
-			<h4>🗂 「Claude で開く（IDE）」ワークスペース整合チェック</h4>
-
-			<p>セッション作成時の cwd と現 VS Code ワークスペースの不一致を検出し、<strong>「そのフォルダを開く／ワークスペースに追加／このまま開く」</strong>の3択を提示。意図しないフォルダで再開する事故を防止。</p>
-
-		</div>
-
-		<div class="step-card">
-
-			<h4>⏱ サブエージェント 10 分タイムアウト対応</h4>
-
-			<p>Claude Code v2.1.113+ の仕様に合わせ、<code>taskErrorThreshold</code>（既定 30 分）を追加。stalled が長時間続くと自動で error に昇格します。</p>
-
-		</div>
-
-		<div class="step-card">
-
-			<h4>🐞 エラー自動収集＆不具合報告</h4>
-
-			<p><code>unhandledRejection</code> / <code>uncaughtException</code> を <code>~/.claude/csm-errors.log</code> に記録。コマンド「不具合を報告（GitHub Issue 作成）」で、本文にエラーサマリーを添えた Issue URL が自動生成されます。</p>
-
-		</div>
-
-		<div class="step-card">
-
-			<h4>🔗 新規登録後に紐づけピッカーへ誘導</h4>
-
-			<p>v0.4.3 までの「自動セッション作成」は<strong>廃止</strong>。登録直後に既存セッションの紐づけピッカーが開き、ユーザーが明示的に選択します。</p>
-
-		</div>
-
-		<div class="step-card">
-
-			<h4>🆚 IDE / ターミナルの使い分けを整理</h4>
-
-			<p>グローバル＋使い捨てエージェントは<strong>ターミナル</strong>向け、プロジェクト＋固定セッションは<strong>IDE</strong>向け、とコマンドメニューも整理されました。</p>
-
-		</div>
-
-	</div>
-
-
-
-	<div class="tip">
-
-		<strong>詳細は：</strong>各機能の詳細は後続のセクションで触れています。特にセクション 6（エージェント管理）・セクション 11（運用ガイド）・セクション ⓣ（トラブルシューティング）に最新情報がまとまっています。
 
 	</div>
 
@@ -1348,7 +1162,7 @@
 
 			<div style="color: #888; font-size: 11px; margin-top: 8px;">
 
-				Ｆ=Fable 5　Ｏ=Opus　Ｓ=Sonnet　Ｈ=Haiku　１=1M コンテキスト　｜　件数は5桁右揃え　｜　リネーム時は元メッセージをdescriptionに表示
+				Ｆ=Fable　Ｏ=Opus　Ｓ=Sonnet　Ｈ=Haiku　１=1M コンテキスト　｜　件数は5桁右揃え　｜　リネーム時は元メッセージをdescriptionに表示
 
 			</div>
 
@@ -1672,7 +1486,7 @@
 
 <div class="section">
 
-	<div class="section-title" id="sec-viewer"><span class="num">5</span>会話ビューワー（v0.5.20 で高速化）</div>
+	<div class="section-title" id="sec-viewer"><span class="num">5</span>会話ビューワー</div>
 
 
 
@@ -1684,7 +1498,7 @@
 
 	<h4 style="color: #d97757; margin: 24px 0 12px;">遅延読み込みで大容量セッションも高速起動</h4>
 
-	<p>v0.5.20 から、初期表示は<strong>末尾 N 件だけ</strong>を描画するようになりました（既定 200 件、設定 <code>claudeManager.preview.initialMessages</code>）。数百 MB の JSONL でも体感 1 秒以内で開きます。</p>
+	<p>初期表示は<strong>末尾 N 件だけ</strong>を描画します（既定 200 件、設定 <code>claudeManager.preview.initialMessages</code>）。数百 MB の JSONL でも体感 1 秒以内で開きます。</p>
 
 	<ul style="margin: 12px 0 12px 24px;">
 
@@ -1706,7 +1520,7 @@
 
 
 
-	<h4 style="color: #d97757; margin: 24px 0 12px;">ヘッダ 2 ボタン（v0.5.19）</h4>
+	<h4 style="color: #d97757; margin: 24px 0 12px;">ヘッダ 2 ボタン</h4>
 
 	<ul style="margin: 12px 0 12px 24px;">
 
@@ -1846,17 +1660,17 @@
 
 			<h4>モデル（CLI標準）</h4>
 
-			<p><code>model</code> フィールド。選択肢（v0.5.14 で Fable 5 を解禁、エイリアス方式に統一）：</p>
+			<p><code>model</code> フィールド。選択肢（エイリアス方式）：</p>
 
 			<ul style="font-size: 12px; margin: 6px 0 0 16px; line-height: 1.8;">
 
-				<li><span class="badge badge-fable">fable</span> — Claude Fable 5（最上位、Opus と同格）</li>
+				<li><span class="badge badge-fable">fable</span> — Fable（最新世代、最上位・Opus と同格）</li>
 
-				<li><span class="badge badge-fable-1m">fable-1m</span> — Fable 5 + 1M コンテキスト（frontmatter は <code>fable[1m]</code>）</li>
+				<li><span class="badge badge-fable-1m">fable-1m</span> — Fable + 1M コンテキスト（frontmatter は <code>fable[1m]</code>）</li>
 
-				<li><span class="badge badge-opus">opus</span> — Claude Opus 4.8</li>
+				<li><span class="badge badge-opus">opus</span> — Opus（最新世代）</li>
 
-				<li><span class="badge badge-opus-1m">opus-1m</span> — Opus 4.8 + 1M コンテキスト（frontmatter は <code>opus[1m]</code>）</li>
+				<li><span class="badge badge-opus-1m">opus-1m</span> — Opus + 1M コンテキスト（frontmatter は <code>opus[1m]</code>）</li>
 
 				<li><span class="badge badge-sonnet">sonnet</span> — Claude Sonnet（最新世代）</li>
 
@@ -1870,7 +1684,7 @@
 
 			<p style="margin-top: 8px; color: var(--muted); font-size: 12px;">💡 frontmatter にはエイリアス（<code>fable</code>, <code>opus[1m]</code> 等）を書けば、Claude Code が起動時に最新世代のフルモデルIDへ解決します。</p>
 
-			<p style="margin-top: 8px; color: #e57373; font-size: 12px;">⚠️ v0.5.14 変更: 旧「Sonnet 4.5 の旧 <code>sonnet[1m]</code> 回避」ガイダンスは撤回。Sonnet の世代が更新されたため <code>sonnet[1m]</code> エイリアスは最新の Sonnet に解決されます。</p>
+			<p style="margin-top: 8px; color: #888; font-size: 12px;">※ <code>sonnet[1m]</code> エイリアスは最新の Sonnet に解決されます。</p>
 
 		</div>
 
@@ -2067,6 +1881,16 @@
 
 	</div>
 
+	<h4 style="color: #d97757; margin: 24px 0 12px;">🟢 ライブ状態ビュー</h4>
+	<p>「👤 エージェント」コンテナ内の <b>ライブ状態</b> ビューは、稼働中のエージェントを <b>エージェント別 2 階層ツリー</b>で表示します:</p>
+	<ul style="margin: 12px 0 12px 24px;">
+		<li><b>ルート</b> — <code>sessionId</code> で紐付いた各エージェント（稼働セッションが 1 本でもあるもの）</li>
+		<li><b>直下</b> — そのエージェントで動いている複数セッション（別窓・別ワークツリー等）</li>
+		<li><b>未定義（N）グループ</b> — CSM 未登録 or <code>sessionId</code> 未紐付けの稼働セッションをまとめて集約。設定 <code>claudeManager.agents.showUnregisteredLive</code>（既定 ON）で表示切替</li>
+		<li><b>経過時間</b> — <code>sessions/*.json</code> の <code>startedAt</code> から算出</li>
+	</ul>
+	<p style="color: #888; font-size: 12px;">※ エージェント一覧は初期表示を高速化するため、他プロジェクトのセッションタイトルなど重い解決は後追いで反映されます。</p>
+
 </div>
 
 
@@ -2079,53 +1903,44 @@
 
 <div class="section">
 
-	<div class="section-title"><span class="num">7</span>エージェント組織図（v0.5.23 全面リデザイン）</div>
+	<div class="section-title"><span class="num">7</span>エージェント組織図</div>
 
 
 
 	<p>登録済みエージェントを<strong>組織図として視覚的に表示</strong>。<code>agents/*.md</code> の <code>parentAgent</code> フィールドから親子関係を自動構築し、動作状態・モデルを一目で把握。</p>
 
-	<h4 style="color: #d97757; margin: 24px 0 12px;">v0.5.23 リデザイン</h4>
+	<h4 style="color: #d97757; margin: 24px 0 12px;">メインモード: Obsidian 風力学グラフ</h4>
 	<ul style="margin: 12px 0 12px 24px;">
-		<li><b>メイン: Obsidian 風力学グラフ</b> — Canvas 自前実装、ダーク固定の宇宙感 UI。ノード大きさ = 部下数 + 稼働ボーナス、色 = モデル、稼働中はパルス。ドラッグ再配置・ホバー減光対応。</li>
-		<li><b>サブ: 階層 / グループ</b> — ツールバー左のセグメントで切替。階層はカード階層、グループは部署別 / モデル別 / 稼働状態別のチップ切替。VS Code テーマ追従。</li>
-		<li><b>連携トグル</b> — <code>/csm-ask-agent</code> の送信履歴（<code>~/.claude/csm-collab-log.jsonl</code>、直近 7 日）を金色点線で重ね描き。指揮系統（実線）と実際の仕事の流れ（点線）のズレを可視化。</li>
+		<li><b>Canvas 自前実装、ダーク固定の宇宙感 UI</b> — ノード大きさ = 部下数 + 稼働ボーナス、色 = モデル、稼働中はパルス。ドラッグ再配置・ホバーで隣接以外を減光。</li>
+		<li><b>ズーム / パン / フィット</b> — ホイールでカーソル基点ズーム（0.2〜4.0x、トラックパッドピンチも対応）、背景ドラッグでパン、ダブルクリック or ⤢ ボタンで全体フィット。ツールバーに ± / ⤢ ボタン、右下に倍率バッジ。ラベルサイズはズームに反比例して自動補正。</li>
+		<li><b>親→子矢印</b> — 親子エッジの子側に小さな三角矢印を付与し、指揮系統の方向を可視化。連携（金色点線）と形状・色で区別。</li>
+		<li><b>連携トグル</b> — <code>/csm-ask-agent</code> の送信履歴（<code>~/.claude/csm-collab-log.jsonl</code>、直近 7 日）を金色点線で重ね描き。指揮系統と実際の仕事の流れのズレを可視化。</li>
 		<li><b>ワークスペース減光</b> — 現ワークスペース外のエージェントは既定で減光。「他プロジェクトを隠す」で完全非表示化も可能。</li>
-		<li><b>Cytoscape / ELK 依存を撤去</b>。旧「関係」「グループ」の真っ暗バグは実装ごと消滅。</li>
 	</ul>
 
-	<h4 style="color: #d97757; margin: 24px 0 12px;">v0.5.25 グラフ操作（ズーム / パン / フィット）</h4>
-	<p>エージェントが増えてもカオスにならないよう、グラフモードに <strong>ホイールズーム + 背景ドラッグパン + 全体フィット</strong> を追加しました。</p>
+	<h4 style="color: #d97757; margin: 24px 0 12px;">サブモード: 階層 / グループ</h4>
 	<ul style="margin: 12px 0 12px 24px;">
-		<li><b>ホイールでカーソル基点ズーム</b> — マウスホイール（下=拡大縮小）でカーソル下のワールド点が動かないように <code>panX/panY</code> を補正しながらズーム。ズーム範囲は <strong>0.2〜4.0x</strong>。トラックパッドのピンチジェスチャも同じくズームとして届きます（ブラウザが <code>ctrlKey=true</code> 付き wheel として届けるため）。</li>
-		<li><b>背景ドラッグでパン</b> — 何も無い所を左ドラッグでスクロール。<b>ノードの上を左ドラッグ</b>すると従来通りノード移動（自動判定）。</li>
-		<li><b>ダブルクリック or ⤢ボタンで全体フィット</b> — 表示中の全ノードが余白 40px の内側に収まるよう <code>zoom/pan</code> を再設定。</li>
-		<li><b>ツールバー ＋ / − / ⤢ ボタン</b> — 画面中央基点でズームイン / ズームアウト / フィット。マウスに手を伸ばさずキーボード操作でボタンにフォーカス→Enter でも可。</li>
-		<li><b>ズーム倍率バッジ</b>（右下）— 現在の倍率を <code>120%</code> の形式で常時表示（グラフモード時のみ）。</li>
-		<li><b>検索センタリングも viewport pan で実装</b> — 検索ヒット時は該当ノードを画面中央へ pan し、現在のズームが 1 未満なら 1 に軽くズームイン。旧 v0.5.23 の「ノード座標を強制移動」から改善。</li>
-		<li><b>ラベルは自動で読みやすさ補正</b> — ズーム倍率に反比例してフォントサイズを補正するため、極端にズームアウトしても文字が潰れず、極端にズームインしても文字が巨大化しない。</li>
+		<li><b>階層</b> — ファイルツリー / Obsidian アウトライン風の縦積み + インデント + ▶/▼ 折りたたみ。既定は上位 2 階層まで展開。VS Code テーマ追従。</li>
+		<li><b>グループ</b> — 部署別 / モデル別 / 稼働状態別のチップ切替で再クラスタリング。</li>
 	</ul>
-	<p style="color: #888; font-size: 12px;">※ 階層 / グループのサブモードではズームコントロールと倍率バッジは非表示になります（HTML/CSS ベースのモードには不要のため）。</p>
+	<p style="color: #888; font-size: 12px;">※ 階層 / グループではズームコントロールと倍率バッジは非表示になります。</p>
 
-	<h4 style="color: #d97757; margin: 24px 0 12px;">v0.5.26 組織図の整理（グローバル除外 / ルート絞り込み / 階層再設計 / 線視認性）</h4>
-	<p>複数プロジェクトのエージェントが 1 枚に同居してカオスになる問題と、v0.5.23 リデザイン時に混入していたグローバルエージェント表示バグに対応しました。</p>
+	<h4 style="color: #d97757; margin: 24px 0 12px;">絞り込み・フィルタ</h4>
 	<ul style="margin: 12px 0 12px 24px;">
-		<li><b>グローバルエージェントを既定で除外</b>（バグ修正）— <code>parentAgent</code> 未設定 &amp; <code>showInOrgChart</code> 未指定のグローバル汎用エージェント（<code>qa</code> / <code>doc-writer</code> / <code>researcher</code> 等）を組織図の全モード（グラフ / 階層 / グループ）から除外。ツールバーの <b>「グローバルも表示」トグル</b> or 設定 <code>claudeManager.orgChart.showGlobal</code> で ON にできます。</li>
-		<li><b>ルート絞り込みセレクタ</b> — ツールバーの <b>「ルート」</b> セレクタで最上位エージェント（<code>director</code> / <code>Curtain_leader</code> / <code>ponta</code> 等）配下だけに絞れます。「すべて」も選択肢。設定 <code>claudeManager.orgChart.defaultRoot</code> で永続化されます。</li>
-		<li><b>階層モードを縦型インデントツリーに全面差し替え</b>（ファイルツリー / Obsidian アウトライン風）— カード横並びの横スクロール地獄を解消。各ノードに <b>▶ / ▼</b> トグルを付けて折りたたみ可能。既定では上位 2 階層まで展開。行本体クリックはこれまで通り履歴プレビュー。</li>
-		<li><b>線の視認性 UP + 親→子矢印</b> — グラフモードの親子エッジを太く・明るく、方向がわかる小さな三角矢印を子側に付与。連携（金色点線）と形状・色で区別できます。階層モードの縦罫線も太くコントラスト UP。</li>
+		<li><b>ルートセレクタ</b> — ツールバーで最上位エージェント配下のみに絞り込み。「すべて」も選択肢。設定 <code>claudeManager.orgChart.defaultRoot</code> で永続化。</li>
+		<li><b>グローバルも表示トグル</b> — <code>parentAgent</code> 未設定のグローバル汎用エージェント（<code>qa</code> / <code>doc-writer</code> 等）は既定で組織図から除外。トグル or <code>claudeManager.orgChart.showGlobal</code> で ON。</li>
+		<li><b>検索ボックス</b> — 名前・役割で高速あいまい検索。グラフモードでは一致ノードをセンタリング。</li>
+		<li><b>凡例チップ</b> — Fable / Opus / Sonnet / Haiku / 稼働中 をクリックで該当以外を半透明化。</li>
 	</ul>
-	<p style="color: #888; font-size: 12px;">※ グローバル / ルート / モード変更はいずれも設定に自動保存され、次回パネル起動時に再現されます。</p>
+	<p style="color: #888; font-size: 12px;">※ ルート / モード / トグルの状態は設定に自動保存され、次回パネル起動時に再現されます。</p>
 
-	<h4 style="color: #d97757; margin: 24px 0 12px;">エージェント基本情報 + Claude で開くの新ウィンドウ起動（v0.5.27 → v0.5.29 で全経路統一）</h4>
-	<p>エージェントプレビューの取り回しを強化 + <b>v0.5.29 で全『Claude で開く』ボタンを共通ヘルパーに統一</b>し、どこから開いても対象フォルダがワークスペース外なら自動で新しい VS Code ウィンドウを起動するようになりました。</p>
+	<h4 style="color: #d97757; margin: 24px 0 12px;">エージェント基本情報 + 「Claude で開く」で新ウィンドウ起動</h4>
+	<p>エージェントプレビューの基本情報に <b>フォルダ行</b> を追加。クリックで OS のファイルエクスプローラで開きます。「Claude で開く」ボタン（拡張 UI で開く経路全 7 箇所: エージェント管理右クリック / プレビュー ▶ / 会話一覧 / ライブ状態未定義 / オーケストレーション / 組織図ノード / 会話ビューワーヘッダ ▶）で対象フォルダがワークスペース外なら <b>自動で新しい VS Code ウィンドウを起動</b>してから復元します。</p>
 	<ul style="margin: 12px 0 12px 24px;">
-		<li><b>基本情報に「フォルダ」行を追加</b>（v0.5.27）— <code>agent.workDir</code> をクリック可能なリンクで表示。クリックで <b>OS のファイルエクスプローラ</b>（Windows: エクスプローラ / macOS: Finder / Linux: ファイルマネージャ）が起動して対象フォルダを開きます。<code>workDir</code> 未設定なら「（未設定）」表示（リンクにしない）。</li>
-		<li><b>Claude で開くが新ウィンドウを自動起動</b>（v0.5.27）— セッション作成時 <code>cwd</code>（または <code>agent.workDir</code>）が現在のワークスペース群のいずれにも包含されていない場合、対象フォルダを <b>新しい VS Code ウィンドウ</b>で自動的に開いてから、Claude Code の URI ハンドラでセッションを復元します。設定 <code>claudeManager.agent.openInNewWindowWhenFolderMismatch</code>（既定 ON）で ON/OFF 可能。</li>
-		<li><b>v0.5.29 で全 7 経路に統一</b> — エージェント管理右クリック / エージェントプレビュー ▶ / 会話一覧 / ライブ状態未定義 / オーケストレーション / 組織図ノード / 会話ビューワーヘッダ ▶ ボタン — どこから開いても同じ挙動。v0.5.27 まではエージェント管理右クリック 1 箇所だけの対応でした。</li>
-		<li><b>タイミング依存の注意</b> — 新ウィンドウ起動時は拡張ホストが再起動するため、URI 送信は約 1.5 秒遅らせたベストエフォート実装です。自動復元が届かなかった場合は、開いた先のウィンドウで CSM のライブ状態から再度「Claude で開く」を押してください（案内メッセージも表示されます）。</li>
+		<li>設定 <code>claudeManager.agent.openInNewWindowWhenFolderMismatch</code>（既定 ON）で ON/OFF 可能。</li>
+		<li>新ウィンドウ起動時は拡張ホスト再起動のため、URI 送信は約 1.5 秒遅らせたベストエフォート。自動復元されない場合は、開いた先で再度「Claude で開く」を押してください（案内メッセージも表示されます）。</li>
 	</ul>
-	<p style="color: #888; font-size: 12px;">※ 現ワークスペースに包含済み or 設定 OFF なら従来通り URI ハンドラのみで即座に開きます（新ウィンドウは起動しない）。※ ターミナルの <code>claude --resume</code>（『CLI で開く』ボタン等）は対象外です — こちらはターミナル起動なので新ウィンドウ概念が無く、既存の cwd 指定で動きます。</p>
+	<p style="color: #888; font-size: 12px;">※ ターミナルの <code>claude --resume</code>（『CLI で開く』ボタン等）は対象外です。</p>
 
 
 
@@ -2209,7 +2024,7 @@
 
 	<div class="tip">
 
-		<strong>組織図の操作：</strong>各カードの📋でセッションIDコピー、▶で会話履歴プレビュー、⚡でClaude Codeで直接開く。
+		<strong>グラフモードの操作：</strong>ノードのドラッグで再配置、ホバーで隣接以外を減光、ノードクリックで対応するエージェントプレビューまたは会話履歴を表示、ダブルクリック（または ⤢ ボタン）で全体フィット、ホイールでカーソル基点ズーム、背景ドラッグでパン。階層モードでは ▶/▼ で折りたたみ、行クリックで履歴プレビューを表示できます。
 
 	</div>
 
@@ -2663,7 +2478,7 @@
 
 	<div class="tip">
 
-		<strong>モデルの使い分け:</strong> 最上位の判断・複雑な設計 → <code>fable</code>（v0.5.14〜） / <code>opus</code> / 通常の開発・調査 → <code>sonnet</code> / 定型・軽量タスク → <code>haiku</code>（コスト効率◎）。大規模文脈が必要な場合は <code>&lt;model&gt;[1m]</code>（例: <code>fable[1m]</code> / <code>opus[1m]</code> / <code>sonnet[1m]</code>）でエイリアス指定できます
+		<strong>モデルの使い分け:</strong> 最上位の判断・複雑な設計 → <code>fable</code> / <code>opus</code> / 通常の開発・調査 → <code>sonnet</code> / 定型・軽量タスク → <code>haiku</code>（コスト効率◎）。大規模文脈が必要な場合は <code>&lt;model&gt;[1m]</code>（例: <code>fable[1m]</code> / <code>opus[1m]</code> / <code>sonnet[1m]</code>）でエイリアス指定できます
 
 	</div>
 
@@ -3193,7 +3008,7 @@
 
 			<h4>推論努力レベル（Effort）</h4>
 
-			<p>Low / Medium / High / XHigh / Max の5段階。<br>Max は <strong>Opus / Fable 系専用</strong>（他モデルではグレーアウト、v0.5.14 で Fable 5 を追加）。</p>
+			<p>Low / Medium / High / XHigh / Max の 5 段階。<br>Max は<strong>全モデルで選択可能</strong>ですが、コスト大のため Opus / Fable 系での利用を推奨します。</p>
 
 		</div>
 
@@ -3228,7 +3043,7 @@
 
 	<div class="tip">
 
-		<strong>モデル別UI連動：</strong>モデルを変更すると、使えない項目が自動的にグレーアウトします。Fable / Opus: 全項目有効（Effort Max を含む） / Sonnet: Effort Max のみ無効 / Haiku: Effort Max が無効。(v0.5.14 で Fable 5 を追加)
+		<strong>Effort について：</strong>Effort は全モデルで選択可能です。Max はコスト大のため Opus / Fable 系での利用を推奨します（フォームでも上位モデル推奨と表示されます）。
 
 	</div>
 
@@ -3483,104 +3298,6 @@
 	<div class="tip">
 		<strong>PreCompact フック連携：</strong>セッションがコンパクトされる直前に CSM_SUMMARY 形式の3行要約が <code>HISTORY.md</code> に追記されます。セッションをまたいだ作業経緯を確認する際に活用してください。
 	</div>
-
-</div>
-
-
-
-<!-- ============================================ -->
-<!-- v0.5.14〜v0.5.21 新機能ハイライト -->
-<!-- ============================================ -->
-
-<div class="section">
-
-	<div class="section-title"><span class="num">★</span>v0.5.14 〜 v0.5.21 新機能ハイライト</div>
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">ライブ状態ツリー化 + 誤紐付け撤去（v0.5.24）</h4>
-	<p>ライブ状態ビューを<strong>フラットリスト → エージェント別 2 階層ツリー</strong>に変更しました:</p>
-	<ul style="margin: 12px 0 12px 24px;">
-		<li><b>ルート</b> — 各エージェント（本物 <code>sessionId</code> 紐付けあり）を <code>displayName</code> + 「稼働 N」で表示。稼働ゼロのエージェントは非表示。</li>
-		<li><b>直下</b> — そのエージェントで動いている複数セッション（別窓・別ワークツリー・複数プロジェクト等）。同じエージェントが並列に動いていることが一目で分かります。</li>
-		<li><b>『未定義（N）』グループ</b> — CSM 未登録・sessionId 未紐付けの稼働セッションをまとめて集約。設定 <code>claudeManager.agents.showUnregisteredLive</code>（旧: フラット時代の未登録行表示 ON/OFF）を『未定義グループ ON/OFF』の意味に統合。</li>
-		<li><b>『(推定)』ラベル撤去</b> — 旧 v0.5.23 まで <code>cwd</code>（作業ディレクトリ）で推測マッチングしていましたが、同一 <code>workDir</code> を共有する複数エージェント間で <em>ユーザーの通常チャット窓 N 本すべてが『取締役(推定)』『Daros開発部長(推定)』等に誤って貼り付く</em> 実害があったため撤去。エージェント名を付けるのは本物の <code>sessionId</code> 紐付けが取れているときだけになりました。</li>
-		<li><b>部門長</b> — 配下エージェントを持つエージェント（<code>parentAgent</code> リンクを受けている側）は tooltip に「配下エージェント計 M」を追記。</li>
-		<li><b>経過時間</b> — <code>sessions/*.json</code> の <code>startedAt</code> から計算（v0.5.22 のオーケストレーションビューと同じロジック）。startedAt 不明時は非表示。</li>
-	</ul>
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">Fable 5 モデル解禁（v0.5.14）</h4>
-	<p>旧 v0.5.6 〜 v0.5.13 で「組織方針で非選択」として除外していた <strong>Fable 5</strong> を第一級モデルとして復活しました。表示文字は <strong>Ｆ</strong>、色は金 <code>#ffd54f</code>。<code>effort: max</code> も選択可能です。</p>
-	<p style="color: #888;">Fable 5 に関するバグ修正（<code>claude-fable-5[1m]</code> の判定順序、<code>fable → opus</code> のサイレント書き換え）も同時に対応済み。</p>
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">セッションビューワーの高速化（v0.5.20）</h4>
-	<p>末尾遅延読み込み + tail リーダー + 巨大出力の抑制で、数百 MB の JSONL でも体感 1 秒以内で開くようになりました。詳細は <a href="#sec-viewer">セクション 5「会話ビューワー」</a> を参照してください。</p>
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">エージェント一覧の起動高速化（v0.5.30）</h4>
-	<p>エージェント管理ツリー（👤 エージェント）の初期表示を <strong>2 段レンダリング</strong>にして即時化しました:</p>
-	<ul style="margin: 12px 0 12px 24px;">
-		<li><b>高速パス</b> — メモリ上のセッションタイトルだけで一覧を即座に構築して表示。<code>~/.claude/projects/</code> 全走査 + JSONL 先頭 256KB 読みという重い処理は<b>初期表示ではスキップ</b>。</li>
-		<li><b>遅延パス</b> — 表示後、他プロジェクトのセッションタイトル解決を非同期実行し、結果が揃ったところで 1 度だけ再描画。未解決 sid は「解決試行済み」マーカーで記録して<b>無限リフレッシュを防止</b>。</li>
-		<li><b>キャッシュ延長</b> — <code>agentFileManager</code> のエージェント定義キャッシュを 2 秒 → 10 秒に延長。拡張内での追加/削除/編集は即反映されるため UX を壊さない。</li>
-	</ul>
-	<p style="color: #888; font-size: 12px;">※ ローカルセッションのタイトルは即座に、他プロジェクトのタイトルは数百ミリ秒〜数秒遅れて追いつきます（環境の JSONL サイズによる）。</p>
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">エージェント検索（v0.5.17）</h4>
-	<p>コマンド <code>Claude: エージェントを検索</code> で、名前 / 表示名 / 役割 / モデル / 親部署をあいまい検索し、選択でツリー上の該当ノードに自動ジャンプ + プレビューを起動します。エージェント管理ビューのツールバー <span style="color: #64b5f6;">$(search)</span> からも起動可能。</p>
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">エージェント表示のカスタマイズ（v0.5.17 / v0.5.18）</h4>
-	<ul style="margin: 12px 0 12px 24px;">
-		<li><strong>グループ表示切替</strong> — コマンド <code>Claude: エージェントのグループ表示を切替</code> で <strong>組織図 / モデル別 / 状態別 / フラット</strong> の 4 モードを切替可能。<code>claudeManager.agents.defaultGroupMode</code> で永続化。</li>
-		<li><strong>稼働中のみ表示</strong> — ツールバーの <span style="color: #64b5f6;">$(filter)</span> トグル。<code>claudeManager.agents.activeOnly</code> で永続化。</li>
-		<li><strong>稼働数バッジ</strong> — 「エージェント管理」「ライブ状態」ビューアイコンに稼働中エージェント数を表示。</li>
-		<li><strong>『対話中』プレフィックス</strong> — <code>[対話中]</code> / <code>[5分]</code> でライブ状態を即視認。</li>
-		<li><strong>起動時の展開状態</strong> — <code>claudeManager.agents.expandMode</code>（<code>all</code> / <code>active-branches</code>（既定）/ <code>top-level</code>）。</li>
-	</ul>
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">ステータスバー表示モード（v0.5.17）</h4>
-	<p>設定 <code>claudeManager.usage.statusBarStyle</code> で以下の 3 スタイルを切替できます:</p>
-	<ul style="margin: 12px 0 12px 24px;">
-		<li><strong>full</strong>: <code>5% 4.5h / 7% 7d / S 3% 5d20h / O 20% 5d10h</code></li>
-		<li><strong>compact</strong>: <code>5% / 7% / S 3% / O 20%</code>（リセット時刻を省略）</li>
-		<li><strong>max-only</strong>: 最逼迫の 1 枠のみ表示（例: <code>O 20% 5d10h</code>）</li>
-	</ul>
-	<p style="color: #888;">ステータスバーをクリックして表示される利用率メニューからも切替できます。</p>
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">日本語ラベル統一（v0.5.17）</h4>
-	<p>UI 表示の英日混在を解消しました:</p>
-	<ul style="margin: 12px 0 12px 24px;">
-		<li>ライブプレフィックス <code>[Open]</code> → <code>[対話中]</code></li>
-		<li>ライブ状態ビューの <code>[running] / [blocked] / [done]</code> → <code>[稼働] / [承認待ち] / [完了]</code></li>
-		<li>サブエージェントの <code>(no description)</code> → <code>（説明なし）</code></li>
-	</ul>
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">セッション一覧の情報密度（v0.5.17）</h4>
-	<ul style="margin: 12px 0 12px 24px;">
-		<li><strong>description 構成のカスタマイズ</strong> — <code>claudeManager.sessions.descriptionFields</code> で <code>live / agent / originalMsg / time / model / tags</code> の順序・要素を配列指定。</li>
-		<li><strong>日付グループ初期展開</strong> — <code>sessions.expandRecentDateGroupsOnly</code>（既定 ON）で「今日・昨日」のみ展開。</li>
-		<li><strong>ファイルサイズ列</strong> — <code>sessions.showFileSize</code>（既定 <code>count-sort-only</code>）で会話件数ソート時のみ表示。</li>
-	</ul>
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">Get Started ウォークスルー（v0.5.18）</h4>
-	<p>コマンドパレットで <code>Get Started with Claude Session Manager</code> を実行すると、5 ステップの初期セットアップが開きます:</p>
-	<ol style="margin: 12px 0 12px 24px;">
-		<li>Claude Code の確認</li>
-		<li>取締役を登録</li>
-		<li>/csm-ask-agent スキルをインストール</li>
-		<li>エージェント監視を有効化</li>
-		<li>組織図を開いて確認</li>
-	</ol>
-	<p style="color: #888;">各ステップは対応コマンド実行または設定変更で自動的にチェック済みになります。セッション / メモリ / オーケストレーションの空ビューにもウェルカムメッセージが表示されます。</p>
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">アクティビティバー削減（v0.5.18）</h4>
-	<p>アクティビティバーを <strong>5 アイコンから 4 アイコン</strong>（💬 セッション / 👤 エージェント / 🧠 メモリ / 📁 プロジェクト）に整理しました。オーケストレーションビューはエージェントコンテナ内へ移設されています。</p>
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">組織図の強化（v0.5.18）</h4>
-	<ul style="margin: 12px 0 12px 24px;">
-		<li><strong>検索ボックス</strong> — 名前・役割で高速あいまい検索、一致ノードに <code>cy.animate fit</code> でズーム。</li>
-		<li><strong>凡例チップ</strong> — Fable / Opus / Sonnet / Haiku / 稼働中 をクリックで該当以外を半透明化。</li>
-	</ul>
-
-	<h4 style="color: #d97757; margin: 24px 0 12px;">タブバー非表示化（v0.5.17）</h4>
-	<p>設定 <code>claudeManager.ui.showTabBar</code>（既定 ON）でサイドバー上部のタブ行を OFF にできます。アクティビティバーと重複するケースで有用です。</p>
 
 </div>
 
