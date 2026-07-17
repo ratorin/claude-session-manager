@@ -1,5 +1,76 @@
 # 更新履歴
 
+## v0.5.30 (2026-07-16) — エージェント一覧の起動高速化（2 段レンダリング）
+
+### 🩹 背景
+
+ユーザー報告「エージェント管理ツリー（`claudeAgents`）の起動が遅い」。調査結果:
+
+- `agentTreeProvider.getChildren` が初回表示前に await していた最大の重石は **`resolveExternalSessionTitles`（`sessionLoader.ts:18`）**。他プロジェクトのセッションタイトルを解決するため `~/.claude/projects/` 全走査 + 各 JSONL 先頭 256KB 読み → 276MB 級 JSONL がある環境で初期表示を数百ミリ秒〜数秒ブロック。
+- 副次的に `agentFileManager.CACHE_TTL_MS = 2000`（2 秒）が短く、タブ切替や refresh のたびに 77 個の `.md` を再読込。
+
+### ⚡ (1) 2 段レンダリング化
+
+`getChildren` を **高速パス + 遅延パス** に分割:
+
+- **高速パス（同期表示）** — `getSessionsFn` の in-memory `titleMap` と provider 内の `titleEnrichment` キャッシュ（過去に解決済みの外部タイトル）だけで `AgentItem` を即構築して return。`resolveExternalSessionTitles` は**呼ばない**。ローカルに無いセッションのタイトルは初回は `undefined`（プレースホルダなし）で描画。
+- **遅延パス（後追い）** — return 直後に `scheduleTitleEnrichment` をファイア&フォアゲットで呼び、未解決 sid だけを非同期解決 → `titleEnrichment` に蓄積 → 変化があれば `_onDidChangeTreeData.fire(undefined)` を 1 回だけ発火 → 次回 `getChildren` は完全表示。
+
+### 🔒 (2) 無限リフレッシュ防止（二段防御）
+
+- **`enrichmentInProgress` フラグ** — 遅延解決の多重起動を抑止。
+- **not-found マーカー** — 解決したが見つからなかった sid は `titleEnrichment` に**空文字**で記録し、次回以降スキップ。
+- **`applyEnrichmentResult` の changed 判定** — 実際に値が変化した sid が 1 件でもあるときだけ true を返す（純関数、テスト X3 で担保）。not-found のみの結果は false → fire しない。
+
+### 🗄 (3) `agentFileManager` キャッシュ TTL を 2s → 10s に延長
+
+- **拡張内での変更は即反映される保証を維持** — `dataStore.addAgent` / `removeAgent` / `moveAgentScope` の 3 か所で `agentFileManager.invalidateCache()` を呼ぶ既存経路が生きている。
+- **エディタから `~/.claude/agents/*.md` を手編集した場合のみ最大 10 秒待つ** — この場合は元々 VS Code の refresh 運用を想定しているため許容範囲。
+
+### 🔧 (4) 純ロジック分離（テスト可能な形で）
+
+新設 `src/utils/agentTreeEnrichment.ts`:
+
+- `mergeTitleMaps(fast, enrichment)` — fast 優先、enrichment の空文字はスキップ
+- `computeMissingSessionIds(agents, titleMap, enrichmentMap)` — fast/enrichment のどちらにもない sid のみ返す（空文字＝解決試行済みもスキップ）
+- `applyEnrichmentResult(enrichmentMap, requestedIds, resolved)` — 解決結果をマージし変化を検出（無限リフレッシュ防止）
+
+全 3 関数 vscode 非依存、node 単体テスト可能。
+
+### 🧪 テスト（X1〜X8、8 件新規、合計 128 pass）
+
+- **X1** `mergeTitleMaps` — fast 優先、enrichment 補完、空文字スキップ
+- **X2** `computeMissingSessionIds` — fast/enrichment 両方チェック、重複排除、undefined/空文字スキップ
+- **X3** `applyEnrichmentResult` — 新規記録は空でも追加、変化した場合だけ true（無限リフレッシュ防止テスト）
+- **X4** `agentFileManager.CACHE_TTL_MS = 10_000` + v0.5.30 コメント + invalidateCache 保証
+- **X5** `agentTreeProvider` の `await resolveExternalSessionTitles` 出現は 1 回のみ、かつ fire-and-forget IIFE 内
+- **X6** `agentTreeEnrichment` から 3 純関数を import
+- **X7** `scheduleTitleEnrichment` に `enrichmentInProgress` の早期 return、finally での解除、`changed=true` のときだけ fire
+- **X8** `getChildren` 本体（同期パス）に `await resolveExternalSessionTitles` が現れない（getChildren 関数ブロックの静的抽出で厳密チェック）
+
+### 📖 ドキュメント
+
+- **CHANGELOG**: 本節を追加
+- **README.md**: 変更履歴に v0.5.30 追加
+- **guide.html**: 変更履歴に v0.5.30 追加
+
+### 検証
+
+- `npx tsc --noEmit` クリーン
+- `npm test`: **128 / 128 pass**（120 → 128、X1〜X8 追加）
+- `package.json` `0.5.29` → **`0.5.30`**。設定新設なし
+
+### 判断・見送り事項
+
+- **プレースホルダは `undefined`** — 「(読込中)」などの明示的な表示は見送り。理由は次の 2 点: (a) 短時間（数百ms〜数秒）で解決されるので視覚的ノイズになる、(b) `sessionTitle=undefined` の場合は既存の `AgentItem` 描画が「無ければ表示しない」既定挙動になるため、遅延解決で不意に文字列が出現するのは自然な体験になる。将来的にゆっくりした環境で「(読込中)」を出したい要望があれば別 Sprint。
+- **`titleEnrichment` の空文字マーカー方式** — Set + Map の 2 データ構造ではなく単一 Map で「値ありは解決成功」「空文字は解決試行済み・未発見」「未登録は未試行」の 3 状態を表現。シンプルさとメモリ効率を優先。
+- **`enrichmentInProgress` はグローバルロック** — 特定 sid だけ排他するより、単純な boolean で全体を排他する方が実装がシンプルで、正常系ではあまり衝突しない（getChildren 呼び出し頻度 vs 解決時間の比率）。次回起動時に未解決分が再試行される設計。
+- **CACHE_TTL_MS の 10 秒延長判断根拠** — VS Code の他拡張（GitLens 等）の frontmatter/metadata キャッシュも 5〜30 秒レンジ。10 秒は保守的な選択。dataStore 経由の変更は即反映されるので、拡張内 UX を壊さない。
+- **`_rootChildrenCache` の TTL（5 秒）は据え置き** — こちらは AgentTreeNode（vscode.TreeItem 派生）のインスタンスキャッシュで、`agentFileManager` の下層キャッシュとは別レイヤー。ROOT_CACHE_TTL_MS の 5 秒は「タブ切り替え時の連続 refresh 抑制」目的なので延長する必要なし。
+- **X5 テストで「count = 1」の判定を採用** — 単純な `doesNotMatch(/await resolveExternalSessionTitles/)` だと fire-and-forget IIFE 内の意図的な await も引っかけてしまう。「1 回のみ、かつ IIFE 内」の 2 段チェックで意図を明示。
+- **X8 テストで getChildren 関数ブロックを静的抽出** — 関数境界（`async getChildren(` から次の `\n\t}\n` パターン）でスライスして本体だけを検査。fire-and-forget IIFE を書いた別メソッド（`scheduleTitleEnrichment`）は検査対象外になる。
+- **getChildren 内の `dataStore.getAgents()` 複数回呼び出しは今回集約せず** — 既存 TTL キャッシュ（2s → 10s）で十分軽い。関数を跨いだリファクタは今回のスコープ外（getChildren の複数分岐がそれぞれ独立に await しているだけで、実質的に cached を返している）。将来のリファクタで helper に一本化する余地はあるが今回は最小変更を優先。
+
 ## v0.5.29 (2026-07-14) — 全『Claude で開く』ボタンの新ウィンドウ挙動を統一
 
 ### 🩹 背景

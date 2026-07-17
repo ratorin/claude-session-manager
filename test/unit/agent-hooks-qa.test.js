@@ -73,6 +73,7 @@ function loadFresh(tmpHome) {
 		sessionLoader: require(path.join(REPO, 'out', 'utils', 'sessionLoader')),
 		orgChartEngine: require(path.join(REPO, 'out', 'utils', 'orgChartEngine')),
 		collabLog: require(path.join(REPO, 'out', 'utils', 'collabLog')),
+		agentTreeEnrichment: require(path.join(REPO, 'out', 'utils', 'agentTreeEnrichment')),
 	};
 }
 
@@ -2076,4 +2077,148 @@ test('W8 resolveSessionCwd: 存在する JSONL の先頭 cwd を返す', async (
 	const r = await helper.resolveSessionCwd(sid);
 	assert.equal(r, 'c:/xampp/Project/csm', 'JSONL 先頭の cwd を取り出す');
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// X. v0.5.30 エージェント一覧の起動高速化（2 段レンダリング）
+// ════════════════════════════════════════════════════════════════════════════
+
+test('X1 agentTreeEnrichment.mergeTitleMaps: fast 優先、enrichment 補完、空文字はスキップ', () => {
+	const { agentTreeEnrichment } = loadFresh(setupTmpHome());
+	const { mergeTitleMaps } = agentTreeEnrichment;
+	const fast = new Map([['a', 'Alpha'], ['b', 'Beta']]);
+	const enrichment = new Map([['b', 'BetaFromExternal'], ['c', 'Charlie'], ['d', '']]);
+	const merged = mergeTitleMaps(fast, enrichment);
+	assert.equal(merged.get('a'), 'Alpha', 'fast のみのキー');
+	assert.equal(merged.get('b'), 'Beta', 'fast が enrichment を上書き（新鮮優先）');
+	assert.equal(merged.get('c'), 'Charlie', 'enrichment のみのキーは追加');
+	assert.equal(merged.has('d'), false, '空文字（not-found マーカー）は追加しない');
+	assert.equal(merged.size, 3);
+});
+
+test('X2 agentTreeEnrichment.computeMissingSessionIds: fast/enrichment のどちらにもない sid のみ返す', () => {
+	const { agentTreeEnrichment } = loadFresh(setupTmpHome());
+	const { computeMissingSessionIds } = agentTreeEnrichment;
+	const agents = [
+		{ sessionId: 'a' }, // fast にある
+		{ sessionId: 'b' }, // enrichment にある（空文字 = 解決試行済み）
+		{ sessionId: 'c' }, // どちらもない → missing
+		{ sessionId: 'd' }, // enrichment にある（値あり）
+		{ sessionId: undefined },
+		{ sessionId: '' },
+		{ sessionId: 'e' }, // どちらもない → missing
+		{ sessionId: 'c' }, // 重複 → 1 度だけ
+	];
+	const fast = new Map([['a', 'A']]);
+	const enrichment = new Map([['b', ''], ['d', 'D']]);
+	const missing = computeMissingSessionIds(agents, fast, enrichment).sort();
+	assert.deepEqual(missing, ['c', 'e']);
+});
+
+test('X3 agentTreeEnrichment.applyEnrichmentResult: 新規記録は空でも add、変化した場合だけ true', () => {
+	const { agentTreeEnrichment } = loadFresh(setupTmpHome());
+	const { applyEnrichmentResult } = agentTreeEnrichment;
+	// ケース 1: 全て新規、一部見つかる
+	{
+		const enrichment = new Map();
+		const resolved = new Map([['a', 'Alpha']]);
+		const changed = applyEnrichmentResult(enrichment, ['a', 'b'], resolved);
+		assert.equal(changed, true, '新規で値ありなら変化');
+		assert.equal(enrichment.get('a'), 'Alpha');
+		assert.equal(enrichment.get('b'), '', 'not-found は空文字で記録（次回スキップ用）');
+	}
+	// ケース 2: 全て新規、全て見つからず → not-found のみ追加 → changed=false（無限リフレッシュ防止）
+	{
+		const enrichment = new Map();
+		const resolved = new Map();
+		const changed = applyEnrichmentResult(enrichment, ['x', 'y'], resolved);
+		assert.equal(changed, false, '全部空文字なら changed=false（refresh を発火させない）');
+		assert.equal(enrichment.get('x'), '');
+		assert.equal(enrichment.get('y'), '');
+	}
+	// ケース 3: 既存値と同じ結果 → changed=false
+	{
+		const enrichment = new Map([['a', 'Alpha']]);
+		const resolved = new Map([['a', 'Alpha']]);
+		const changed = applyEnrichmentResult(enrichment, ['a'], resolved);
+		assert.equal(changed, false, '既存と同値なら false');
+	}
+	// ケース 4: 既存値と違う結果 → changed=true（sid のタイトル変更を捕捉）
+	{
+		const enrichment = new Map([['a', 'OldName']]);
+		const resolved = new Map([['a', 'NewName']]);
+		const changed = applyEnrichmentResult(enrichment, ['a'], resolved);
+		assert.equal(changed, true);
+		assert.equal(enrichment.get('a'), 'NewName');
+	}
+});
+
+test('X4 v0.5.30 agentFileManager: CACHE_TTL_MS が 10 秒に延長されている', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'agents', 'agentFileManager.ts'), 'utf-8');
+	assert.match(src, /CACHE_TTL_MS\s*=\s*10_000/, 'CACHE_TTL_MS = 10_000');
+	// コメントに v0.5.30 の言及があり、invalidateCache の存在も明記されていること
+	assert.match(src, /v0\.5\.30/, 'CACHE_TTL_MS 変更のコメント');
+	assert.match(src, /invalidateCache/, 'invalidateCache への言及（拡張内変更は即反映される保証）');
+});
+
+test('X5 v0.5.30 agentTreeProvider: getChildren から resolveExternalSessionTitles の await が撤去され、fire-and-forget IIFE のみに集約', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'providers', 'agentTreeProvider.ts'), 'utf-8');
+	// `await resolveExternalSessionTitles` の出現は 1 回のみ（=scheduleTitleEnrichment 内の IIFE）。
+	//   旧 v0.5.29 まではメイン getChildren + Global 分岐で計 2 回、直接 await していた。
+	const awaitMatches = src.match(/await\s+resolveExternalSessionTitles/g) || [];
+	assert.equal(awaitMatches.length, 1, `await resolveExternalSessionTitles の出現は 1 回のみ（実際: ${awaitMatches.length}）`);
+	// その 1 回は fire-and-forget IIFE（void (async () => ...) の中）にあること
+	assert.match(
+		src,
+		/void\s*\(\s*async\s*\(\s*\)\s*=>\s*\{[\s\S]{0,400}?await\s+resolveExternalSessionTitles/,
+		'唯一の await は void (async () => { ... }) IIFE 内',
+	);
+	// scheduleTitleEnrichment 経由（ファイア&フォアゲット）で呼ばれていること
+	assert.match(src, /scheduleTitleEnrichment/, 'scheduleTitleEnrichment メソッドがある');
+	assert.match(src, /enrichmentInProgress/, '二重起動防止フラグ');
+	assert.match(src, /titleEnrichment/, '解決結果キャッシュ');
+	// import はまだ必要（内部の scheduleTitleEnrichment で使う）
+	assert.match(src, /resolveExternalSessionTitles/, 'resolveExternalSessionTitles は import されている（内部で使用）');
+});
+
+test('X6 v0.5.30 agentTreeProvider: 純ロジック 3 関数を import している', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'providers', 'agentTreeProvider.ts'), 'utf-8');
+	assert.match(
+		src,
+		/import\s*\{[^}]*mergeTitleMaps[^}]*computeMissingSessionIds[^}]*applyEnrichmentResult[^}]*\}\s*from\s*['"]\.\.\/utils\/agentTreeEnrichment['"]/,
+		'agentTreeEnrichment から 3 純関数を import',
+	);
+});
+
+test('X7 v0.5.30 agentTreeProvider: scheduleTitleEnrichment は enrichmentInProgress で多重起動を防ぐ', () => {
+	const src = fs.readFileSync(path.join(REPO, 'src', 'providers', 'agentTreeProvider.ts'), 'utf-8');
+	// メソッド内で in-progress チェック
+	assert.match(
+		src,
+		/scheduleTitleEnrichment[\s\S]{0,400}?this\.enrichmentInProgress[\s\S]{0,80}?return/,
+		'enrichmentInProgress で早期 return する分岐',
+	);
+	// 完了後に finally で解除
+	assert.match(src, /finally\s*\{\s*this\.enrichmentInProgress\s*=\s*false/, 'finally で解除');
+	// 結果が changed のときだけ _onDidChangeTreeData.fire
+	assert.match(src, /if\s*\(\s*changed\s*\)\s*\{[\s\S]{0,200}?_onDidChangeTreeData\.fire/, 'changed=true のときだけ fire');
+});
+
+test('X8 v0.5.30 getChildren 本体が resolveExternalSessionTitles を await しない（同期パス保証）', () => {
+	// getChildren 本体（`async getChildren(...)` の宣言〜次のメソッド境界の間）を静的に抽出し、
+	// その内部に `await resolveExternalSessionTitles` が現れないことを厳密チェック。
+	const src = fs.readFileSync(path.join(REPO, 'src', 'providers', 'agentTreeProvider.ts'), 'utf-8');
+	const startIdx = src.indexOf('async getChildren(');
+	assert.ok(startIdx >= 0, 'getChildren の宣言が見つかる');
+	// 次に登場する「トップレベル関数境界っぽい」パターン（改行 + タブ 1 個 + `}` で該当ブロック終了）を探す。
+	//   もっと安全に: 次の `\n\t// ` コメント or `\n\t}` パターンを閉じ位置目安に。ざっくり `\n}\n` で切る。
+	const rest = src.slice(startIdx);
+	const endMatch = rest.match(/\n\t\}\n(?:\n|\t\/\/|\t\/\*|\}\n\n)/);
+	const body = endMatch ? rest.slice(0, endMatch.index) : rest;
+	assert.doesNotMatch(
+		body,
+		/await\s+resolveExternalSessionTitles/,
+		'getChildren 本体（同期パス）に await resolveExternalSessionTitles が無い',
+	);
+});
+
 

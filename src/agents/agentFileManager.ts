@@ -199,7 +199,12 @@ async function scanAgentsDir(dir: string, scope: 'global' | 'project'): Promise<
 }
 
 // TTLキャッシュ
-const CACHE_TTL_MS = 2000;
+// v0.5.30: 2s → 10s に延長（エージェント一覧の起動時に .md を何度も読み直すコストを削減）。
+//   ユーザー操作（追加/削除/編集）は dataStore 経由で invalidateCache() が呼ばれ即座に無効化される
+//   （dataStore.addAgent / removeAgent / moveAgentScope の 3 か所）ので、
+//   拡張内での変更は即反映される。エディタから直接 ~/.claude/agents/*.md を手編集した場合のみ
+//   最大 10 秒待つことになるが、これは元々明示的な refresh コマンド運用でも許容範囲。
+const CACHE_TTL_MS = 10_000;
 let cachedAgents: AgentDefinition[] | null = null;
 let cachedTimestamp = 0;
 
@@ -211,7 +216,7 @@ export function invalidateCache(): void {
 
 /**
  * 全エージェント定義を取得（グローバル + プロジェクト、プロジェクト優先）
- * TTLキャッシュ付き（2秒間有効）
+ * TTLキャッシュ付き（v0.5.30 以降は 10 秒間有効）
  */
 export async function getAllAgents(): Promise<AgentDefinition[]> {
 	const now = Date.now();

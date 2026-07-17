@@ -9,6 +9,7 @@ import { shouldShowInOrgChart, translateWorkDirPath } from '../utils/agentUtils'
 import { getModelChar } from '../models/modelCatalog';
 import { resolveExternalSessionTitles } from '../utils/sessionLoader';
 import { isBookmarked, addBookmark, removeBookmark } from '../services/bookmarkService';
+import { mergeTitleMaps, computeMissingSessionIds, applyEnrichmentResult } from '../utils/agentTreeEnrichment';
 
 type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem | SessionInjectInstallBannerItem | GroupNodeItem;
 
@@ -112,11 +113,51 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 	private _rootChildrenCache: { nodes: AgentTreeNode[]; ts: number } | undefined;
 	private readonly ROOT_CACHE_TTL_MS = 5000;
 
+	// v0.5.30: 2 段レンダリング用の遅延解決キャッシュ。
+	//   getChildren の高速パスからは resolveExternalSessionTitles を呼ばず、
+	//   このキャッシュ（+ getSessionsFn の in-memory titleMap）だけで即返す。
+	//   遅延パス（scheduleTitleEnrichment）で ~/.claude/projects/ 全走査 + JSONL 先頭 256KB 読みを
+	//   非同期実行し、結果を蓄積 → 変化があれば refresh を 1 回だけ発火。
+	//   空文字 = 「解決試行したが見つからず」のマーカー（無限リフレッシュ防止）。
+	private titleEnrichment = new Map<string, string>();
+	private enrichmentInProgress = false;
+
 	refresh(): void {
 		this._rootChildrenCache = undefined;
 		this.lastAgentItemsByName.clear(); // v0.5.17 §4-1: reveal 用キャッシュも初期化
 		this.lastGlobalSectionItem = undefined; // v0.5.18 レビュー修正 (3): global セクションキャッシュも初期化
 		this._onDidChangeTreeData.fire(undefined);
+	}
+
+	/**
+	 * v0.5.30: 未解決 sessionId 群を非同期で解決し、titleEnrichment に蓄積する。
+	 * 高速パスから return した直後にファイア&フォアゲットで呼び出す想定。
+	 *
+	 * - 「実行中フラグ」で多重起動を防止。
+	 * - 既に enrichment に載っている sid（空文字含む）は無限リフレッシュ防止のため再解決しない
+	 *   （applyEnrichmentResult 側でも「値が変化したときだけ true」を返す二段防御）。
+	 * - 結果が新規にセットされたときだけ _onDidChangeTreeData.fire → 次回 getChildren で完全表示。
+	 */
+	private scheduleTitleEnrichment(unresolvedSids: readonly string[]): void {
+		if (unresolvedSids.length === 0) { return; }
+		if (this.enrichmentInProgress) { return; } // 二重起動防止
+
+		// 既に enrichment に載っている sid（前回の解決試行で空だったものも含む）は除外
+		const toResolve = unresolvedSids.filter((sid) => !this.titleEnrichment.has(sid));
+		if (toResolve.length === 0) { return; }
+
+		this.enrichmentInProgress = true;
+		void (async () => {
+			try {
+				const resolved = await resolveExternalSessionTitles(toResolve);
+				const changed = applyEnrichmentResult(this.titleEnrichment, toResolve, resolved);
+				if (changed) {
+					this._rootChildrenCache = undefined;
+					this._onDidChangeTreeData.fire(undefined);
+				}
+			} catch { /* サイレント: 解決失敗しても次回起動時に再試行される */ }
+			finally { this.enrichmentInProgress = false; }
+		})();
 	}
 
 	// D&D: ドラッグ開始 — エージェント名をDataTransferに格納
@@ -280,18 +321,17 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			const allAgents = await dataStore.getAgents();
 			const globalAgents = allAgents.filter((a) => !shouldShowInOrgChart(a));
 
+			// v0.5.30: 高速パス — in-memory titleMap + 過去解決済みの enrichment のみでマージ。
+			//   未解決 sid は scheduleTitleEnrichment で非同期解決 → 完了時に refresh される。
 			const sessions = this.getSessionsFn();
-			const titleMap = new Map<string, string>();
+			const fastTitles = new Map<string, string>();
 			for (const s of sessions) {
-				titleMap.set(s.id, s.customName || s.claudeTitle || s.firstMessage.substring(0, 40));
+				fastTitles.set(s.id, s.customName || s.claudeTitle || s.firstMessage.substring(0, 40));
 			}
-			// 現ワークスペースに無いセッションID（他プロジェクト）を全プロジェクト横断で解決
-			const missingSessionIds = globalAgents
-				.map(a => a.sessionId)
-				.filter((sid): sid is string => !!sid && !titleMap.has(sid));
+			const titleMap = mergeTitleMaps(fastTitles, this.titleEnrichment);
+			const missingSessionIds = computeMissingSessionIds(globalAgents, fastTitles, this.titleEnrichment);
 			if (missingSessionIds.length > 0) {
-				const externalTitles = await resolveExternalSessionTitles(missingSessionIds);
-				for (const [sid, title] of externalTitles) { titleMap.set(sid, title); }
+				this.scheduleTitleEnrichment(missingSessionIds);
 			}
 
 			const activeNames = this.activeAgentNamesFn();
@@ -369,19 +409,19 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 
 		if (agents.length === 0) { return []; }
 
-		// セッションタイトル対応表
+		// v0.5.30: 高速パス — in-memory titleMap + 過去解決済みの enrichment のみでマージ。
+		//   未解決 sid（他プロジェクトのセッション等）は scheduleTitleEnrichment で非同期解決 →
+		//   完了時に refresh され、次回 getChildren では完全表示される。初回はプレースホルダなし
+		//   （sessionTitle=undefined）で描画するが、それはユーザー体感の「一覧が早く出る」を優先。
 		const sessions = this.getSessionsFn();
-		const titleMap = new Map<string, string>();
+		const fastTitles = new Map<string, string>();
 		for (const s of sessions) {
-			titleMap.set(s.id, s.customName || s.claudeTitle || s.firstMessage.substring(0, 40));
+			fastTitles.set(s.id, s.customName || s.claudeTitle || s.firstMessage.substring(0, 40));
 		}
-		// 他プロジェクトのセッションIDを全プロジェクト横断で解決
-		const missingSessionIds = agents
-			.map(a => a.sessionId)
-			.filter((sid): sid is string => !!sid && !titleMap.has(sid));
+		const titleMap = mergeTitleMaps(fastTitles, this.titleEnrichment);
+		const missingSessionIds = computeMissingSessionIds(agents, fastTitles, this.titleEnrichment);
 		if (missingSessionIds.length > 0) {
-			const externalTitles = await resolveExternalSessionTitles(missingSessionIds);
-			for (const [sid, title] of externalTitles) { titleMap.set(sid, title); }
+			this.scheduleTitleEnrichment(missingSessionIds);
 		}
 
 		// エージェント名一覧（親の存在チェック用）
