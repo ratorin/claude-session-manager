@@ -11,6 +11,11 @@ import { shouldShowInOrgChart } from './utils/agentUtils';
 import { AgentWatcher } from './watchers/agentWatcher';
 import { TaskTracker } from './watchers/taskTracker';
 import { UsageMonitor } from './utils/usageMonitor';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { SessionBackupManager, computeProtectedSids } from './services/sessionBackupService';
+import { showBackupManagerPanel } from './panels/backupManagerPanel';
 import * as dataStore from './models/dataStore';
 import { SessionServiceDeps } from './services/sessionService';
 import { registerSessionCommands } from './commands/sessionCommands';
@@ -285,6 +290,59 @@ export function activate(context: vscode.ExtensionContext) {
 	}
 	startUsageMonitorIfEnabled();
 
+	// --- セッションバックアップ（リンク切れ対策） ---
+	// 紐づけ済みセッションの会話ログを CSM 管理フォルダへ増分バックアップし、
+	// Claude Code の自動削除（cleanupPeriodDays）等で消えても復元できるようにする。
+	const sessionBackupLog = vscode.window.createOutputChannel('CSM Session Backup');
+	context.subscriptions.push(sessionBackupLog);
+	// 「保護対象」sessionId（紐づけ・お気に入り・タグ・カスタム名・メモ）を集約する
+	const gatherProtectedSids = async (): Promise<Set<string>> => {
+		const [agents, bookmarks, tags, customNames, notes] = await Promise.all([
+			dataStore.getAgents(),
+			dataStore.getBookmarks(),
+			dataStore.getAllTags(),
+			dataStore.getAllCustomNames(),
+			dataStore.getAllNotes(),
+		]);
+		return computeProtectedSids({
+			agentSids: agents.flatMap((a) => [a.sessionId || '', ...(a.previousSessionIds || [])]),
+			bookmarks,
+			tagSids: Object.values(tags).flat(),
+			customNameSids: Object.keys(customNames),
+			noteSids: Object.keys(notes),
+		});
+	};
+	const sessionBackupManager = new SessionBackupManager(
+		async () => (await dataStore.getAgents()).map((a) => a.sessionId || '').filter(Boolean),
+		gatherProtectedSids,
+		sessionBackupLog,
+	);
+	context.subscriptions.push(sessionBackupManager);
+	function startSessionBackupIfEnabled(): void {
+		const enabled = getConfig<boolean>('sessionBackup.enabled', true);
+		if (enabled) {
+			const interval = getConfig<number>('sessionBackup.intervalMinutes', 60);
+			const maxMB = getConfig<number>('sessionBackup.maxFileSizeMB', 100);
+			const cleanupEnabled = getConfig<boolean>('sessionBackup.autoCleanupOrphaned', false);
+			const cleanupDays = getConfig<number>('sessionBackup.autoCleanupDays', 180);
+			sessionBackupManager.start(interval, maxMB, {
+				enabled: cleanupEnabled,
+				olderThanDays: cleanupDays > 0 ? cleanupDays : null,
+			});
+		} else {
+			sessionBackupManager.stop();
+		}
+	}
+	startSessionBackupIfEnabled();
+
+	// バックアップ管理画面を開くコマンド
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.manageSessionBackups', () => showBackupManagerPanel(context)),
+	);
+
+	// 保持期間（cleanupPeriodDays）が短い場合の一度きりの注意喚起（知らずに紐づけが消えるのを防ぐ）
+	void maybeWarnAboutCleanupPeriod(context, sessionBackupLog);
+
 	// CSM hook 全除去コマンド（アンインストール前の手動クリーンアップ・B案）
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.removeAllHooks', async () => {
@@ -425,6 +483,15 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 		if (e.affectsConfiguration('claudeManager.enableUsageMonitor') || e.affectsConfiguration('claudeManager.usageMonitorInterval')) {
 			startUsageMonitorIfEnabled();
+		}
+		if (
+			e.affectsConfiguration('claudeManager.sessionBackup.enabled') ||
+			e.affectsConfiguration('claudeManager.sessionBackup.intervalMinutes') ||
+			e.affectsConfiguration('claudeManager.sessionBackup.maxFileSizeMB') ||
+			e.affectsConfiguration('claudeManager.sessionBackup.autoCleanupOrphaned') ||
+			e.affectsConfiguration('claudeManager.sessionBackup.autoCleanupDays')
+		) {
+			startSessionBackupIfEnabled();
 		}
 		// v0.5.17 §4-2: ステータスバースタイル / show5dColumns の変更は即時反映
 		if (
@@ -723,3 +790,63 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {}
+
+// ─── 保持期間（cleanupPeriodDays）の注意喚起 ──────────────────────────────────
+//
+// Claude Code は ~/.claude/settings.json の cleanupPeriodDays（既定 30 日）で古い会話ログを
+// 自動削除する。この設定の存在を知らないユーザーが多く、気づかぬうちにエージェントの
+// セッション紐づけが切れてしまう。短い（未設定 or 90 日未満）場合に一度だけ案内し、
+// ワンクリックで延長できるようにする。CSM のセッションバックアップと合わせて二重に守る。
+
+const CLEANUP_WARN_THRESHOLD_DAYS = 90;
+const CLEANUP_RECOMMENDED_DAYS = 3650;
+const CLEANUP_WARN_DISMISS_KEY = 'csm.cleanupPeriodWarnDismissed';
+
+async function maybeWarnAboutCleanupPeriod(
+	context: vscode.ExtensionContext,
+	log: vscode.OutputChannel,
+): Promise<void> {
+	try {
+		// ユーザー設定 or CSM 設定で無効化されていれば何もしない
+		if (!vscode.workspace.getConfiguration('claudeManager').get<boolean>('sessionBackup.warnShortCleanupPeriod', true)) { return; }
+		if (context.globalState.get<boolean>(CLEANUP_WARN_DISMISS_KEY, false)) { return; }
+
+		const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+		let raw: string;
+		try {
+			raw = await fs.promises.readFile(settingsPath, 'utf-8');
+		} catch {
+			return; // settings.json が無い（＝既定 30 日だが、書き込みリスクを避けて案内のみ後述）
+		}
+		let parsed: Record<string, unknown>;
+		try {
+			parsed = JSON.parse(raw) as Record<string, unknown>;
+		} catch {
+			return; // JSONC 等でパースできない場合は触らない
+		}
+		const current = typeof parsed.cleanupPeriodDays === 'number' ? parsed.cleanupPeriodDays : 30;
+		if (current >= CLEANUP_WARN_THRESHOLD_DAYS) { return; } // 十分長い
+
+		const choice = await vscode.window.showInformationMessage(
+			`Claude Code は既定で ${current} 日を過ぎた会話ログを自動削除し、エージェントの`
+			+ `セッション紐づけが切れます（cleanupPeriodDays）。保持期間を延ばしますか？`
+			+ `（CSM はバックアップも自動取得しています）`,
+			`延ばす（${CLEANUP_RECOMMENDED_DAYS}日）`,
+			'今後表示しない',
+		);
+		if (choice === `延ばす（${CLEANUP_RECOMMENDED_DAYS}日）`) {
+			try {
+				const next = { ...parsed, cleanupPeriodDays: CLEANUP_RECOMMENDED_DAYS };
+				await fs.promises.writeFile(settingsPath, JSON.stringify(next, null, 2) + '\n', 'utf-8');
+				log.appendLine(`[${new Date().toISOString()}] cleanupPeriodDays を ${current} → ${CLEANUP_RECOMMENDED_DAYS} に更新`);
+				vscode.window.showInformationMessage(`会話ログの保持期間を ${CLEANUP_RECOMMENDED_DAYS} 日に延ばしました。`);
+			} catch (err) {
+				vscode.window.showWarningMessage(`設定の更新に失敗しました（${err instanceof Error ? err.message : String(err)}）。~/.claude/settings.json の cleanupPeriodDays を手動で設定してください。`);
+			}
+		} else if (choice === '今後表示しない') {
+			await context.globalState.update(CLEANUP_WARN_DISMISS_KEY, true);
+		}
+	} catch {
+		// 案内は best-effort。失敗しても無視。
+	}
+}

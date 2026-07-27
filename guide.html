@@ -1724,6 +1724,26 @@
 
 
 
+	<h4 style="color: #d97757; margin: 24px 0 12px;">リンク切れセッションの検出と復旧（v0.5.32〜）</h4>
+
+	<p>エージェントに紐づいた <code>sessionId</code> の会話ログ（<code>~/.claude/projects/…/&lt;sid&gt;.jsonl</code>）が
+	ローテーションや削除で消えると、そのままではセッション ID がそのまま表示され、「Claude で開く」も空振りしていました。
+	v0.5.32 では次のように自動で扱います。</p>
+
+	<ul>
+		<li><strong>⚠ リンク切れ表示</strong> — 会話ログが実在しないエージェントは、ID の代わりに <strong>「⚠ リンク切れ」</strong>と
+			警告アイコンで一覧に明示します。</li>
+		<li><strong>解除 / 再紐づけ</strong> — 該当エージェントを右クリック（またはインラインの ⚠ ボタン）から
+			<strong>「リンク切れセッションを解除／再紐づけ」</strong>を実行できます。解除した ID は
+			<code>previousSessionIds</code> に退避されます。</li>
+		<li><strong>開く操作のガード</strong> — 「Claude で開く」「ターミナルで開く」等は、会話ログ欠損時に空ウィンドウを開かず、
+			再紐づけ／解除へ誘導します。</li>
+		<li><strong>稼働中は誤検知しない</strong> — Claude Code 公式のライブメタ（<code>~/.claude/sessions/*.json</code>）で
+			稼働中と分かるセッションは、ログが未フラッシュでもリンク切れ扱いしません。</li>
+	</ul>
+
+
+
 	<h4 style="color: #d97757; margin: 24px 0 12px;">プレビューパネル（v0.4.2〜）</h4>
 
 	<p>サイドバーのエージェントをクリックすると、独立したWebviewパネルで<strong>エージェント情報の総合ビュー</strong>が開きます。</p>

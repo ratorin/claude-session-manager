@@ -12,18 +12,32 @@ export function getClaudeDir(): string {
 // 指定sessionIdのタイトルを全プロジェクト横断で検索
 // ~/.claude/projects/*/<sessionId>.jsonl を走査し claudeTitle/firstUserMessage を抽出
 // エージェントツリーの「他プロジェクトにあるセッション」の表示名解決用
-const _externalTitleCache = new Map<string, { title: string; ts: number }>();
+const _externalTitleCache = new Map<string, { title: string; found: boolean; ts: number }>();
 const EXTERNAL_TITLE_TTL_MS = 60_000;
 
-export async function resolveExternalSessionTitles(sessionIds: string[]): Promise<Map<string, string>> {
-	const result = new Map<string, string>();
+/**
+ * 外部セッションの解決結果。
+ * - found: `~/.claude/projects/` 内に `<sid>.jsonl` が実在したか（false = リンク切れ）
+ * - title: 抽出したタイトル（見つからなければ空文字）
+ */
+export interface ExternalSessionInfo {
+	found: boolean;
+	title: string;
+}
+
+/**
+ * 指定 sessionId 群を全プロジェクト横断で解決し、found（ファイル実在）+ title を返す。
+ * `resolveExternalSessionTitles` のスーパーセット。リンク切れ（found=false）検出用。
+ */
+export async function resolveExternalSessionInfos(sessionIds: string[]): Promise<Map<string, ExternalSessionInfo>> {
+	const result = new Map<string, ExternalSessionInfo>();
 	const now = Date.now();
 	const unresolved: string[] = [];
 	for (const id of sessionIds) {
 		if (!id) { continue; }
 		const cached = _externalTitleCache.get(id);
 		if (cached && (now - cached.ts) < EXTERNAL_TITLE_TTL_MS) {
-			if (cached.title) { result.set(id, cached.title); }
+			result.set(id, { found: cached.found, title: cached.title });
 		} else {
 			unresolved.push(id);
 		}
@@ -36,6 +50,7 @@ export async function resolveExternalSessionTitles(sessionIds: string[]): Promis
 		const entries = await fs.promises.readdir(projectsDir, { withFileTypes: true });
 		projectDirs = entries.filter(e => e.isDirectory()).map(e => path.join(projectsDir, e.name));
 	} catch {
+		// projects ディレクトリ自体が無い場合は「実在判定不能」= リンク切れ扱いにしない（found=true 相当で未確定）
 		return result;
 	}
 
@@ -48,13 +63,50 @@ export async function resolveExternalSessionTitles(sessionIds: string[]): Promis
 				continue;
 			}
 			const title = await extractSessionTitle(fp);
-			_externalTitleCache.set(sid, { title, ts: now });
-			if (title) { result.set(sid, title); }
+			_externalTitleCache.set(sid, { title, found: true, ts: now });
+			result.set(sid, { found: true, title });
 			return;
 		}
-		_externalTitleCache.set(sid, { title: '', ts: now });
+		// 全プロジェクトを走査しても `<sid>.jsonl` が存在しない → リンク切れ
+		_externalTitleCache.set(sid, { title: '', found: false, ts: now });
+		result.set(sid, { found: false, title: '' });
 	}));
 	return result;
+}
+
+// 指定sessionIdのタイトルを全プロジェクト横断で検索（後方互換ラッパ）
+// タイトルが取得できたものだけを返す（従来挙動を維持）
+export async function resolveExternalSessionTitles(sessionIds: string[]): Promise<Map<string, string>> {
+	const infos = await resolveExternalSessionInfos(sessionIds);
+	const result = new Map<string, string>();
+	for (const [sid, info] of infos) {
+		if (info.title) { result.set(sid, info.title); }
+	}
+	return result;
+}
+
+/**
+ * 指定 sessionId の JSONL が `~/.claude/projects/*` に実在するかを判定する（軽量）。
+ * 「Claude で開く / ターミナルで開く」前のリンク切れ検出に使う。
+ */
+export async function sessionFileExists(sessionId: string): Promise<boolean> {
+	if (!sessionId) { return false; }
+	const projectsDir = path.join(getClaudeDir(), 'projects');
+	try {
+		const entries = await fs.promises.readdir(projectsDir, { withFileTypes: true });
+		for (const e of entries) {
+			if (!e.isDirectory()) { continue; }
+			try {
+				await fs.promises.access(path.join(projectsDir, e.name, `${sessionId}.jsonl`));
+				return true;
+			} catch {
+				// このプロジェクトには無い → 次へ
+			}
+		}
+	} catch {
+		// projects ディレクトリなし
+	}
+	return false;
 }
 
 // セッションJSONLから軽量にタイトル抽出（customTitle/ai-title 優先、次点で最初のユーザーメッセージ）

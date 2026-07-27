@@ -85,8 +85,11 @@ export function showAgentFormPanel(
 						const model = session.model ? normalizeModel(session.model) : undefined;
 						formPanel?.webview.postMessage({
 							type: 'sessionDataLoaded',
-							model,
-							cwd: session.project,
+							// v0.5.32: 作業フォルダには生の cwd を優先。
+							//   session.project は translateWorkDirPath / decodeProjectName 済みの
+							//   「表示用パス」で、cwd 欠落時は推測パス、dev-lamp では Linux 変換後パスになり
+							//   Windows の workDir 欄に誤った値が入っていた。生 cwd を優先し無い時のみ project。
+							cwd: session.cwd || session.project,
 							rawModel: session.model,
 						});
 					}
@@ -128,6 +131,9 @@ export function showAgentFormPanel(
 		} else if (message.type === 'offerDisplayName') {
 			// T3.9: displayName が空の場合、日本語名自動生成をオファー
 			await offerGenerateDisplayName(message.name || '', message.role || '');
+		} else if (message.type === 'formError') {
+			// v0.5.32: フォーム側のバリデーション不備を明確に通知（無言中断の防止）
+			vscode.window.showWarningMessage(String(message.message || '入力内容に不備があります'));
 		}
 	});
 }
@@ -197,6 +203,21 @@ async function getFormHtml(existing: AgentConfig | undefined, sessionId: string)
 	// スコープ別ルールフォルダ
 	const globalFolder = await dataStore.getRuleFolderForScope('global');
 	const projectFolder = await dataStore.getRuleFolderForScope('project');
+
+	// v0.5.32: 「プロジェクト」保存先の実体を明示するための情報。
+	//   プロジェクトスコープ = 今開いている VS Code ワークスペース（第1フォルダ）の .claude/agents。
+	//   フォルダ未オープンだと保存が失敗するため、その場合はプロジェクトを選べないようにする。
+	const wsFolders = vscode.workspace.workspaceFolders || [];
+	const hasWorkspace = wsFolders.length > 0;
+	const workspacePath = hasWorkspace ? wsFolders[0].uri.fsPath : '';
+	// このエージェントの作業フォルダが現ワークスペースに含まれるか（含まれない=プロジェクト保存しても別ワークスペースに入る旨を注意喚起）
+	const normWorkDir = (existing?.workDir || '').replace(/\\/g, '/').toLowerCase();
+	const workDirInWorkspace = hasWorkspace && normWorkDir
+		? wsFolders.some((f) => {
+			const w = f.uri.fsPath.replace(/\\/g, '/').toLowerCase();
+			return normWorkDir === w || normWorkDir.startsWith(w + '/') || w.startsWith(normWorkDir + '/');
+		})
+		: false;
 
 	// HISTORY / TODO デフォルト値: 編集時は既存値、新規時は設定値を使用
 	const agentCfg = vscode.workspace.getConfiguration('claudeManager.agent');
@@ -772,19 +793,25 @@ ${/* v0.5.16 M-10: effort に「未設定（継承）」を追加。
 </div>
 
 <div class="form-group">
-	<label class="form-label">ルールファイルのスコープ<span class="required">*</span></label>
-	<div class="form-desc">ルールファイルの保存先を選択（保存時に自動生成されます）</div>
+	<label class="form-label">ルールファイルの保存先<span class="required">*</span></label>
+	<div class="form-desc">どこに <code>&lt;name&gt;.md</code> を保存するか。保存時に自動生成されます。</div>
 	<div class="radio-group">
 		<div class="radio-option">
-			<input type="radio" name="scope" id="scope-project" value="project" ${v.scope !== 'global' ? 'checked' : ''}>
-			<label for="scope-project">プロジェクト<div class="radio-sub">${escapeHtml(projectFolder)}</div></label>
+			<input type="radio" name="scope" id="scope-global" value="global" ${(v.scope === 'global' || !hasWorkspace) ? 'checked' : ''}>
+			<label for="scope-global">グローバル（全プロジェクト共通）<div class="radio-sub">${escapeHtml(globalFolder)}</div></label>
 		</div>
 		<div class="radio-option">
-			<input type="radio" name="scope" id="scope-global" value="global" ${v.scope === 'global' ? 'checked' : ''}>
-			<label for="scope-global">グローバル<div class="radio-sub">${escapeHtml(globalFolder)}</div></label>
+			<input type="radio" name="scope" id="scope-project" value="project" ${(v.scope !== 'global' && hasWorkspace) ? 'checked' : ''} ${hasWorkspace ? '' : 'disabled'}>
+			<label for="scope-project">プロジェクト（このワークスペースのみ）<div class="radio-sub">${hasWorkspace ? escapeHtml(projectFolder) : '⚠ フォルダ未オープンのため選択できません'}</div></label>
 		</div>
 	</div>
-	<div class="form-desc" style="margin-top: 6px; opacity: 0.7;">ルールファイル: <span id="ruleFilePath">—</span></div>
+	${hasWorkspace
+		? `<div class="form-desc" style="margin-top: 6px; opacity: 0.75;">「プロジェクト」= 今開いているワークスペース <code>${escapeHtml(workspacePath)}</code> の <code>.claude/agents</code> です。</div>`
+		: `<div class="form-desc" style="margin-top: 6px; color: #fbbf24;">⚠ フォルダを開いていないため「プロジェクト」に保存できません。グローバルで保存するか、対象フォルダを開いてください。</div>`}
+	${(hasWorkspace && normWorkDir && !workDirInWorkspace)
+		? `<div class="form-desc" style="margin-top: 4px; color: #fbbf24;">⚠ このエージェントの作業フォルダは現在のワークスペース外です。作業フォルダ側に保存したい場合は、そのフォルダを VS Code で開いてから「プロジェクト」を選んでください。</div>`
+		: ''}
+	<div class="form-desc" style="margin-top: 6px; opacity: 0.7;">保存されるファイル: <span id="ruleFilePath">—</span></div>
 	${v.ruleFile ? '<div class="form-desc" style="margin-top: 4px; opacity: 0.7;">現在のルールファイル: ' + escapeHtml(v.ruleFile) + '</div>' : ''}
 </div>
 
@@ -879,13 +906,17 @@ ${/* v0.5.16 M-10: effort に「未設定（継承）」を追加。
 
 	function save() {
 		const data = getFormData();
+		// v0.5.32: 名前の不備は「無言で中断」せず、必ず理由を通知する（旧: focus のみで気づけなかった）
 		if (!data.name) {
 			document.getElementById('name').focus();
+			validateName();
+			vscode.postMessage({ type: 'formError', message: '名前（識別名）を入力してください。英数字・ハイフン・アンダースコアのみ使用できます（日本語は「表示名」欄へ）。' });
 			return;
 		}
 		if (!isValidName(data.name)) {
 			document.getElementById('name').focus();
 			validateName();
+			vscode.postMessage({ type: 'formError', message: '名前「' + data.name + '」は使用できません。名前（識別名）は英数字・ハイフン（-）・アンダースコア（_）のみです。日本語やスペースは「表示名」欄に入力してください。' });
 			return;
 		}
 		// T3.9: displayName が空の場合、日本語名生成オファーを拡張機能側に委譲

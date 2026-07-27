@@ -764,6 +764,106 @@ test('K3 v0.5.22 Fable 5d のグレースフルフォールバック: ヘッダ�
 	assert.match(outYes, /F 15%/, 'Fable 5d 提供時は F 列が出る');
 });
 
+test('SB1 v0.5.32 sessionBackup: バックアップ→削除→復元の往復', async () => {
+	const home = setupTmpHome();
+	loadFresh(home); // HOME 切替 + out/ キャッシュクリア
+	const backup = require(path.join(REPO, 'out', 'services', 'sessionBackupService'));
+	const sid = '11111111-2222-3333-4444-555555555555';
+	const slug = 'c--test';
+	const projDir = path.join(home, '.claude', 'projects', slug);
+	fs.mkdirSync(projDir, { recursive: true });
+	const orig = path.join(projDir, sid + '.jsonl');
+	fs.writeFileSync(orig, '{"type":"user","message":{"role":"user","content":"hi"}}\n');
+
+	// 初回バックアップ
+	assert.equal(await backup.backupOneSession(sid, 0), 'copied');
+	const backupPath = path.join(home, '.claude', 'csm-session-backups', slug, sid + '.jsonl');
+	assert.ok(fs.existsSync(backupPath), 'バックアップが作成される');
+
+	// 2回目は変化なしでスキップ（増分）
+	assert.equal(await backup.backupOneSession(sid, 0), 'skipped');
+
+	// オリジナル削除（＝Claude 自動削除を模擬）
+	fs.unlinkSync(orig);
+	assert.equal(await backup.hasBackup(sid), true, '削除後もバックアップは残る');
+
+	// 復元
+	const rr = await backup.restoreSession(sid);
+	assert.equal(rr.status, 'restored');
+	assert.ok(fs.existsSync(orig), 'オリジナルが projects/ に復元される');
+
+	// 既に存在する状態での再復元は上書きせず exists
+	assert.equal((await backup.restoreSession(sid)).status, 'exists');
+});
+
+test('SB2 v0.5.32 sessionBackup: サイズ超過は toolarge、オリジナル無しは missing', async () => {
+	const home = setupTmpHome();
+	loadFresh(home);
+	const backup = require(path.join(REPO, 'out', 'services', 'sessionBackupService'));
+	const sid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+	const slug = 'c--test2';
+	const projDir = path.join(home, '.claude', 'projects', slug);
+	fs.mkdirSync(projDir, { recursive: true });
+	fs.writeFileSync(path.join(projDir, sid + '.jsonl'), 'x'.repeat(2048));
+
+	// 1KB 上限 → toolarge
+	assert.equal(await backup.backupOneSession(sid, 1024), 'toolarge');
+	// 存在しない sid → missing
+	assert.equal(await backup.backupOneSession('no-such-sid', 0), 'missing');
+	// バックアップ非存在時の復元は no-backup
+	assert.equal((await backup.restoreSession('no-such-sid')).status, 'no-backup');
+});
+
+test('SB3 v0.5.32 sessionBackup: computeProtectedSids / selectAutoCleanupTargets / list+delete', async () => {
+	const home = setupTmpHome();
+	loadFresh(home);
+	const backup = require(path.join(REPO, 'out', 'services', 'sessionBackupService'));
+
+	// 保護対象 = 5 種の union（空文字は除外）
+	const prot = backup.computeProtectedSids({
+		agentSids: ['A', '', 'B'],
+		bookmarks: ['C'],
+		tagSids: ['D'],
+		customNameSids: ['E'],
+		noteSids: ['F'],
+	});
+	assert.deepEqual([...prot].sort(), ['A', 'B', 'C', 'D', 'E', 'F']);
+	assert.equal(prot.has(''), false);
+
+	// selectAutoCleanupTargets: 保護は除外、孤立かつ N 日以上のみ対象
+	const now = 1_000_000_000_000;
+	const day = 24 * 60 * 60 * 1000;
+	const entries = [
+		{ sid: 'A', slug: 's', filePath: 'a', sizeBytes: 1, mtimeMs: now - 200 * day }, // 保護（古い）→残す
+		{ sid: 'X', slug: 's', filePath: 'x', sizeBytes: 1, mtimeMs: now - 200 * day }, // 孤立・古い→削除
+		{ sid: 'Y', slug: 's', filePath: 'y', sizeBytes: 1, mtimeMs: now - 10 * day },  // 孤立・新しい→猶予
+	];
+	const protectedSet = new Set(['A']);
+	const targets = backup.selectAutoCleanupTargets(entries, protectedSet, 180, now);
+	assert.deepEqual(targets.map((t) => t.sid), ['X'], '孤立かつ180日以上のみ');
+	// 日数 0（猶予なし）なら孤立を全て対象
+	const all = backup.selectAutoCleanupTargets(entries, protectedSet, 0, now);
+	assert.deepEqual(all.map((t) => t.sid).sort(), ['X', 'Y']);
+
+	// listBackups + deleteBackups の実ファイル往復
+	const root = path.join(home, '.claude', 'csm-session-backups', 'c--z');
+	fs.mkdirSync(root, { recursive: true });
+	fs.writeFileSync(path.join(root, 'sid-1.jsonl'), 'data1');
+	fs.writeFileSync(path.join(root, 'sid-2.jsonl'), 'data22');
+	const list = await backup.listBackups();
+	assert.equal(list.length, 2, '2件列挙');
+	// 削除＝ゴミ箱へ移動（復元可）。listBackups は .trash を除外するので減る
+	const del = await backup.deleteBackups(list.filter((e) => e.sid === 'sid-1'));
+	assert.equal(del.moved, 1);
+	assert.equal((await backup.listBackups()).length, 1, '一覧は1件に減る');
+	const trash = await backup.getTrashStats();
+	assert.equal(trash.count, 1, 'ゴミ箱に1件');
+	// ゴミ箱を空にすると完全削除
+	const emptied = await backup.emptyBackupTrash();
+	assert.equal(emptied.deleted, 1);
+	assert.equal((await backup.getTrashStats()).count, 0, 'ゴミ箱が空');
+});
+
 test('J7 レビュー修正(3) isSessionInAnyWorkspace: projectFilter/decoration 共通判定', () => {
 	// sessionTreeProvider は vscode モジュール依存が濃いのでロードせず、
 	// pathUtils.isContainedIn の組み合わせ挙動で等価な判定ができることを検証。
@@ -2162,14 +2262,15 @@ test('X4 v0.5.30 agentFileManager: CACHE_TTL_MS が 10 秒に延長されてい�
 
 test('X5 v0.5.30 agentTreeProvider: getChildren から resolveExternalSessionTitles の await が撤去され、fire-and-forget IIFE のみに集約', () => {
 	const src = fs.readFileSync(path.join(REPO, 'src', 'providers', 'agentTreeProvider.ts'), 'utf-8');
-	// `await resolveExternalSessionTitles` の出現は 1 回のみ（=scheduleTitleEnrichment 内の IIFE）。
+	// v0.5.32: 遅延解決の重い呼び出しは resolveExternalSessionInfos（found+title を返すスーパーセット）に置換。
+	//   `await resolveExternalSessionInfos` の出現は 1 回のみ（=scheduleTitleEnrichment 内の IIFE）。
 	//   旧 v0.5.29 まではメイン getChildren + Global 分岐で計 2 回、直接 await していた。
-	const awaitMatches = src.match(/await\s+resolveExternalSessionTitles/g) || [];
-	assert.equal(awaitMatches.length, 1, `await resolveExternalSessionTitles の出現は 1 回のみ（実際: ${awaitMatches.length}）`);
+	const awaitMatches = src.match(/await\s+resolveExternalSessionInfos/g) || [];
+	assert.equal(awaitMatches.length, 1, `await resolveExternalSessionInfos の出現は 1 回のみ（実際: ${awaitMatches.length}）`);
 	// その 1 回は fire-and-forget IIFE（void (async () => ...) の中）にあること
 	assert.match(
 		src,
-		/void\s*\(\s*async\s*\(\s*\)\s*=>\s*\{[\s\S]{0,400}?await\s+resolveExternalSessionTitles/,
+		/void\s*\(\s*async\s*\(\s*\)\s*=>\s*\{[\s\S]{0,400}?await\s+resolveExternalSessionInfos/,
 		'唯一の await は void (async () => { ... }) IIFE 内',
 	);
 	// scheduleTitleEnrichment 経由（ファイア&フォアゲット）で呼ばれていること
@@ -2177,7 +2278,7 @@ test('X5 v0.5.30 agentTreeProvider: getChildren から resolveExternalSessionTit
 	assert.match(src, /enrichmentInProgress/, '二重起動防止フラグ');
 	assert.match(src, /titleEnrichment/, '解決結果キャッシュ');
 	// import はまだ必要（内部の scheduleTitleEnrichment で使う）
-	assert.match(src, /resolveExternalSessionTitles/, 'resolveExternalSessionTitles は import されている（内部で使用）');
+	assert.match(src, /resolveExternalSessionInfos/, 'resolveExternalSessionInfos は import されている（内部で使用）');
 });
 
 test('X6 v0.5.30 agentTreeProvider: 純ロジック 3 関数を import している', () => {
@@ -2199,13 +2300,14 @@ test('X7 v0.5.30 agentTreeProvider: scheduleTitleEnrichment は enrichmentInProg
 	);
 	// 完了後に finally で解除
 	assert.match(src, /finally\s*\{\s*this\.enrichmentInProgress\s*=\s*false/, 'finally で解除');
-	// 結果が changed のときだけ _onDidChangeTreeData.fire
-	assert.match(src, /if\s*\(\s*changed\s*\)\s*\{[\s\S]{0,200}?_onDidChangeTreeData\.fire/, 'changed=true のときだけ fire');
+	// 結果が変化したときだけ _onDidChangeTreeData.fire
+	//   v0.5.32: リンク切れ集合の更新（brokenChanged）も fire 条件に加わったため `changed || brokenChanged` を許容
+	assert.match(src, /if\s*\(\s*changed(\s*\|\|\s*brokenChanged)?\s*\)\s*\{[\s\S]{0,200}?_onDidChangeTreeData\.fire/, 'changed（またはbrokenChanged）のときだけ fire');
 });
 
-test('X8 v0.5.30 getChildren 本体が resolveExternalSessionTitles を await しない（同期パス保証）', () => {
+test('X8 v0.5.30 getChildren 本体が外部セッション解決を await しない（同期パス保証）', () => {
 	// getChildren 本体（`async getChildren(...)` の宣言〜次のメソッド境界の間）を静的に抽出し、
-	// その内部に `await resolveExternalSessionTitles` が現れないことを厳密チェック。
+	// その内部に `await resolveExternalSessionInfos`（v0.5.32 で改称）が現れないことを厳密チェック。
 	const src = fs.readFileSync(path.join(REPO, 'src', 'providers', 'agentTreeProvider.ts'), 'utf-8');
 	const startIdx = src.indexOf('async getChildren(');
 	assert.ok(startIdx >= 0, 'getChildren の宣言が見つかる');
@@ -2216,8 +2318,8 @@ test('X8 v0.5.30 getChildren 本体が resolveExternalSessionTitles を await �
 	const body = endMatch ? rest.slice(0, endMatch.index) : rest;
 	assert.doesNotMatch(
 		body,
-		/await\s+resolveExternalSessionTitles/,
-		'getChildren 本体（同期パス）に await resolveExternalSessionTitles が無い',
+		/await\s+resolveExternalSession(Titles|Infos)/,
+		'getChildren 本体（同期パス）に外部セッション解決の await が無い',
 	);
 });
 

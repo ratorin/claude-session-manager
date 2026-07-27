@@ -7,7 +7,7 @@ import { getRuleFileInfo, resolveRuleFilePath } from '../agents/agentManager';
 import { isLegacyAutoFormat, hasFrontmatter } from '../utils/frontmatterUtils';
 import { shouldShowInOrgChart, translateWorkDirPath } from '../utils/agentUtils';
 import { getModelChar } from '../models/modelCatalog';
-import { resolveExternalSessionTitles } from '../utils/sessionLoader';
+import { resolveExternalSessionInfos } from '../utils/sessionLoader';
 import { isBookmarked, addBookmark, removeBookmark } from '../services/bookmarkService';
 import { mergeTitleMaps, computeMissingSessionIds, applyEnrichmentResult } from '../utils/agentTreeEnrichment';
 
@@ -114,13 +114,29 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 	private readonly ROOT_CACHE_TTL_MS = 5000;
 
 	// v0.5.30: 2 段レンダリング用の遅延解決キャッシュ。
-	//   getChildren の高速パスからは resolveExternalSessionTitles を呼ばず、
+	//   getChildren の高速パスからは resolveExternalSessionInfos を呼ばず、
 	//   このキャッシュ（+ getSessionsFn の in-memory titleMap）だけで即返す。
 	//   遅延パス（scheduleTitleEnrichment）で ~/.claude/projects/ 全走査 + JSONL 先頭 256KB 読みを
 	//   非同期実行し、結果を蓄積 → 変化があれば refresh を 1 回だけ発火。
 	//   空文字 = 「解決試行したが見つからず」のマーカー（無限リフレッシュ防止）。
 	private titleEnrichment = new Map<string, string>();
 	private enrichmentInProgress = false;
+
+	// v0.5.32: リンク切れ（sessionId は登録済みだが JSONL が実在しない）sid の集合。
+	//   scheduleTitleEnrichment の非同期解決時に found=false と判明した sid を蓄積し、
+	//   AgentItem 描画時に「⚠ リンク切れ」表示へ切り替える。titleEnrichment と同じ 2 段構え。
+	private brokenSessionIds = new Set<string>();
+
+	/** v0.5.32: sessionId がリンク切れ（実在ファイルなし）と判明済みか */
+	private isBrokenLink(sessionId?: string): boolean {
+		if (!sessionId) { return false; }
+		if (!this.brokenSessionIds.has(sessionId)) { return false; }
+		// v0.5.32 (CC 2.1.220 追従): Claude Code 公式のライブメタ（~/.claude/sessions/*.json,
+		//   PID ベース）で「稼働中」と判明しているセッションは、transcript の JSONL が
+		//   projects/ にまだフラッシュされていないだけの可能性が高いのでリンク切れ扱いしない。
+		if (this.isLiveFn(sessionId)) { return false; }
+		return true;
+	}
 
 	refresh(): void {
 		this._rootChildrenCache = undefined;
@@ -149,9 +165,22 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 		this.enrichmentInProgress = true;
 		void (async () => {
 			try {
-				const resolved = await resolveExternalSessionTitles(toResolve);
+				const infos = await resolveExternalSessionInfos([...toResolve]);
+				// タイトル解決結果とリンク切れ集合を同時に更新する
+				const resolved = new Map<string, string>();
+				let brokenChanged = false;
+				for (const sid of toResolve) {
+					const info = infos.get(sid);
+					if (info?.title) { resolved.set(sid, info.title); }
+					// found=false → リンク切れ。found=true or 判定不能(info未定義) → 集合から外す
+					if (info && !info.found) {
+						if (!this.brokenSessionIds.has(sid)) { this.brokenSessionIds.add(sid); brokenChanged = true; }
+					} else if (this.brokenSessionIds.has(sid)) {
+						this.brokenSessionIds.delete(sid); brokenChanged = true;
+					}
+				}
 				const changed = applyEnrichmentResult(this.titleEnrichment, toResolve, resolved);
-				if (changed) {
+				if (changed || brokenChanged) {
 					this._rootChildrenCache = undefined;
 					this._onDidChangeTreeData.fire(undefined);
 				}
@@ -309,7 +338,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				const sessionTitle = a.sessionId ? titles.get(a.sessionId) : undefined;
 				const hasTasks = this.getVisibleTasksFn ? this.getVisibleTasksFn(a.name).length > 0 : false;
 				const hasChildrenFlag = childMap.has(a.name) || hasTasks;
-				const item = new AgentItem(a, isLive(a), sessionTitle, false, hasChildrenFlag, '', ws?.modelMismatch ?? false, ws?.actualModel, false, mtimeMs);
+				const item = new AgentItem(a, isLive(a), sessionTitle, false, hasChildrenFlag, '', ws?.modelMismatch ?? false, ws?.actualModel, false, mtimeMs, this.isBrokenLink(a.sessionId));
 				this.lastAgentItemsByName.set(a.name, item);
 				result.push(item);
 			}
@@ -354,7 +383,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				const sessionTitle = agent.sessionId ? titleMap.get(agent.sessionId) : undefined;
 				const ws = this.watcherStates.get(agent.name);
 				const mtimeMs = agent.sessionId ? this.getSessionMtimeFn?.(agent.sessionId) : undefined;
-				result.push(new AgentItem(agent, isLive, sessionTitle, true, false, '', ws?.modelMismatch ?? false, ws?.actualModel, false, mtimeMs));
+				result.push(new AgentItem(agent, isLive, sessionTitle, true, false, '', ws?.modelMismatch ?? false, ws?.actualModel, false, mtimeMs, this.isBrokenLink(agent.sessionId)));
 			}
 			return result;
 		}
@@ -526,7 +555,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				const hasChildrenFlag = childMap.has(agent.name) || hasTasks;
 				const ws = this.watcherStates.get(agent.name);
 				const mtimeMs = agent.sessionId ? this.getSessionMtimeFn?.(agent.sessionId) : undefined;
-				const item = new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs);
+				const item = new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs, this.isBrokenLink(agent.sessionId));
 				this.lastAgentItemsByName.set(agent.name, item); // v0.5.17 §4-1: reveal 用
 				result.push(item);
 			}
@@ -563,7 +592,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			const hasChildren = childMap.has(agent.name) || hasTasks;
 			const ws = this.watcherStates.get(agent.name);
 			const mtimeMs = agent.sessionId ? this.getSessionMtimeFn?.(agent.sessionId) : undefined;
-			const item = new AgentItem(agent, isLive, sessionTitle, true, hasChildren, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs);
+			const item = new AgentItem(agent, isLive, sessionTitle, true, hasChildren, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs, this.isBrokenLink(agent.sessionId));
 			this.lastAgentItemsByName.set(agent.name, item); // v0.5.17 §4-1: reveal 用
 			result.push(item);
 		}
@@ -607,6 +636,7 @@ export class AgentItem extends vscode.TreeItem {
 		actualModel?: string,
 		public readonly isOtherProject: boolean = false,
 		mtimeMs?: number,
+		sessionMissing: boolean = false,
 	) {
 		// v0.5.14 レビュー修正 (7): modelCatalog.getModelChar() に統一。
 		//   旧: sonnet-1m を '１' 表示していたが、プレビュー（catalog char='Ｓ'）と食い違い。
@@ -669,8 +699,9 @@ export class AgentItem extends vscode.TreeItem {
 		//   旧: `${orgChartFlag} ${sessionInfo}` — 👁/🙈 で行が混み合っていた
 		//   新: セッション未紐づけなら「未紐づけ」、紐づけありならタイトル + 経過時間
 		//        👁/🙈（組織図表示フラグ）は tooltip 側に移動。
+		// v0.5.32: リンク切れ（sessionId 登録済みだが JSONL 実在せず）は sid8 ではなく警告表示
 		const sessionInfo = agent.sessionId
-			? (sessionTitle || `${agent.sessionId.substring(0, 8)}...`)
+			? (sessionMissing ? '⚠ リンク切れ' : (sessionTitle || `${agent.sessionId.substring(0, 8)}...`))
 			: '未紐づけ';
 		const elapsedForDesc = (isLive && !isOtherProject && mtimeMs !== undefined)
 			? formatLiveElapsed(Date.now() - mtimeMs)
@@ -693,6 +724,9 @@ export class AgentItem extends vscode.TreeItem {
 			modelLine +
 			`| 運用 | ${agent.sessionMode === 'disposable' ? '使い捨て' : '固定'} |\n` +
 			`| セッション | ${sessionInfo} |\n` +
+			(sessionMissing
+				? `| ⚠ 状態 | 紐づけ ID \`${agent.sessionId?.substring(0, 8)}...\` の JSONL が見つかりません（リンク切れ）。右クリックで再紐づけ／解除できます |\n`
+				: '') +
 			`| 表示 | ${orgChartFlag} |\n` +
 			(agent.parentAgent ? `| 親エージェント | ${agent.parentAgent} |\n` : '') +
 			(agent.workDir ? `| 作業フォルダ | ${agent.workDir} |\n` : '')
@@ -707,6 +741,9 @@ export class AgentItem extends vscode.TreeItem {
 		if (isOtherProject) {
 			this.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('disabledForeground'));
 			this.description = `🔒 ${agent.scope === 'project' ? '他プロジェクト' : ''} ${this.description || ''}`.trim();
+		} else if (sessionMissing) {
+			// v0.5.32: リンク切れは警告アイコン（黄）で明示
+			this.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground'));
 		} else {
 			const agentStatus: 'running' | 'idle' | 'unlinked' =
 				isLive ? 'running'
@@ -728,8 +765,10 @@ export class AgentItem extends vscode.TreeItem {
 		// contextValue: セッション紐づけ + ブックマーク状態で分岐
 		// agentItem / agentItemLinked / agentItemBookmarked / agentItemLinkedBookmarked
 		const linked = agent.sessionId ? 'Linked' : '';
+		// v0.5.32: リンク切れは Broken を付与（agentItemLinkedBroken）。既存の Linked 系メニューにも一致する
+		const broken = sessionMissing ? 'Broken' : '';
 		const bookmarked = isBookmarked(agent.name) ? 'Bookmarked' : '';
-		this.contextValue = `agentItem${linked}${bookmarked}`;
+		this.contextValue = `agentItem${linked}${broken}${bookmarked}`;
 
 		// 他プロジェクトは装飾プロバイダで灰色化する用のresourceUriを設定
 		if (isOtherProject) {

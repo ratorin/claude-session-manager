@@ -17,6 +17,8 @@ import { isWorkDirCompatible } from '../utils/cliBuilder';
 // v0.5.29: 「Claude で開く」経路の分岐ロジックは openInClaudeHelper.ts に一本化。
 //   pathUtils の 3 純関数はヘルパー内部で利用されるため、こちら（agentCommands.ts）からの直接 import は撤去。
 import { openSessionInClaudeSmart } from './openInClaudeHelper';
+import { sessionFileExists, invalidateSessionCache } from '../utils/sessionLoader';
+import { hasBackup, restoreSession } from '../services/sessionBackupService';
 import { syncParentRuleFile } from '../agents/parentChildSync';
 import { AgentWatcher } from '../watchers/agentWatcher';
 import {
@@ -655,6 +657,11 @@ context.subscriptions.push(
 			vscode.window.showWarningMessage('セッションが紐づけされていません');
 			return;
 		}
+		// v0.5.32: リンク切れ（JSONL が実在しない）なら空ウィンドウを開かず、再紐づけ／解除へ誘導
+		if (!(await sessionFileExists(item.agent.sessionId))) {
+			await vscode.commands.executeCommand('claudeManager.unlinkBrokenAgentSession', item);
+			return;
+		}
 		await openSessionInClaudeSmart({
 			sessionId: item.agent.sessionId,
 			workDir: item.agent.workDir,
@@ -667,6 +674,11 @@ context.subscriptions.push(
 	vscode.commands.registerCommand('claudeManager.openAgentSession', async (item: AgentItem) => {
 		if (!item.agent.sessionId) {
 			vscode.window.showWarningMessage('セッションが紐づけされていません');
+			return;
+		}
+		// v0.5.32: リンク切れ（JSONL が実在しない）なら resume が失敗するため、再紐づけ／解除へ誘導
+		if (!(await sessionFileExists(item.agent.sessionId))) {
+			await vscode.commands.executeCommand('claudeManager.unlinkBrokenAgentSession', item);
 			return;
 		}
 		// ルールファイルの存在チェック
@@ -943,7 +955,65 @@ code { background: var(--vscode-textBlockQuote-background); padding: 8px 12px; d
 	})
 );
 
-// エージェントを削除
+// v0.5.32: リンク切れセッション（JSONL が実在しない紐づけ）を解除 / 再紐づけ
+context.subscriptions.push(
+	vscode.commands.registerCommand('claudeManager.unlinkBrokenAgentSession', async (item: AgentItem) => {
+		const agent = item.agent;
+		const brokenId = agent.sessionId;
+		if (!brokenId) {
+			vscode.window.showWarningMessage('セッションが紐づけされていません');
+			return;
+		}
+		// v0.5.32: CSM バックアップがあれば「復元」を最優先の選択肢として提示
+		const backupExists = await hasBackup(brokenId);
+		const RESTORE = 'バックアップから復元';
+		const actions = backupExists
+			? [RESTORE, '再紐づけ', '紐づけを解除']
+			: ['紐づけを解除', '再紐づけ'];
+		const choice = await vscode.window.showWarningMessage(
+			`「${agent.displayName || agent.name}」の紐づけセッション（${brokenId.substring(0, 8)}...）は ` +
+			`JSONL が見つかりません（リンク切れ）。${backupExists ? 'CSM のバックアップから復元できます。' : ''}どうしますか？`,
+			{ modal: true },
+			...actions
+		);
+		if (choice === RESTORE) {
+			try {
+				const r = await restoreSession(brokenId);
+				if (r.status === 'no-backup') {
+					vscode.window.showWarningMessage('バックアップが見つかりませんでした。');
+				} else {
+					invalidateSessionCache();
+					refreshAll();
+					vscode.window.showInformationMessage(
+						r.status === 'exists'
+							? `セッションは既に存在していました（復元不要）。`
+							: `「${agent.displayName || agent.name}」のセッションをバックアップから復元しました。`
+					);
+				}
+			} catch (err) {
+				vscode.window.showErrorMessage(`復元に失敗しました: ${err instanceof Error ? err.message : String(err)}`);
+			}
+			return;
+		}
+		if (choice === '再紐づけ') {
+			// 既存の linkSession コマンドへ委譲（セッション選択 / 新規作成が可能）
+			await vscode.commands.executeCommand('claudeManager.linkSession', item);
+			return;
+		}
+		if (choice !== '紐づけを解除') { return; }
+		// 直近の sessionId を previousSessionIds に退避してから解除（履歴を残す）
+		const prevIds = [...(agent.previousSessionIds || [])];
+		prevIds.push(brokenId);
+		while (prevIds.length > 5) { prevIds.shift(); }
+		await dataStore.addAgent({ ...agent, sessionId: '', previousSessionIds: prevIds });
+		refreshAll();
+		vscode.window.showInformationMessage(
+			`「${agent.displayName || agent.name}」のリンク切れセッションを解除しました。`
+		);
+	})
+);
+
+// エージェント削除
 context.subscriptions.push(
 	vscode.commands.registerCommand('claudeManager.deleteAgent', async (item: AgentItem) => {
 		const confirm = await vscode.window.showWarningMessage(

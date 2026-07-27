@@ -67,7 +67,7 @@ export const MODEL_CATALOG: Record<CsmModel, ModelDefinition> = {
 		themeColor: 'charts.yellow',
 		is1m: false,
 		allowsMaxEffort: true,
-		description: 'Fable 5 — 最上位の判断・複雑な設計（Opus と同格）',
+		description: 'Fable（最新世代） — 最上位の判断・複雑な設計（Opus と同格）',
 	},
 	'fable-1m': {
 		cliValue: 'fable[1m]',
@@ -78,7 +78,7 @@ export const MODEL_CATALOG: Record<CsmModel, ModelDefinition> = {
 		themeColor: 'charts.yellow',
 		is1m: true,
 		allowsMaxEffort: true,
-		description: 'Fable 5 + 1M 長文コンテキスト',
+		description: 'Fable（最新世代） + 1M 長文コンテキスト',
 	},
 	opus: {
 		cliValue: 'opus',
@@ -89,7 +89,7 @@ export const MODEL_CATALOG: Record<CsmModel, ModelDefinition> = {
 		themeColor: 'charts.purple',
 		is1m: false,
 		allowsMaxEffort: true,
-		description: 'Opus 4.8 — 最高度の判断・複雑な開発（デフォルト high effort）',
+		description: 'Opus（最新世代） — 最高度の判断・複雑な開発（デフォルト high effort）',
 	},
 	'opus-1m': {
 		cliValue: 'opus[1m]',
@@ -100,7 +100,7 @@ export const MODEL_CATALOG: Record<CsmModel, ModelDefinition> = {
 		themeColor: 'charts.purple',
 		is1m: true,
 		allowsMaxEffort: true,
-		description: 'Opus 4.8 + 1M 長文コンテキスト（大規模調査・大量ファイル）',
+		description: 'Opus（最新世代） + 1M 長文コンテキスト（大規模調査・大量ファイル）',
 	},
 	sonnet: {
 		cliValue: 'sonnet',

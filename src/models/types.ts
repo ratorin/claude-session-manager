@@ -25,7 +25,7 @@ export interface ContentBlock {
 
 // セッションメタデータ
 /**
- * `~/.claude/sessions/<pid>.json` 全体のスキーマ（実物ベース、CC 2.1.207 で確認）。
+ * `~/.claude/sessions/<pid>.json` 全体のスキーマ（実物ベース、CC 2.1.220 で確認）。
  *
  * v0.5.22 レビュー修正 L3: agentWatcher が扱う "リッチメタ部分" は
  * `services/liveAgentTypes.SessionJsonMeta` に一本化した。本型はより網羅的な全体像を示す
@@ -39,11 +39,13 @@ export interface SessionMeta {
 	kind: string;
 	entrypoint: string;
 	// v0.5.22: CC 2.1.20x で確認された追加フィールド（sessions/*.json 実物・取締役側検証）
-	version?: string;        // CC ランタイムのバージョン（例: "2.1.207"）
+	version?: string;        // CC ランタイムのバージョン（例: "2.1.220"）
 	peerProtocol?: number;   // ピアプロトコルバージョン（例: 1）
 	name?: string;           // CC が付与するセッション表示名（例: "xampp-bc"）
 	nameSource?: string;     // name の由来（例: "derived" / "user" 等）
-	agent?: string;          // --agent 起動セッションで frontmatter に指定されたエージェント名
+	// v0.5.32: CC 2.1.220 で確認された追加フィールド。
+	procStart?: string;      // プロセス生成識別子（大きな数値の文字列。例: "639205868972991280"）
+	agent?: string;          // --agent 起動セッションのエージェント名（CC 2.1.220 時点では未付与。将来 CC が付与したら自動追従）
 }
 
 // 会話の解析済みデータ

@@ -197,6 +197,11 @@ export async function getNote(sessionId: string): Promise<string> {
 	return data.notes?.[sessionId] || '';
 }
 
+// v0.5.32: 全メモ（sessionId → note）。バックアップ保護判定でメモ付きセッションを守るのに使う。
+export async function getAllNotes(): Promise<Record<string, string>> {
+	return (await loadData()).notes || {};
+}
+
 // エージェント操作（agents/*.md が Single Source of Truth、セッション紐づけのみ session-manager.json）
 
 // セッション紐づけ情報を取得（session-manager.json から）

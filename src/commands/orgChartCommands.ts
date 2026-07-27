@@ -120,7 +120,11 @@ context.subscriptions.push(
 context.subscriptions.push(
 	vscode.commands.registerCommand('claudeManager.registerDirector', () => {
 		const preset: AgentConfig = {
-			name: '取締役',
+			// name はファイル名 / CLI --agent 引数になるため ASCII 必須。日本語は displayName へ。
+			//   旧: name:'取締役' はフォームの名前バリデーション（ASCII のみ）で無言に弾かれ、
+			//   「最初の取締役が保存できない」原因になっていた。
+			name: 'director',
+			displayName: '取締役',
 			sessionId: '',
 			role: '全体統括・タスク分割・承認判断',
 			model: 'opus',

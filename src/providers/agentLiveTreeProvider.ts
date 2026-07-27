@@ -203,7 +203,7 @@ export class AgentLiveTreeProvider
  *   窓 N 本すべてが『取締役』『Daros開発部長』等に誤って貼り付いた。
  *   ユーザー実害（動かしていないエージェントが稼働中に見える）が発生していたため撤去。
  *
- *   sessions/*.json には CC 2.1.207 時点で agent フィールドが存在しないため、
+ *   sessions/*.json には CC 2.1.220 時点でも agent フィールドが存在しないため（実物確認済み）、
  *   agentSessions（sessionId 紐付け）だけが確実な同定手段。それ以外は none。
  *
  * 実装は `liveAgentTypes.resolveLiveAgentViews`（vscode 非依存の純関数）に集約し、

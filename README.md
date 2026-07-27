@@ -12,7 +12,7 @@
 |-------------|------------|-----------|
 | 必須 | VS Code | 1.85.0 以降（Antigravity など VS Code フォークでも動作） |
 | 必須 | Claude Code | 2.1.113 以降 |
-| 推奨 | Claude Code | 2.1.19x 以降 |
+| 推奨 | Claude Code | 2.1.2xx 以降（動作確認 2.1.220） |
 
 > Claude Code のバージョン確認: `claude --version`
 > アップデート: `npm install -g @anthropic-ai/claude-code`
@@ -109,10 +109,10 @@
 
 ### 📊 利用制限モニター
 
-- **ステータスバー表示** — 5 時間 / 7 日 / Sonnet 5 日 / Opus 5 日 の利用率をリアルタイム表示
+- **ステータスバー表示** — セッション（5 時間）/ 全モデル（週）の利用率をリアルタイム表示
 - **表示スタイル切替** — `usage.statusBarStyle`（`full` / `compact` / `max-only`）
 - **追加分（overage）表示** — `… ｜ 追加 0%` で API 由来の利用率を併記
-- **90% / 100% 通知** — 5h / 7d / Sonnet 5d / Opus 5d それぞれで閾値通知
+- **90% / 100% 通知** — セッション（5h）/ 全モデル（週）それぞれで閾値通知
 
 ### 🎨 UI カスタマイズ
 
@@ -288,7 +288,7 @@ VS Code の設定画面（`Ctrl+,`）から `claudeManager` で検索して変�
 | `taskMaxLogs` | number | 100 | 保持するタスクログの最大件数 |
 | `enableUsageMonitor` | boolean | true | Claude Code 利用制限をステータスバーに表示 |
 | `usageMonitorInterval` | number | 300 | 利用制限モニターの更新間隔（秒） |
-| `usage.show5dColumns` | boolean | true | Sonnet 5 日 / Opus 5 日 の利用率列を表示 |
+| `usage.show5dColumns` | boolean | true | 週間の追加枠（API 提供時のみ）の利用率列も表示（旧 Sonnet/Opus 5 日枠は廃止） |
 | `usage.statusBarStyle` | enum | full | ステータスバーの表示スタイル（`full` / `compact` / `max-only`） |
 | `hooks.desktopNotification.enabled` | boolean | false | セッション終了時のデスクトップ通知（要 Claude Code 2.1.141+） |
 

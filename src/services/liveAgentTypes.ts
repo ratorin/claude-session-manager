@@ -202,9 +202,10 @@ export function formatElapsed(sec: number): string {
  *   agentWatcher が収集するリッチメタの共通型。従来 agentWatcher.ts に 3 か所複製されていた
  *   匿名 shape を一本化する。types.ts の SessionMeta（旧・死に型）もこの構造に一致させる。
  *
- * 例（CC 2.1.207 実物）:
- *   { pid, sessionId, cwd, startedAt, version:"2.1.207", peerProtocol:1,
- *     kind:"interactive", entrypoint:"claude-vscode", name:"xampp-07", nameSource:"derived" }
+ * 例（CC 2.1.220 実物）:
+ *   { pid, sessionId, cwd, startedAt, version:"2.1.220", peerProtocol:1,
+ *     kind:"interactive", entrypoint:"claude-vscode", name:"xampp-07", nameSource:"derived",
+ *     procStart:"639205868972991280" }
  */
 export interface SessionJsonMeta {
 	kind?: string;
@@ -214,6 +215,8 @@ export interface SessionJsonMeta {
 	nameSource?: string;
 	agent?: string;
 	pid?: number;
+	/** v0.5.32: CC 2.1.220 で確認されたプロセス生成識別子（大きな数値の文字列）。 */
+	procStart?: string;
 	/** v0.5.22 レビュー修正 M2: セッション開始時刻（Unix ms）。orchestration の経過秒計算に使用。 */
 	startedAt?: number;
 }

@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { translateWorkDirPath } from '../utils/agentUtils';
+import { sessionFileExists } from '../utils/sessionLoader';
 import {
 	resolveOpenInClaudeTargetFolder,
 	needsNewWindowForClaudeOpen,
@@ -53,6 +54,16 @@ export async function openSessionInClaudeSmart(opts: OpenInClaudeOptions): Promi
 	const sid = opts.sessionId;
 	if (!sid) {
 		vscode.window.showWarningMessage('セッション ID がありません');
+		return;
+	}
+
+	// v0.5.32: リンク切れ（JSONL が実在しない）なら空ウィンドウを開かず明示的に通知する。
+	//   sessionCwd 事前渡し（Orchestration 等、CSV 由来で JSONL 未走査）のケースは実在チェックを省く。
+	if (opts.sessionCwd === undefined && !(await sessionFileExists(sid))) {
+		vscode.window.showWarningMessage(
+			`セッション（${sid.substring(0, 8)}...）の JSONL が見つかりません（リンク切れ）。` +
+			`エージェント一覧では該当エージェントを右クリックして再紐づけ／解除できます。`,
+		);
 		return;
 	}
 
