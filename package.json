@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager — 会話履歴・エージェント運用",
 	"description": "Claude Code の会話履歴・メモリ・マルチエージェント運用を管理する VS Code 拡張機能。ブックマーク、タグ、検索、組織図、大容量セッションの高速ビューワー、利用制限モニターに対応。",
-	"version": "0.5.33",
+	"version": "0.5.34",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -571,6 +571,12 @@
 				"category": "Claude Session Manager"
 			},
 			{
+				"command": "claudeManager.disableSessionAgentInject",
+				"title": "エージェント役割自動認識を無効化",
+				"icon": "$(circle-slash)",
+				"category": "Claude Session Manager"
+			},
+			{
 				"command": "claudeManager.openProjectInVSC",
 				"title": "VS Codeで開く",
 				"icon": "$(folder-opened)",
@@ -745,6 +751,16 @@
 					"command": "claudeManager.manageSessionBackups",
 					"when": "view == claudeAgents",
 					"group": "1_backup"
+				},
+				{
+					"command": "claudeManager.enableSessionAgentInject",
+					"when": "view == claudeAgents",
+					"group": "2_inject@1"
+				},
+				{
+					"command": "claudeManager.disableSessionAgentInject",
+					"when": "view == claudeAgents",
+					"group": "2_inject@2"
 				},
 				{
 					"command": "claudeManager.openOrgChart",

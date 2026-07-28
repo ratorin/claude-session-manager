@@ -25,7 +25,7 @@ import { registerOrgChartCommands } from './commands/orgChartCommands';
 import { registerUtilityCommands } from './commands/utilityCommands';
 import { openSessionInClaudeSmart } from './commands/openInClaudeHelper';
 import { getConfig, getLocaleConfig, getAutoTranslateConfig } from './utils/config';
-import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook, ensureSessionAgentInjectHook, ensureSessionStopHook, ensureRecapCaptureHook, ensureInjectionDetectHook, migrateHooksToExecForm, healForeignOsHookPaths, removeAllCsmHooks } from './services/hookService';
+import { ensurePreCompactHook, ensurePreCompactSummaryHook, ensureGovernanceHook, ensureSessionAgentInjectHook, removeSessionAgentInjectHook, ensureSessionStopHook, ensureRecapCaptureHook, ensureInjectionDetectHook, migrateHooksToExecForm, healForeignOsHookPaths, removeAllCsmHooks } from './services/hookService';
 import { runV04Migration, runV05Migration } from './services/migrationService';
 import { initErrorReporter, logError } from './utils/errorReporter';
 import { MainTabPanel } from './panels/mainTabPanel';
@@ -767,9 +767,43 @@ export function activate(context: vscode.ExtensionContext) {
 	// エージェント役割自動認識の有効化（バナーからのボタン）
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.enableSessionAgentInject', async () => {
-			await ensureSessionAgentInjectHook(context.extensionPath, extensionOutputChannel);
+			// v0.5.34: settings.json を書き換える操作なので、事前に内容を明示して確認する
+			const ok = await vscode.window.showInformationMessage(
+				'エージェント役割自動認識を有効化します。\n\n'
+				+ '・~/.claude/settings.json に SessionStart フックを追加します\n'
+				+ '・~/.claude/hooks/csm-session-agent-inject.js を配置します\n'
+				+ '効果は次回セッション開始時からです。後から「無効化」で解除できます。',
+				{ modal: true },
+				'有効化する',
+			);
+			if (ok !== '有効化する') { return; }
+			const installed = await ensureSessionAgentInjectHook(context.extensionPath, extensionOutputChannel);
 			agentProvider.refresh();
-			vscode.window.showInformationMessage('エージェント役割自動認識を有効化しました。次回セッション開始時から動作します。');
+			if (installed) {
+				vscode.window.showInformationMessage('エージェント役割自動認識を有効化しました。次回セッション開始時から動作します。');
+			} else {
+				vscode.window.showWarningMessage('有効化に失敗しました。詳細は Output「CSM Session Manager」を確認してください。');
+			}
+		})
+	);
+
+	// v0.5.34: エージェント役割自動認識の無効化（SessionStart フックを削除）
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.disableSessionAgentInject', async () => {
+			const ok = await vscode.window.showWarningMessage(
+				'エージェント役割自動認識を無効化します。\n\n'
+				+ '~/.claude/settings.json から SessionStart フックを削除します（フックスクリプト本体は残ります）。',
+				{ modal: true },
+				'無効化する',
+			);
+			if (ok !== '無効化する') { return; }
+			const removed = await removeSessionAgentInjectHook(extensionOutputChannel);
+			agentProvider.refresh();
+			vscode.window.showInformationMessage(
+				removed
+					? 'エージェント役割自動認識を無効化しました。'
+					: '有効化されていませんでした（変更なし）。',
+			);
 		})
 	);
 

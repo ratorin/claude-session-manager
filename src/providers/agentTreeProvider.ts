@@ -1014,11 +1014,15 @@ async function isSessionAgentInjectInstalled(): Promise<boolean> {
 		return sessionStart.some((entry: Record<string, unknown>) => {
 			const innerHooks = entry.hooks as Array<Record<string, unknown>> | undefined;
 			if (!Array.isArray(innerHooks)) { return false; }
-			return innerHooks.some((hh: Record<string, unknown>) =>
-				typeof hh.command === 'string' &&
-				hh.command.includes('csm-session-agent-inject')
+			// v0.5.34: exec-form（command:"node", args:[...script]）も検出する。
+			//   旧実装は command 文字列しか見ておらず、拡張自身が移行した exec-form を
+			//   「未インストール」と誤判定し、有効化済みでもバナーが消えない不具合があった。
+			return innerHooks.some((hh: Record<string, unknown>) => {
+				if (typeof hh.command === 'string' && hh.command.includes('csm-session-agent-inject')) { return true; }
+				if (Array.isArray(hh.args) && (hh.args as unknown[]).some((a) => typeof a === 'string' && a.includes('csm-session-agent-inject'))) { return true; }
+				return false;
 				// .sh版も.js版もインストール済みとみなす（マイグレーション中も非表示）
-			);
+			});
 		});
 	} catch {
 		return false;

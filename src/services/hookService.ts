@@ -478,7 +478,7 @@ export async function ensureSubagentHooks(outputChannel: vscode.OutputChannel): 
 }
 
 // SessionStart hookでエージェント役割自動注入（デプロイ+settings.json登録）
-export async function ensureSessionAgentInjectHook(extensionPath: string, outputChannel: vscode.OutputChannel): Promise<void> {
+export async function ensureSessionAgentInjectHook(extensionPath: string, outputChannel: vscode.OutputChannel): Promise<boolean> {
 	const homeDir = os.homedir();
 	const settingsPath = path.join(homeDir, '.claude', 'settings.json');
 	const hooksDir = path.join(homeDir, '.claude', 'hooks');
@@ -510,7 +510,7 @@ export async function ensureSessionAgentInjectHook(extensionPath: string, output
 			await fs.promises.rename(oldShScript, path.join(trashDir, `csm-session-agent-inject.sh.${Date.now()}`));
 		} catch { /* shファイルが存在しない場合は無視 */ }
 	} catch {
-		return;
+		return false; // テンプレート読込/配置に失敗 → 未インストール
 	}
 
 	// 2. settings.json にSessionStart hookを登録
@@ -580,17 +580,20 @@ export async function ensureSessionAgentInjectHook(extensionPath: string, output
 		}, (msg) => outputChannel.appendLine(msg));
 
 		outputChannel.appendLine(`[${new Date().toISOString()}] SessionStart エージェント注入hookを settings.json に登録しました`);
+		return true;
 	} catch (err) {
 		outputChannel.appendLine(`[${new Date().toISOString()}] SessionStart hook登録エラー: ${err instanceof Error ? err.message : String(err)}`);
+		return false;
 	}
 }
 
-// SessionStart hookをsettings.jsonから削除
-export async function removeSessionAgentInjectHook(outputChannel: vscode.OutputChannel): Promise<void> {
+// SessionStart hookをsettings.jsonから削除。返り値: 実際に削除したか
+export async function removeSessionAgentInjectHook(outputChannel: vscode.OutputChannel): Promise<boolean> {
 	const homeDir = os.homedir();
 	const settingsPath = path.join(homeDir, '.claude', 'settings.json');
 	const CSM_MARKER = 'csm-session-agent-inject';
 
+	let removed = false;
 	try {
 		await modifySettingsJson(settingsPath, (settings) => {
 			const hooksObj = settings.hooks as Record<string, unknown> | undefined;
@@ -609,12 +612,17 @@ export async function removeSessionAgentInjectHook(outputChannel: vscode.OutputC
 
 			if (filtered.length === sessionStart.length) { return false; } // 変更なし
 			hooksObj['SessionStart'] = filtered;
+			removed = true;
 			return true;
 		}, (msg) => outputChannel.appendLine(msg));
 
-		outputChannel.appendLine(`[${new Date().toISOString()}] SessionStart エージェント注入hookを削除しました`);
+		if (removed) {
+			outputChannel.appendLine(`[${new Date().toISOString()}] SessionStart エージェント注入hookを削除しました`);
+		}
+		return removed;
 	} catch (err) {
 		outputChannel.appendLine(`[${new Date().toISOString()}] SessionStart hook削除エラー: ${err instanceof Error ? err.message : String(err)}`);
+		return false;
 	}
 }
 
