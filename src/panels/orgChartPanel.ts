@@ -555,6 +555,14 @@ canvas.graph.pan { cursor: move; }
 		<button class="mtool" id="btn-zoom-in"  title="拡大">＋</button>
 		<button class="mtool" id="btn-zoom-fit" title="全体をフィット表示（ダブルクリックでも可）">⤢</button>
 	</div>
+
+	<!-- v0.5.35: フォーカス（選択したエージェントを中心に配下ツリーだけ表示） -->
+	<div class="toolbar-group" id="focus-controls" title="ノードをクリックして選択 → フォーカスで配下だけ表示">
+		<button class="mtool" id="btn-focus-in" title="選択中のエージェントにフォーカス（配下ツリーだけ残す）">🎯 フォーカス</button>
+		<button class="mtool" id="btn-focus-up" title="上の階層へ（親を中心に広げる）" disabled>⬆ 上へ</button>
+		<button class="mtool" id="btn-focus-clear" title="フォーカス解除（全体表示）" disabled>✕</button>
+		<span id="focus-status" class="toolbar-label" style="display:none;"></span>
+	</div>
 </div>
 
 <div id="stage-wrap">
@@ -593,6 +601,53 @@ const byId = Object.fromEntries(NODES.map(n => [n.id, n]));
 const CHILD_COUNT = {};
 NODES.forEach(n => { if (n.parent && byId[n.parent]) { CHILD_COUNT[n.parent] = (CHILD_COUNT[n.parent] || 0) + 1; } });
 
+// v0.5.35: フォーカス機能。選択したエージェントを中心に、その配下ツリーだけを表示する。
+//   focusId=null で全体表示。setFocus で配下集合(focusSet)を計算し、isVisible が絞り込む。
+const CHILDREN = {};
+NODES.forEach(n => { if (n.parent && byId[n.parent]) { (CHILDREN[n.parent] = CHILDREN[n.parent] || []).push(n.id); } });
+let selectedId = null; // クリックで選択中のノード
+let focusId = null;    // フォーカス中心（そのノード + 配下のみ表示）
+let focusSet = null;   // focusId の配下集合（自身含む）
+function computeFocusSet(id) {
+	const set = new Set();
+	const stack = [id];
+	while (stack.length) {
+		const cur = stack.pop();
+		if (set.has(cur)) continue;
+		set.add(cur);
+		(CHILDREN[cur] || []).forEach(c => stack.push(c));
+	}
+	return set;
+}
+function refreshAfterVisibilityChange() {
+	if (currentMode === 'graph') { alpha = 1; requestAnimationFrame(() => fitToView()); }
+	else if (currentMode === 'tree') { renderTree(); }
+	else if (currentMode === 'group') { renderGroup(); }
+}
+function setFocus(id) {
+	focusId = id || null;
+	focusSet = focusId ? computeFocusSet(focusId) : null;
+	updateFocusUI();
+	refreshAfterVisibilityChange();
+}
+function focusUp() {
+	// 上の階層へ（フォーカス中心を親へ）。親が無ければ解除して全体表示。
+	if (!focusId) return;
+	const parent = byId[focusId] ? byId[focusId].parent : null;
+	setFocus(parent && byId[parent] ? parent : null);
+}
+function updateFocusUI() {
+	const bar = document.getElementById('focus-status');
+	if (bar) {
+		if (focusId && byId[focusId]) { bar.style.display = ''; bar.textContent = '🎯 ' + (byId[focusId].label || focusId); }
+		else { bar.style.display = 'none'; bar.textContent = ''; }
+	}
+	const upBtn = document.getElementById('btn-focus-up');
+	const clrBtn = document.getElementById('btn-focus-clear');
+	if (upBtn) upBtn.disabled = !focusId;
+	if (clrBtn) clrBtn.disabled = !focusId;
+}
+
 function modelClass(m) {
 	if (m === 'fable' || m === 'fable-1m') return 'm-fable';
 	if (m === 'opus'  || m === 'opus-1m')  return 'm-opus';
@@ -605,6 +660,8 @@ function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':
 let HIDE_OTHER = ${hideOtherProjects};
 function isVisible(node) {
 	if (HIDE_OTHER && !node.inWorkspace) return false;
+	// v0.5.35: フォーカス中は中心ノード + その配下のみ表示
+	if (focusSet && !focusSet.has(node.id)) return false;
 	return true;
 }
 
@@ -836,6 +893,12 @@ function draw(ts, edges) {
 		ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
 		ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = dim ? 0 : 12;
 		ctx.fill(); ctx.shadowBlur = 0;
+		// v0.5.35: 選択中ノードにアクセントのリング（フォーカス操作の対象を明示）
+		if (n.id === selectedId) {
+			ctx.beginPath(); ctx.arc(n.x, n.y, n.r + 4 / viewport.zoom, 0, Math.PI * 2);
+			ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#e27e4a';
+			ctx.lineWidth = 2 / viewport.zoom; ctx.globalAlpha = 1; ctx.stroke();
+		}
 		if (n.live) {
 			ctx.beginPath(); ctx.arc(n.x + n.r * 0.72, n.y - n.r * 0.72, 3, 0, Math.PI * 2);
 			ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--live') || '#3fae6a';
@@ -931,12 +994,16 @@ cv.addEventListener('click', (ev) => {
 	const r = cv.getBoundingClientRect();
 	const w = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
 	const n = pickNode(w.x, w.y);
-	if (n) handleNodeClick(n);
+	// v0.5.35: シングルクリック=選択（中心寄せ）。開くはダブルクリックへ移動。
+	if (n) { selectedId = n.id; centerOn(n.id); } else { selectedId = null; }
 });
-// v0.5.25: ダブルクリックで全体フィット（判断: 一般的なグラフエディタ慣習に合わせる）
+// v0.5.35: ダブルクリック — ノード上ならセッションを開く / 背景なら全体フィット
 cv.addEventListener('dblclick', (ev) => {
 	ev.preventDefault();
-	fitToView();
+	const r = cv.getBoundingClientRect();
+	const w = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
+	const n = pickNode(w.x, w.y);
+	if (n) { handleNodeClick(n); } else { fitToView(); }
 });
 // v0.5.25: ホイールでカーソル位置ズーム（判断: Miro / tldraw / Excalidraw の慣習に寄せる）
 //   ctrlKey/metaKey は不要 — グラフモードは全画面 Canvas でスクロール概念が無く、ホイール=ズームが直感的。
@@ -1282,6 +1349,18 @@ document.getElementById('btn-zoom-fit').addEventListener('click', () => {
 	fitToView();
 	alpha = Math.max(alpha, 0.4);
 });
+
+// v0.5.35: フォーカス操作（選択したエージェントの配下ツリーだけ表示 / 上へ / 解除）
+document.getElementById('btn-focus-in').addEventListener('click', () => {
+	if (!selectedId) {
+		const bar = document.getElementById('focus-status');
+		if (bar) { bar.style.display = ''; bar.textContent = '先にノードをクリックして選択してください'; setTimeout(() => updateFocusUI(), 1800); }
+		return;
+	}
+	setFocus(selectedId);
+});
+document.getElementById('btn-focus-up').addEventListener('click', () => { focusUp(); });
+document.getElementById('btn-focus-clear').addEventListener('click', () => { setFocus(null); });
 // グラフモード以外ではズームコントロールを隠す（UI 混乱防止）
 function updateZoomControlsVisibility() {
 	const zc = document.getElementById('zoom-controls');

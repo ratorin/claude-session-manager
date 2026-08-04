@@ -16,7 +16,7 @@ import { normalizeModel, translateWorkDirPath } from '../utils/agentUtils';
 import { isWorkDirCompatible } from '../utils/cliBuilder';
 // v0.5.29: 「Claude で開く」経路の分岐ロジックは openInClaudeHelper.ts に一本化。
 //   pathUtils の 3 純関数はヘルパー内部で利用されるため、こちら（agentCommands.ts）からの直接 import は撤去。
-import { openSessionInClaudeSmart } from './openInClaudeHelper';
+import { openSessionInClaudeSmart, resolveSessionCwd } from './openInClaudeHelper';
 import { sessionFileExists, invalidateSessionCache } from '../utils/sessionLoader';
 import { hasBackup, restoreSession } from '../services/sessionBackupService';
 import { syncParentRuleFile } from '../agents/parentChildSync';
@@ -61,6 +61,40 @@ function buildResumeArgs(agent: AgentConfig): string[] | null {
 		return null;
 	}
 	return args;
+}
+
+/**
+ * v0.5.35: resume 用の cwd を解決する共通ヘルパー。
+ *
+ * **重要**: `claude --resume <sid>` は「セッション作成時と同じ cwd」から実行しないと
+ *   "No conversation found" になり、`--agent` 併用時は代わりに**新しいセッションが立ち上がる**
+ *   （＝紐づいているのに開くと別スレッド）。よって agent.workDir ではなく、
+ *   **セッション JSONL に記録された実 cwd** を最優先で使う。無ければ workDir にフォールバック。
+ */
+async function resolveAgentResumeCwd(agent: AgentConfig): Promise<string | undefined> {
+	if (agent.sessionId) {
+		const sessionCwd = await resolveSessionCwd(agent.sessionId);
+		if (sessionCwd) { return translateWorkDirPath(sessionCwd); }
+	}
+	return agent.workDir ? translateWorkDirPath(agent.workDir) : undefined;
+}
+
+/**
+ * v0.5.35: エージェントのセッションをターミナルで resume する共通ヘルパー。
+ *   3 箇所に重複していた `buildResumeArgs + createTerminal(cwd:workDir)` を統一し、
+ *   cwd はセッションの実 cwd を使う（新スレッド化を防止）。
+ */
+async function openAgentSessionInTerminal(agent: AgentConfig): Promise<void> {
+	const args = buildResumeArgs(agent);
+	if (!args) {
+		vscode.window.showWarningMessage('セッションが紐づけられていません。エージェントを選択してセッションを紐づけてください。');
+		return;
+	}
+	if (agent.permissionMode) { args.push('--permission-mode', agent.permissionMode); }
+	const cwd = await resolveAgentResumeCwd(agent);
+	const terminal = vscode.window.createTerminal({ name: `🤖 ${agent.displayName || agent.name}`, cwd });
+	terminal.show();
+	terminal.sendText(args.join(' '));
 }
 
 // v0.5.28 レビュー修正 (MEDIUM-2): エージェントフォルダを OS のエクスプローラで開く共通ヘルパー。
@@ -288,14 +322,7 @@ context.subscriptions.push(
 			onOpenInClaude: (sessionId) => {
 				void openSessionInClaudeSmart({ sessionId, workDir: agent.workDir });
 			},
-			onOpenInTerminal: (a) => {
-				const args = buildResumeArgs(a);
-				if (!args) { return; }
-				if (a.permissionMode) { args.push('--permission-mode', a.permissionMode); }
-				const terminal = vscode.window.createTerminal({ name: `🤖 ${a.displayName || a.name}`, cwd: a.workDir ? translateWorkDirPath(a.workDir) : undefined });
-				terminal.show();
-				terminal.sendText(args.join(' '));
-			},
+			onOpenInTerminal: (a) => { void openAgentSessionInTerminal(a); },
 			onRenewSession: (a) => {
 				vscode.commands.executeCommand('claudeManager.renewAgentSession', { agent: a });
 			},
@@ -335,14 +362,7 @@ context.subscriptions.push(
 			onOpenInClaude: (sessionId) => {
 				void openSessionInClaudeSmart({ sessionId, workDir: agent.workDir });
 			},
-			onOpenInTerminal: (a) => {
-				const args = buildResumeArgs(a);
-				if (!args) { return; }
-				if (a.permissionMode) { args.push('--permission-mode', a.permissionMode); }
-				const terminal = vscode.window.createTerminal({ name: `🤖 ${a.displayName || a.name}`, cwd: a.workDir ? translateWorkDirPath(a.workDir) : undefined });
-				terminal.show();
-				terminal.sendText(args.join(' '));
-			},
+			onOpenInTerminal: (a) => { void openAgentSessionInTerminal(a); },
 			onRenewSession: (a) => {
 				vscode.commands.executeCommand('claudeManager.renewAgentSession', { agent: a });
 			},
@@ -422,9 +442,14 @@ context.subscriptions.push(
 			const [ruleConfig, ruleBody] = await prepareAgentRule(config, true);
 			await dataStore.addAgent(ruleConfig, ruleBody);
 
+			// v0.5.35: HISTORY/TODO は .md と同じスコープのフォルダに作る。
+			//   旧実装はグローバル固定（~/.claude/agents/<name>/）で、プロジェクトスコープの
+			//   エージェントだと .md（プロジェクト）と HISTORY/TODO（グローバル）が割れていた。
+			const agentBaseDir = await dataStore.getRuleFolderForScope(ruleConfig.scope);
+
 			// HISTORY.md / TODO.md 自動作成（有効かつファイル未存在の場合）
 			if (ruleConfig.historyEnabled) {
-				const agentDir = path.join(os.homedir(), '.claude', 'agents', ruleConfig.name);
+				const agentDir = path.join(agentBaseDir, ruleConfig.name);
 				const historyPath = path.join(agentDir, 'HISTORY.md');
 				try { await fs.promises.access(historyPath); } catch {
 					await fs.promises.mkdir(agentDir, { recursive: true });
@@ -436,7 +461,7 @@ context.subscriptions.push(
 				}
 			}
 			if (ruleConfig.todoEnabled) {
-				const agentDir = path.join(os.homedir(), '.claude', 'agents', ruleConfig.name);
+				const agentDir = path.join(agentBaseDir, ruleConfig.name);
 				const todoPath = path.join(agentDir, 'TODO.md');
 				try { await fs.promises.access(todoPath); } catch {
 					await fs.promises.mkdir(agentDir, { recursive: true });
@@ -705,23 +730,9 @@ context.subscriptions.push(
 			}
 		}
 
-		// ターミナルで --agent + --resume で起動（フロントマターからmodel/effort自動適用）
-		// Phase 2-1: sessionId がない場合は --resume <agentName> による名前ベース再開（v2.1.101+）
-		const args = buildResumeArgs(item.agent);
-		if (!args) {
-			vscode.window.showWarningMessage('セッションが紐づけられていません。エージェントを選択してセッションを紐づけてください。');
-			return;
-		}
-		if (item.agent.permissionMode) {
-			args.push('--permission-mode', item.agent.permissionMode);
-		}
-
-		const terminal = vscode.window.createTerminal({
-			name: `🤖 ${item.agent.name}`,
-			cwd: item.agent.workDir ? translateWorkDirPath(item.agent.workDir) : undefined,
-		});
-		terminal.show();
-		terminal.sendText(args.join(' '));
+		// v0.5.35: ターミナル resume を共通ヘルパーに統一。cwd はセッションの実 cwd を使う
+		//   （agent.workDir とのズレによる "No conversation found"→新スレッド化を防止）。
+		await openAgentSessionInTerminal(item.agent);
 	})
 );
 
