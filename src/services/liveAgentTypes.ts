@@ -1,10 +1,17 @@
 // liveAgentTypes.ts — ライブエージェント表示用の共通型 + フォーマッタ
 // v0.5.22 で claudeAgentsService.ts から切り出し（同ファイルは撤去）。
 //
-// CC ランタイム CLI（`claude agents --json`）は VS Code 拡張ホストから TTY 無しで
-// 呼び出せないため、v0.5.22 以降は agentWatcher（PID + sessions/*.json 監視）が
-// 唯一のライブデータソース。本ファイルは表示層（agentLiveTreeProvider /
-// orchestrationTreeProvider）が共有する型と 1 関数のみを保持する。
+// データソースの現状（v0.5.37 / Claude Code 2.1.263 で実測して更新）:
+//   - 旧記述「`claude agents --json` は TTY 必須で拡張ホストから使用不可」は **現在は誤り**。
+//     CC は非 TTY でも `claude agents --json` を機械可読出力として公式サポートする
+//     （TTY が要るのは素の `claude agents` のみ。`--all` / `--cwd` フィルタもある）。
+//   - それでも CSM は agentWatcher（PID + sessions/*.json 監視）を主データ源として維持する。
+//     理由: sessions/*.json の方が情報が多く（version / entrypoint / procStart / peerProtocol /
+//     nameSource）、プロセス起動コストも無い。対象セッション集合は実測で両者一致した。
+//   - 制約: どちらも **ローカルセッションのみ**。クラウド / Remote Control / teammates は
+//     セッション内ツール `ListAgents` からしか見えず、拡張ホストからは取得できない。
+// 本ファイルは表示層（agentLiveTreeProvider / orchestrationTreeProvider）が共有する型と
+// 1 関数のみを保持する。
 
 /**
  * ライブ状態のエージェント／セッション 1 件分の情報。

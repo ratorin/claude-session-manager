@@ -25,6 +25,10 @@
 - **subagent frontmatter**: `model` / `effort` / `permissionMode` / `allowedTools` / `isolation` / `background` / `maxTurns` をフォームから編集可能。
 - **sessions/*.json**: `kind` / `entrypoint` / `version` / `name` / `nameSource` を読み取り、`interactive` / `background` 判定とセッション表示名に公式値を優先。
 - **ライブデータ源**: PID + `sessions/<pid>.json` 監視で完結（`claude agents --json` 非依存）。
+  - 補足: `claude agents --json` は Claude Code 2.1.2xx で **非 TTY 実行にも対応**しました（旧「TTY 必須」は誤り）。
+    ただし `sessions/*.json` の方が情報が多く（`version` / `entrypoint` / `procStart` 等）プロセス起動も不要なため据え置きです。
+- **可視範囲**: **ローカルセッションのみ**。クラウド / Remote Control / teammates は
+  セッション内ツール `ListAgents` からのみ見え、VS Code 拡張からは取得できません。
 
 ---
 

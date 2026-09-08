@@ -2,7 +2,7 @@
 	"name": "claude-session-manager",
 	"displayName": "Claude Session Manager — 会話履歴・エージェント運用",
 	"description": "Claude Code の会話履歴・メモリ・マルチエージェント運用を管理する VS Code 拡張機能。ブックマーク、タグ、検索、組織図、大容量セッションの高速ビューワー、利用制限モニターに対応。",
-	"version": "0.5.35",
+	"version": "0.6.0",
 	"publisher": "ratorin",
 	"engines": {
 		"vscode": "^1.85.0"
@@ -622,6 +622,12 @@
 				"command": "claudeManager.installCsmAskAgent",
 				"title": "/csm-ask-agent をインストール",
 				"icon": "$(cloud-download)",
+				"category": "Claude Session Manager"
+			},
+			{
+				"command": "claudeManager.updateCsmAskAgentTemplates",
+				"title": "/csm-ask-agent を更新",
+				"icon": "$(sync)",
 				"category": "Claude Session Manager"
 			},
 			{

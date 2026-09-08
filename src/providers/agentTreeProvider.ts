@@ -10,8 +10,9 @@ import { getModelChar } from '../models/modelCatalog';
 import { resolveExternalSessionInfos } from '../utils/sessionLoader';
 import { isBookmarked, addBookmark, removeBookmark } from '../services/bookmarkService';
 import { mergeTitleMaps, computeMissingSessionIds, applyEnrichmentResult } from '../utils/agentTreeEnrichment';
+import { AgentToolRun } from '../services/agentToolRunService';
 
-type AgentTreeNode = AgentItem | TaskLogItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem | SessionInjectInstallBannerItem | GroupNodeItem;
+type AgentTreeNode = AgentItem | TaskLogItem | EphemeralRunItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem | SessionInjectInstallBannerItem | GroupNodeItem;
 
 // D&DのMIMEタイプ
 const AGENT_MIME = 'application/vnd.csm.agent';
@@ -103,6 +104,26 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 	// TaskTracker 連携用セッター（循環依存回避のため後付け）
 	setTaskProvider(fn: (agentName: string) => TaskLog[]): void {
 		this.getVisibleTasksFn = fn;
+	}
+
+	// v0.6.0 R3: Agent ツール経由の一時実行プロバイダ（循環依存回避のため後付け）
+	//   親セッション JSONL の走査は extension 側で非同期に行い、結果だけをここへ流し込む。
+	private getEphemeralRunsFn: ((agentName: string) => AgentToolRun[]) | undefined;
+	setEphemeralRunProvider(fn: (agentName: string) => AgentToolRun[]): void {
+		this.getEphemeralRunsFn = fn;
+	}
+
+	// v0.6.0 R5(最小案): セッション JSONL のサイズ取得
+	private getSessionBytesFn: ((sessionId: string) => number | undefined) | undefined;
+	setSessionBytesProvider(fn: (sessionId: string) => number | undefined): void {
+		this.getSessionBytesFn = fn;
+	}
+
+	/** AgentItem 生成時に渡す一時実行の集計値 */
+	private ephemeralInfo(agentName: string): { count: number; lastMs?: number } {
+		const runs = this.getEphemeralRunsFn?.(agentName);
+		if (!runs || runs.length === 0) { return { count: 0 }; }
+		return { count: runs.length, lastMs: runs[0].timestampMs || undefined };
 	}
 
 	// マイグレーション不要になったらバナーを非表示にする
@@ -301,6 +322,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 	async getChildren(element?: AgentTreeNode): Promise<AgentTreeNode[]> {
 		// TaskLogItem / MigrationBannerItem / GlobalAgentsSectionItem は子を持たない（GlobalAgentsSectionItem は特別処理）
 		if (element instanceof TaskLogItem) { return []; }
+		if (element instanceof EphemeralRunItem) { return []; }
 		if (element instanceof MigrationBannerItem) { return []; }
 		if (element instanceof CsmAskAgentInstallBannerItem) { return []; }
 		if (element instanceof AskAgentMigrationBannerItem) { return []; }
@@ -337,8 +359,9 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				const mtimeMs = a.sessionId ? this.getSessionMtimeFn?.(a.sessionId) : undefined;
 				const sessionTitle = a.sessionId ? titles.get(a.sessionId) : undefined;
 				const hasTasks = this.getVisibleTasksFn ? this.getVisibleTasksFn(a.name).length > 0 : false;
-				const hasChildrenFlag = childMap.has(a.name) || hasTasks;
-				const item = new AgentItem(a, isLive(a), sessionTitle, false, hasChildrenFlag, '', ws?.modelMismatch ?? false, ws?.actualModel, false, mtimeMs, this.isBrokenLink(a.sessionId));
+				const eph = this.ephemeralInfo(a.name);
+				const hasChildrenFlag = childMap.has(a.name) || hasTasks || eph.count > 0;
+				const item = new AgentItem(a, isLive(a), sessionTitle, false, hasChildrenFlag, '', ws?.modelMismatch ?? false, ws?.actualModel, false, mtimeMs, this.isBrokenLink(a.sessionId), eph.count, eph.lastMs, a.sessionId ? this.getSessionBytesFn?.(a.sessionId) : undefined);
 				this.lastAgentItemsByName.set(a.name, item);
 				result.push(item);
 			}
@@ -383,7 +406,8 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				const sessionTitle = agent.sessionId ? titleMap.get(agent.sessionId) : undefined;
 				const ws = this.watcherStates.get(agent.name);
 				const mtimeMs = agent.sessionId ? this.getSessionMtimeFn?.(agent.sessionId) : undefined;
-				result.push(new AgentItem(agent, isLive, sessionTitle, true, false, '', ws?.modelMismatch ?? false, ws?.actualModel, false, mtimeMs, this.isBrokenLink(agent.sessionId)));
+				const eph = this.ephemeralInfo(agent.name);
+				result.push(new AgentItem(agent, isLive, sessionTitle, true, eph.count > 0, '', ws?.modelMismatch ?? false, ws?.actualModel, false, mtimeMs, this.isBrokenLink(agent.sessionId), eph.count, eph.lastMs, agent.sessionId ? this.getSessionBytesFn?.(agent.sessionId) : undefined));
 			}
 			return result;
 		}
@@ -552,10 +576,12 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				const isLive = checkLive(agent);
 				const sessionTitle = agent.sessionId ? titleMap.get(agent.sessionId) : undefined;
 				const hasTasks = this.getVisibleTasksFn ? this.getVisibleTasksFn(agent.name).length > 0 : false;
-				const hasChildrenFlag = childMap.has(agent.name) || hasTasks;
+				const eph0 = this.ephemeralInfo(agent.name);
+				const hasChildrenFlag = childMap.has(agent.name) || hasTasks || eph0.count > 0;
 				const ws = this.watcherStates.get(agent.name);
 				const mtimeMs = agent.sessionId ? this.getSessionMtimeFn?.(agent.sessionId) : undefined;
-				const item = new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs, this.isBrokenLink(agent.sessionId));
+				const eph = this.ephemeralInfo(agent.name);
+				const item = new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs, this.isBrokenLink(agent.sessionId), eph.count, eph.lastMs, agent.sessionId ? this.getSessionBytesFn?.(agent.sessionId) : undefined);
 				this.lastAgentItemsByName.set(agent.name, item); // v0.5.17 §4-1: reveal 用
 				result.push(item);
 			}
@@ -589,10 +615,12 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			const isLive = checkLive(agent);
 			const sessionTitle = agent.sessionId ? titleMap.get(agent.sessionId) : undefined;
 			const hasTasks = this.getVisibleTasksFn ? this.getVisibleTasksFn(agent.name).length > 0 : false;
-			const hasChildren = childMap.has(agent.name) || hasTasks;
+			const eph0 = this.ephemeralInfo(agent.name);
+			const hasChildren = childMap.has(agent.name) || hasTasks || eph0.count > 0;
 			const ws = this.watcherStates.get(agent.name);
 			const mtimeMs = agent.sessionId ? this.getSessionMtimeFn?.(agent.sessionId) : undefined;
-			const item = new AgentItem(agent, isLive, sessionTitle, true, hasChildren, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs, this.isBrokenLink(agent.sessionId));
+			const eph = this.ephemeralInfo(agent.name);
+			const item = new AgentItem(agent, isLive, sessionTitle, true, hasChildren, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs, this.isBrokenLink(agent.sessionId), eph.count, eph.lastMs, agent.sessionId ? this.getSessionBytesFn?.(agent.sessionId) : undefined);
 			this.lastAgentItemsByName.set(agent.name, item); // v0.5.17 §4-1: reveal 用
 			result.push(item);
 		}
@@ -603,6 +631,13 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			for (const task of tasks) {
 				result.push(new TaskLogItem(task));
 			}
+		}
+
+		// v0.6.0 R3: Agent ツール経由の一時実行（使い捨て・永続セッションには残らない）
+		//   「見えないまま実行された」状態を無くすのが目的。直近 20 件に絞る。
+		const ephemeralRuns = this.getEphemeralRunsFn?.(element.agent.name) ?? [];
+		for (const run of ephemeralRuns.slice(0, 20)) {
+			result.push(new EphemeralRunItem(run));
 		}
 
 		return result;
@@ -621,6 +656,68 @@ function formatLiveElapsed(ms: number): string {
 	return `${Math.floor(hr / 24)}日`;
 }
 
+/**
+ * v0.6.0 R3/R4: Agent ツール経由の「一時実行」1 件を表す行。
+ *
+ * 永続セッション（🔵 csm-ask-agent 経由）と区別できるよう ⚪ を使い、
+ * ラベルにも「一時実行」と明示する。ここが空だと
+ * 「依頼したはずの作業が履歴に無い」＝ CSM が信用できない、という状態になる。
+ */
+export class EphemeralRunItem extends vscode.TreeItem {
+	constructor(public readonly run: AgentToolRun) {
+		const when = run.timestampMs
+			? new Date(run.timestampMs).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+			: '';
+		super(`⚪ ${run.description || '(説明なし)'}`, vscode.TreeItemCollapsibleState.None);
+		this.description = when ? `一時実行 · ${when}` : '一時実行';
+		this.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('disabledForeground'));
+		this.tooltip = new vscode.MarkdownString(
+			`**⚪ 一時実行（Agent ツール経由）**
+
+` +
+			`| | |
+|---|---|
+` +
+			`| エージェント | ${run.agentName} |
+` +
+			`| 内容 | ${run.description || '(説明なし)'} |
+` +
+			(run.timestampMs ? `| 日時 | ${new Date(run.timestampMs).toLocaleString('ja-JP')} |
+` : '') +
+			`| 呼び出し元 | \`${run.parentSessionId.substring(0, 8)}...\` |
+` +
+			`
+---
+
+` +
+			`この実行は使い捨てで、エージェントの永続セッションには残りません。
+` +
+			`記録を残したい作業は \`/csm-ask-agent\` を使ってください。`
+		);
+		this.contextValue = 'ephemeralRunItem';
+		// クリックで呼び出し元セッションを開く（一時実行そのものは残らないため）
+		this.command = {
+			command: 'claudeManager.openEphemeralRunSource',
+			title: '呼び出し元セッションを開く',
+			arguments: [run],
+		};
+	}
+}
+
+// バイト数を人間が読める形式に変換: 512 B / 1.2 MB / 84.6 MB / 1.3 GB
+export function formatBytes(bytes: number): string {
+	if (!Number.isFinite(bytes) || bytes < 0) { return '不明'; }
+	if (bytes < 1024) { return `${bytes} B`; }
+	const units = ['KB', 'MB', 'GB', 'TB'];
+	let value = bytes / 1024;
+	let unitIndex = 0;
+	while (value >= 1024 && unitIndex < units.length - 1) {
+		value /= 1024;
+		unitIndex++;
+	}
+	return `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
 // エージェント管理サイドバーのTreeItem
 export class AgentItem extends vscode.TreeItem {
 	public readonly agent: AgentConfig;
@@ -637,6 +734,11 @@ export class AgentItem extends vscode.TreeItem {
 		public readonly isOtherProject: boolean = false,
 		mtimeMs?: number,
 		sessionMissing: boolean = false,
+		// v0.6.0 R3/R4: Agent ツール経由の「一時実行」件数（使い捨て・永続セッションには残らない）
+		ephemeralRunCount: number = 0,
+		ephemeralLastMs?: number,
+		// v0.6.0 R5(最小案): 紐づけセッションの JSONL サイズ。肥大化を可視化する
+		sessionBytes?: number,
 	) {
 		// v0.5.14 レビュー修正 (7): modelCatalog.getModelChar() に統一。
 		//   旧: sonnet-1m を '１' 表示していたが、プレビュー（catalog char='Ｓ'）と食い違い。
@@ -706,9 +808,13 @@ export class AgentItem extends vscode.TreeItem {
 		const elapsedForDesc = (isLive && !isOtherProject && mtimeMs !== undefined)
 			? formatLiveElapsed(Date.now() - mtimeMs)
 			: '';
-		this.description = elapsedForDesc
+		// v0.6.0 R4: 一時実行があることを一覧上でも分かるようにする。
+		//   「依頼したはずの作業が履歴に無い」状態を無くすのが目的なので、
+		//   永続セッション（🔵）と使い捨て（⚪）を同じ行で見比べられるようにする。
+		const ephemeralBadge = ephemeralRunCount > 0 ? ` · ⚪${ephemeralRunCount}` : '';
+		this.description = (elapsedForDesc
 			? `${sessionInfo} · ${elapsedForDesc}`
-			: sessionInfo;
+			: sessionInfo) + ephemeralBadge;
 
 		// ツールチップ
 		const modelLine = modelMismatch && actualModel
@@ -727,7 +833,17 @@ export class AgentItem extends vscode.TreeItem {
 			(sessionMissing
 				? `| ⚠ 状態 | 紐づけ ID \`${agent.sessionId?.substring(0, 8)}...\` の JSONL が見つかりません（リンク切れ）。右クリックで再紐づけ／解除できます |\n`
 				: '') +
+			// v0.6.0 R5(最小案): セッション肥大化の可視化。
+			//   数百 MB になると --resume の起動が重くなり、結果として使い捨ての
+			//   Agent ツール実行（＝履歴が残らない経路）へ流れる誘因になる。
+			(sessionBytes !== undefined ? `| セッション容量 | ${formatBytes(sessionBytes)} |\n` : '') +
 			`| 表示 | ${orgChartFlag} |\n` +
+			// v0.6.0 R4: 2 経路の区別を明示する
+			(ephemeralRunCount > 0
+				? `| ⚪ 一時実行 | ${ephemeralRunCount} 件（Agent ツール経由・使い捨て）` +
+				  (ephemeralLastMs ? ` 最終 ${new Date(ephemeralLastMs).toLocaleString('ja-JP')}` : '') +
+				  ` |\n| | この実行は永続セッションには残りません |\n`
+				: '') +
 			(agent.parentAgent ? `| 親エージェント | ${agent.parentAgent} |\n` : '') +
 			(agent.workDir ? `| 作業フォルダ | ${agent.workDir} |\n` : '')
 		);

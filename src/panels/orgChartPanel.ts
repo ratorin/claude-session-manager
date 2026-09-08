@@ -695,7 +695,7 @@ const REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion:
 // ────────────────────────── v0.5.25: ビューポート（zoom/pan） ──────────────────────────
 // 実装は utils/orgChartEngine の zoomAt / screenToWorld / fitToView と等価。
 // マウス座標は全て screenToWorld で必ずワールド座標へ変換してからノード判定に使う。
-const ZOOM_MIN = 0.2, ZOOM_MAX = 4.0;
+const ZOOM_MIN = 0.05, ZOOM_MAX = 4.0; // v0.5.36: 大きく広がった組織図もフィットできるよう下限を拡大
 let viewport = { zoom: 1, panX: 0, panY: 0 };
 let panDrag = null; // 背景パン中の状態: { startSx, startSy, startPanX, startPanY }
 function clampZoom(z) { return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)); }
@@ -760,9 +760,10 @@ function resizeCanvas() {
 function seedPositions() {
 	gnodes.forEach((n, i) => {
 		const ang = i / gnodes.length * Math.PI * 2;
-		const rad = n.parent === null ? 0 : (n.parent === 'director' ? 120 : 210);
-		n.x = W / 2 + Math.cos(ang) * rad + (Math.random() - 0.5) * 30;
-		n.y = H / 2 + Math.sin(ang) * rad + (Math.random() - 0.5) * 30;
+		// v0.5.36: 初期配置を広めに（クランプ撤去に合わせてゆったり展開させる）
+		const rad = n.parent === null ? 0 : (n.parent === 'director' ? 220 : 400);
+		n.x = W / 2 + Math.cos(ang) * rad + (Math.random() - 0.5) * 60;
+		n.y = H / 2 + Math.sin(ang) * rad + (Math.random() - 0.5) * 60;
 	});
 	seeded = true;
 }
@@ -787,7 +788,8 @@ function step(edges) {
 			const a = gnodes[i], b = gnodes[j];
 			let dx = b.x - a.x, dy = b.y - a.y;
 			const d2 = dx * dx + dy * dy || 1; const d = Math.sqrt(d2);
-			const f = Math.min(2200 / d2, 4);
+			// v0.5.36: 反発を強めてノードを広く散らす（枠に詰まる問題の対策）
+			const f = Math.min(4200 / d2, 8);
 			dx /= d; dy /= d;
 			a.vx -= dx * f; a.vy -= dy * f;
 			b.vx += dx * f; b.vy += dy * f;
@@ -796,18 +798,19 @@ function step(edges) {
 	for (const e of edges) {
 		const dx = e.t.x - e.s.x, dy = e.t.y - e.s.y;
 		const d = Math.sqrt(dx * dx + dy * dy) || 1;
-		const ideal = e.kind === 'cmd' ? 110 : 150;
+		// v0.5.36: リンクの理想距離を広げる（ツリーがゆったり展開するように）
+		const ideal = e.kind === 'cmd' ? 130 : 200;
 		const f = (d - ideal) * 0.004;
 		e.s.vx += dx / d * f; e.s.vy += dy / d * f;
 		e.t.vx -= dx / d * f; e.t.vy -= dy / d * f;
 	}
 	for (const n of gnodes) {
-		n.vx += (W / 2 - n.x) * 0.0012; n.vy += (H / 2 - n.y) * 0.0012;
+		// v0.5.36: 中心引力は弱く（圧縮しない程度の緩いアンカー）。
+		//   枠内クランプは撤去 — キャンバスを超えて自由に広がってよい。表示はズーム/フィット/パンで対応する。
+		n.vx += (W / 2 - n.x) * 0.0005; n.vy += (H / 2 - n.y) * 0.0005;
 		if (drag === n) { n.vx = 0; n.vy = 0; continue; }
 		n.vx *= 0.86; n.vy *= 0.86;
 		n.x += n.vx * alpha * 2; n.y += n.vy * alpha * 2;
-		n.x = Math.max(30, Math.min(W - 30, n.x));
-		n.y = Math.max(30, Math.min(H - 30, n.y));
 	}
 	alpha = Math.max(alpha * 0.995, 0.25);
 }
@@ -941,6 +944,9 @@ function kickGraph() {
 		// v0.5.25: 初期表示は全体フィット（多数エージェント時のカオス対策）
 		// simulateStep で位置が安定する前にフィットすると崩れるので、後続の loop で 1 度だけフィット呼び直し。
 		requestAnimationFrame(() => { fitToView(); });
+		// v0.5.36: クランプ撤去でレイアウトは初期から徐々に広がる。展開後に数回フィットし直して枠に収める。
+		setTimeout(() => { fitToView(); }, 500);
+		setTimeout(() => { fitToView(); }, 1200);
 	}
 	alpha = 1;
 	if (!raf) requestAnimationFrame(loop);

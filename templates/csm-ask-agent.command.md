@@ -1,3 +1,4 @@
+<!-- CSM-TEMPLATE-VERSION: 2 -->
 # エージェントに指示を送って結果を受け取る
 
 `$ARGUMENTS` を解析して、指定エージェントに指示を送信し、完了を待って結果を返す。
@@ -32,7 +33,22 @@ python ~/.claude/scripts/csm-ask-agent.py {agent-name}
 `workDir` が空でない場合、必ずそのディレクトリにcdしてから claude を起動する（`--resume` は
 セッション作成時のcwdと同じでないと「No conversation found」エラーになる）。
 
-エラー時は `ERROR:` で始まるメッセージが stderr に出る。
+**v0.6.0 以降のスクリプトの挙動:**
+
+- 定義ファイルは **プロジェクトスコープ → ユーザースコープ** の順で探索される。
+  `<cwd とその祖先>/.claude/agents/` → `<セッションcwd とその祖先>/.claude/agents/` → `~/.claude/agents/`
+  （`CSM_AGENT_DIRS` に os の区切り文字で追加ディレクトリを指定することも可能）
+- 3 番目のフィールドは **セッション実体の cwd**。sessionId がある場合はフロントマターの
+  `workDir` ではなくこちらが返る（`--resume` は cwd 完全一致が必要なため）。
+- **cwd を確定できない場合、空文字ではなくエラー終了する。** 黙って空を返して cd を省くと
+  `--resume` が新規セッションを作り、CSM の紐づけと実体が分離するため。
+- `INFO:` で始まる診断行が stderr に出る（どの定義を読んだか / cwd の由来）。エラーは `ERROR:`。
+
+解決先が想定と違うときは副作用なしで探索順を確認できる:
+
+```bash
+python ~/.claude/scripts/csm-ask-agent.py --where {agent-name}
+```
 
 ### Step 2: 出力ファイル名の生成
 
@@ -123,4 +139,19 @@ cd "{workDir}" && claude --agent "{agent-name}" -p "{指示内容}" \
 
 - `claude -p` 単体（--agent も --resume もなし）は禁止
 - `--continue` は禁止（別エージェントのセッションが割り込む）
-- Agent ツール（subagent_type）は使わない。必ずCLI起動する
+- `--resume` を勝手に外して新規セッションを起動しない（CSM の紐づけと実体が分離する）
+
+## Agent ツール（subagent_type）との使い分け
+
+Agent ツールでの実行は **使い捨て** で、エージェントの永続セッションには一行も残らない。
+CSM 上では「⚪ 一時実行」として件数だけ見える状態になる。
+
+| ケース | 使うもの |
+|---|---|
+| 記録を残すべき作業・継続案件・設定変更・本番操作 | **`/csm-ask-agent`**（この手順） |
+| その場限りの調査・状態確認・並列で投げたい軽い探索 | Agent ツール可。ただし**使い捨てである旨をユーザーに明示する** |
+
+Agent ツールを使った場合は、報告時に「これは一時実行なのでエージェントの履歴には残りません」と
+添えること。ユーザーが CSM で履歴を探して見つからない、という状況を作らない。
+
+詳細: `docs/agent-invocation-architecture.md`

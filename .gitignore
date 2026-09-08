@@ -15,3 +15,4 @@ docs/feedback/
 # 診断レポート・エージェントランタイム生成物 (2026-05-31)
 reports/
 .claude/agents/*/
+__pycache__/

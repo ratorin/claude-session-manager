@@ -15,6 +15,9 @@
 // v0.5.22: claude agents --json 依存を撤去。agentWatcher（PID + sessions/*.json）が
 //   唯一のライブデータソース。sessions/*.json の kind/name/nameSource/agent 等の
 //   公式メタも tooltip / description に反映する。
+// v0.5.37 追記: `claude agents --json` は現在 非 TTY でも利用可能（旧「TTY 必須」は誤り）だが、
+//   情報量とコストの点で sessions/*.json を維持。なお表示できるのは **ローカルセッションのみ**で、
+//   クラウド / Remote Control / teammates はセッション内ツール `ListAgents` からしか見えない。
 
 import * as vscode from 'vscode';
 import * as path from 'path';

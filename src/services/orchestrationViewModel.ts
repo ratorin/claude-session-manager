@@ -2,7 +2,9 @@
  * orchestrationViewModel.ts — オーケストレーション可視化タブのデータモデル構築サービス。
  *
  * v0.5.22: claude agents --json 依存を撤去。agentWatcher（PID + sessions/*.json 監視）が
- * 唯一のライブデータソースとなった。sessions/*.json の kind/name/nameSource/entrypoint/agent
+ * 唯一のライブデータソースとなった。
+ * v0.5.37 追記: `claude agents --json` は現在 非 TTY でも利用可能（旧「TTY 必須」は誤り）。
+ *   情報量・コストの点で sessions/*.json を維持。可視範囲はローカルセッションのみ。sessions/*.json の kind/name/nameSource/entrypoint/agent
  * を公式値として優先利用し、従来の "subagents.length >= 3" ヒューリスティックはフォールバック
  * に降格。
  *

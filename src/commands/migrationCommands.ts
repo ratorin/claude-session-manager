@@ -318,6 +318,46 @@ export function registerMigrationCommands(
 		})
 	);
 	
+	// v0.6.0: /csm-ask-agent テンプレートの更新
+	//   従来 installCsmAskAgent は「既存ファイルはスキップ」だったため、
+	//   一度インストールすると以後の修正が永久に届かなかった（実際に
+	//   ~/.claude/scripts/csm-ask-agent.py が数世代古いまま運用されていた）。
+	//   テンプレート先頭の CSM-TEMPLATE-VERSION を比較し、差があれば更新する。
+	//   ユーザーが手を入れている可能性があるので、旧ファイルはゴミ箱へ退避してから置き換える。
+	context.subscriptions.push(
+		vscode.commands.registerCommand('claudeManager.updateCsmAskAgentTemplates', async () => {
+			try {
+				const outdated = await findOutdatedAskAgentTemplates(context.extensionPath);
+				if (outdated.length === 0) {
+					vscode.window.showInformationMessage('/csm-ask-agent のテンプレートは最新です');
+					return;
+				}
+				const names = outdated.map((t) => path.basename(t.dest)).join(', ');
+				const choice = await vscode.window.showWarningMessage(
+					`/csm-ask-agent のテンプレートが古くなっています（${names}）。更新しますか？`,
+					{ modal: true, detail: '旧ファイルは ~/.claude/.trash/ へ退避してから置き換えます。' },
+					'更新する',
+				);
+				if (choice !== '更新する') { return; }
+
+				for (const t of outdated) {
+					try {
+						await fs.promises.access(t.dest);
+						await moveToTrash(t.dest, path.join(os.homedir(), '.claude', '.trash'));
+					} catch { /* 未インストールならそのまま書く */ }
+					await fs.promises.mkdir(path.dirname(t.dest), { recursive: true });
+					await fs.promises.writeFile(t.dest, t.content, 'utf-8');
+				}
+				const ch = getExtensionOutputChannel();
+				ch.appendLine(`[${new Date().toISOString()}] /csm-ask-agent テンプレートを更新しました（${outdated.length}ファイル）`);
+				vscode.window.showInformationMessage(`/csm-ask-agent を更新しました（${outdated.length}ファイル）`);
+				refreshAll();
+			} catch (err) {
+				vscode.window.showErrorMessage(`更新エラー: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		})
+	);
+
 	// /csm-ask-agent hookインストール（プロジェクトローカル）
 	// v0.4.7: bash+python → Node.js (csm-check-ask-agent.js) に移行
 	context.subscriptions.push(
@@ -388,4 +428,43 @@ export function registerMigrationCommands(
 		})
 	);
 	
+}
+
+
+/** テンプレート先頭の CSM-TEMPLATE-VERSION を読む（無ければ 1 = 初版扱い） */
+export function parseTemplateVersion(content: string): number {
+	const m = content.match(/CSM-TEMPLATE-VERSION:\s*(\d+)/);
+	return m ? parseInt(m[1], 10) : 1;
+}
+
+/** 更新が必要な /csm-ask-agent テンプレートを列挙する */
+export async function findOutdatedAskAgentTemplates(
+	extensionPath: string,
+): Promise<{ dest: string; content: string }[]> {
+	const templatesDir = path.join(extensionPath, 'templates');
+	const claudeDir = path.join(os.homedir(), '.claude');
+	const targets = [
+		{ src: 'csm-ask-agent.command.md', dest: path.join(claudeDir, 'commands', 'csm-ask-agent.md') },
+		{ src: 'csm-ask-agent.py', dest: path.join(claudeDir, 'scripts', 'csm-ask-agent.py') },
+	];
+
+	const outdated: { dest: string; content: string }[] = [];
+	for (const t of targets) {
+		let content: string;
+		try {
+			content = await fs.promises.readFile(path.join(templatesDir, t.src), 'utf-8');
+		} catch {
+			continue; // テンプレートが無い（開発中など）
+		}
+		let installed = '';
+		try {
+			installed = await fs.promises.readFile(t.dest, 'utf-8');
+		} catch {
+			continue; // 未インストールは installCsmAskAgent の管轄
+		}
+		if (parseTemplateVersion(installed) < parseTemplateVersion(content)) {
+			outdated.push({ dest: t.dest, content });
+		}
+	}
+	return outdated;
 }

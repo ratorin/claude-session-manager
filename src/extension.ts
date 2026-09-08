@@ -31,7 +31,11 @@ import { initErrorReporter, logError } from './utils/errorReporter';
 import { MainTabPanel } from './panels/mainTabPanel';
 import { HelpFeedbackProvider } from './providers/helpFeedbackProvider';
 import { setLocale, setAutoTranslate } from './services/i18nService';
-// v0.5.22: ClaudeAgentsService は撤去（claude agents --json は TTY 必須で拡張ホストから使用不可）。
+import { AgentToolRunTracker, AgentToolRun, findEphemeralTranscript } from './services/agentToolRunService';
+import { findOutdatedAskAgentTemplates } from './commands/migrationCommands';
+// v0.5.22: ClaudeAgentsService は撤去。
+//   ※ 撤去理由だった「claude agents --json は TTY 必須」は CC 2.1.2xx 現在は誤り（非 TTY でも可）。
+//     ただし sessions/*.json の方が情報が多く低コストなため主データ源は据え置き。詳細は liveAgentTypes.ts。
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -232,6 +236,59 @@ export function activate(context: vscode.ExtensionContext) {
 	// TaskTracker → AgentTreeProvider 連携
 	agentProvider.setTaskProvider((agentName) => taskTracker.getVisibleTasksForAgent(agentName));
 
+	// v0.6.0 R3/R4/R5: Agent ツール経由の「一時実行」を可視化する
+	//   docs/agent-invocation-architecture.md 参照。
+	//   親セッション JSONL は数百 MB になりうるので走査は必ず非同期＋増分で行い、
+	//   TreeProvider へは集計済みのメモリ結果だけを同期参照させる。
+	const agentToolRunTracker = new AgentToolRunTracker();
+	agentProvider.setEphemeralRunProvider((agentName) => agentToolRunTracker.getRuns(agentName));
+	agentProvider.setSessionBytesProvider((sessionId) => agentToolRunTracker.getSessionBytes(sessionId));
+
+	// 走査対象は「エージェントに紐づいたセッション」= 依頼を出す側の親セッション。
+	// 全セッションを舐めると数 GB になるため、対象を紐づけ済みに限定する。
+	const refreshAgentToolRuns = async (): Promise<void> => {
+		try {
+			const agents = await dataStore.getAgents();
+			const sessionIds = agents.map((a) => a.sessionId).filter((id): id is string => !!id);
+			if (sessionIds.length === 0) { return; }
+			const changed = await agentToolRunTracker.refresh(sessionIds);
+			if (changed) { agentProvider.refresh(); }
+		} catch (e) {
+			void logError('warn', 'refreshAgentToolRuns', e);
+		}
+	};
+	// v0.6.0: /csm-ask-agent テンプレートの更新チェック。
+	//   インストール時に「既存はスキップ」していたため、修正が届かないまま
+	//   古いスクリプトが動き続ける事故があった。起動時に一度だけ通知する。
+	const askAgentTemplateTimer = setTimeout(() => {
+		void (async () => {
+			try {
+				const outdated = await findOutdatedAskAgentTemplates(context.extensionPath);
+				if (outdated.length === 0) { return; }
+				const choice = await vscode.window.showInformationMessage(
+					`/csm-ask-agent のスクリプトが古いままです（${outdated.length}ファイル）。更新すると紐づけ解決の不具合が直ります。`,
+					'更新する', '後で',
+				);
+				if (choice === '更新する') {
+					await vscode.commands.executeCommand('claudeManager.updateCsmAskAgentTemplates');
+				}
+			} catch (e) {
+				void logError('warn', 'askAgentTemplateCheck', e);
+			}
+		})();
+	}, 12000);
+	context.subscriptions.push({ dispose: () => clearTimeout(askAgentTemplateTimer) });
+
+	// 初回は起動直後の負荷を避けて少し遅らせる
+	const agentToolRunInitialTimer = setTimeout(() => { void refreshAgentToolRuns(); }, 8000);
+	const agentToolRunPollTimer = setInterval(() => { void refreshAgentToolRuns(); }, 5 * 60 * 1000);
+	context.subscriptions.push({
+		dispose: () => {
+			clearTimeout(agentToolRunInitialTimer);
+			clearInterval(agentToolRunPollTimer);
+		},
+	});
+
 	// AgentWatcher のイベントでステータスバー＋ツリーをリフレッシュ
 	agentWatcher.onDidChange(() => {
 		updateStatusBar();
@@ -262,7 +319,8 @@ export function activate(context: vscode.ExtensionContext) {
 	sessionProvider.setGroupMode(initialGroupMode as 'date' | 'tag' | 'agent' | 'flat');
 
 	// v0.5.22: ClaudeAgentsService（claude agents --json 依存）を撤去。
-	//   agentWatcher の PID + sessions/*.json 監視が唯一のライブデータソース。
+	//   agentWatcher の PID + sessions/*.json 監視がライブデータソース。
+	//   （注: `claude agents --json` は現在 非 TTY でも利用可。経緯は liveAgentTypes.ts のコメント参照）
 	agentLiveProvider.setAgentWatcher(agentWatcher);
 	orchestrationProvider.setAgentWatcher(agentWatcher);
 
@@ -705,6 +763,26 @@ export function activate(context: vscode.ExtensionContext) {
 			vscode.window.showInformationMessage('オーケストレーション状態を更新しました');
 		}),
 		// v0.5.29: 共通ヘルパー経由。orchestration session は cwd を既に持っているので直渡し。
+		// v0.6.0 R3: 一時実行（Agent ツール経由）の行をクリックしたとき。
+		//   一時実行そのものは永続セッションを持たないので、
+		//   トランスクリプトが一時領域に残っていればそれを、無ければ呼び出し元セッションを開く。
+		vscode.commands.registerCommand('claudeManager.openEphemeralRunSource', async (run: AgentToolRun) => {
+			if (!run) { return; }
+			const transcript = await findEphemeralTranscript(run.parentSessionId, run.agentName);
+			if (transcript) {
+				const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(transcript));
+				await vscode.window.showTextDocument(doc, { preview: true });
+				return;
+			}
+			const choice = await vscode.window.showInformationMessage(
+				`「${run.description || run.agentName}」は Agent ツール経由の一時実行です。`
+				+ '会話は使い捨てで、一時領域からも既に削除されています。',
+				'呼び出し元セッションを開く',
+			);
+			if (choice && run.parentSessionId) {
+				await openSessionInClaudeSmart({ sessionId: run.parentSessionId });
+			}
+		}),
 		vscode.commands.registerCommand('claudeManager.openSessionInOrchestration', async (session: import('./services/orchestrationViewModel').OrchestrationSession) => {
 			if (session.sessionId) {
 				await openSessionInClaudeSmart({
