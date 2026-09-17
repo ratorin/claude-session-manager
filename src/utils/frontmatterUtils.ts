@@ -296,3 +296,49 @@ export function parseFrontmatterExtended(content: string): ParsedFrontmatterExte
 
 	return { data, body };
 }
+
+/**
+ * フロントマターのうち、CSM が管理していないトップレベルキーのブロックを原文のまま取り出す。
+ *
+ * 背景: CSM の保存処理は既知キーだけを組み立て直すため、Claude Code 本体が後から追加したキー
+ * （例: CC 2.1.271 の `omitClaudeMd`、他に `skills` / `hooks` / `mcpServers` / `color` など）を
+ * ユーザーが手で書いていても、フォームから保存した瞬間に黙って消えていた。
+ * 本体側のキー追加に CSM が追従し続けるのは現実的でないので、知らないキーは触らず残す。
+ *
+ * 1 ブロック = トップレベルキーの行 + それに続くインデント行（ネストした YAML や複数行値）。
+ * 戻り値は行の配列で、そのままフロントマター末尾に差し込める。
+ */
+export function extractUnmanagedFrontmatterLines(
+	content: string,
+	managedKeys: ReadonlySet<string>,
+): string[] {
+	const bounds = findBounds(content);
+	if (!bounds) { return []; }
+
+	const yamlLines = content
+		.substring(bounds.yamlStart, bounds.yamlEnd)
+		.split('\n')
+		.map((line) => line.replace(/\r$/, ''));
+
+	const kept: string[] = [];
+	let keeping = false;
+	for (const line of yamlLines) {
+		const keyMatch = line.match(/^([A-Za-z_][\w-]*):/);
+		if (keyMatch) {
+			// 新しいトップレベルキー。管理外なら保持を開始、管理対象なら保持を止める。
+			keeping = !managedKeys.has(keyMatch[1]);
+		} else if (line.trim() === '' || /^#/.test(line)) {
+			// 空行・トップレベルのコメントはブロックの所属が曖昧なので、保持中のブロックにだけ付ける
+			if (!keeping) { continue; }
+		} else if (!/^\s/.test(line)) {
+			// インデントの無い非キー行（壊れた YAML）。どのブロックにも属さないので捨てる
+			keeping = false;
+			continue;
+		}
+		if (keeping) { kept.push(line); }
+	}
+
+	// 末尾の空行は落とす（閉じ --- の直前に空行が溜まっていくのを防ぐ）
+	while (kept.length > 0 && kept[kept.length - 1].trim() === '') { kept.pop(); }
+	return kept;
+}

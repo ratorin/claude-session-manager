@@ -8,7 +8,7 @@ import * as os from 'os';
 import * as vscode from 'vscode';
 import { AgentConfig } from '../models/types';
 import { CsmModel } from '../models/modelCatalog';
-import { sanitizeForYaml, parseFrontmatterExtended } from '../utils/frontmatterUtils';
+import { sanitizeForYaml, parseFrontmatterExtended, extractUnmanagedFrontmatterLines } from '../utils/frontmatterUtils';
 import { modelCliMap } from '../utils/cliBuilder';
 import { normalizeModel, normalizeStatus, moveToTrash } from '../utils/agentUtils';
 
@@ -417,7 +417,12 @@ export async function writeAgentFile(def: Partial<AgentDefinition> & { name: str
 	}
 
 	const body = def.body !== undefined ? def.body : existingBody;
-	const frontmatter = buildFrontmatter(def);
+	// CSM が管理していないキー（CC 本体が後から追加した omitClaudeMd 等）は原文のまま引き継ぐ。
+	// 同名の別エージェントによる上書き・破損ファイルの作り直しでは、前の定義の持ち物なので引き継がない。
+	const carriedOver = (existingRaw !== undefined && !parseFailed && !suspiciousOverwrite)
+		? extractUnmanagedFrontmatterLines(existingRaw, MANAGED_FRONTMATTER_KEYS)
+		: [];
+	const frontmatter = buildFrontmatter(def, carriedOver);
 	const content = frontmatter + '\n' + body;
 
 	await fs.promises.writeFile(filePath, content, 'utf-8');
@@ -466,7 +471,21 @@ function quoteYamlValue(value: string): string {
 }
 
 // フロントマターを構築
-function buildFrontmatter(def: Partial<AgentDefinition> & { name: string }): string {
+/**
+ * buildFrontmatter が書き出すキーの一覧。ここに無いキーは CSM の管理外として原文のまま保持される。
+ * buildFrontmatter にキーを足したら必ずここにも足すこと（足し忘れると同じキーが 2 回出力される）。
+ */
+export const MANAGED_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
+	'name', 'displayName', 'description', 'displayDescription', 'model', 'memory', 'tools',
+	'permissionMode', 'historyEnabled', 'historyScope', 'todoEnabled', 'isolation', 'background',
+	'maxTurns', 'parentAgent', 'status', 'workDir', 'role', 'displayRole', 'effort',
+	'thinkingEnabled', 'showInOrgChart',
+]);
+
+function buildFrontmatter(
+	def: Partial<AgentDefinition> & { name: string },
+	unmanagedLines: readonly string[] = [],
+): string {
 	const lines: string[] = ['---'];
 
 	lines.push(`name: ${quoteYamlValue(def.name)}`);
@@ -497,6 +516,9 @@ function buildFrontmatter(def: Partial<AgentDefinition> & { name: string }): str
 	if (def.showInOrgChart !== undefined) {
 		lines.push(`showInOrgChart: ${def.showInOrgChart}`);
 	}
+
+	// CSM 管理外のキーは末尾にそのまま戻す
+	lines.push(...unmanagedLines);
 
 	lines.push('---');
 	return lines.join('\n');
