@@ -661,7 +661,7 @@ ${/* v0.5.16 M-10: effort に「未設定（継承）」を追加。
 		</div>
 		<div class="radio-option" id="effort-option-high">
 			<input type="radio" name="effort" id="effort-high" value="high" ${v.effort === 'high' ? 'checked' : ''}>
-			<label for="effort-high">High<div class="radio-sub">深い推論（Opus 4.8 デフォルト・推奨）</div></label>
+			<label for="effort-high">High<div class="radio-sub">深い推論（Opus / Fable の既定・推奨）</div></label>
 		</div>
 		<div class="radio-option" id="effort-option-xhigh">
 			<input type="radio" name="effort" id="effort-xhigh" value="xhigh" ${v.effort === 'xhigh' ? 'checked' : ''}>
@@ -709,12 +709,12 @@ ${/* v0.5.16 M-10: effort に「未設定（継承）」を追加。
 
 <div class="form-group">
 	<label class="form-label">権限モード（Permission Mode）</label>
-	<div class="form-desc">/ask-agent で呼び出す時の権限レベル。-p モードでは acceptEdits か auto を推奨</div>
+	<div class="form-desc">/csm-ask-agent で呼び出す時の権限レベル。-p モードでは acceptEdits か auto を推奨。未設定のままだと、対話セッションは auto（Claude Code 2.1.284 以降の既定）、-p は毎回確認相当で動く</div>
 	${/* v0.5.16 M-10: permissionMode に「未設定（継承）」を追加。
 	   旧: 既定が acceptEdits で自動 selected → CSM 経由起動が「毎回確認」→「編集自動許可」に権限拡大
 	   新: 既存値が空なら inherit を選択状態にし、getFormData で inherit → undefined（frontmatter に書かない） */''}
 	<select id="permissionMode">
-		<option value="__inherit__" ${!(v as any).permissionMode ? 'selected' : ''}>未設定（継承） — CC 側/呼出コンテキストに委ねる</option>
+		<option value="__inherit__" ${!(v as any).permissionMode ? 'selected' : ''}>未設定（継承） — 対話なら auto、-p なら呼出側に委ねる</option>
 		<option value="acceptEdits" ${(v as any).permissionMode === 'acceptEdits' ? 'selected' : ''}>acceptEdits（編集自動許可・推奨）</option>
 		<option value="auto" ${(v as any).permissionMode === 'auto' ? 'selected' : ''}>auto（ほぼ全自動）</option>
 		<option value="plan" ${(v as any).permissionMode === 'plan' ? 'selected' : ''}>plan（計画のみ・対話用）</option>

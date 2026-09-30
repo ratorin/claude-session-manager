@@ -89,7 +89,7 @@ export const MODEL_CATALOG: Record<CsmModel, ModelDefinition> = {
 		themeColor: 'charts.purple',
 		is1m: false,
 		allowsMaxEffort: true,
-		description: 'Opus（最新世代） — 最高度の判断・複雑な開発（デフォルト high effort）',
+		description: 'Opus（最新世代） — 最高度の判断・複雑な開発。Opus 5.5 以降は無印でも 1M コンテキスト',
 	},
 	'opus-1m': {
 		cliValue: 'opus[1m]',
@@ -100,7 +100,7 @@ export const MODEL_CATALOG: Record<CsmModel, ModelDefinition> = {
 		themeColor: 'charts.purple',
 		is1m: true,
 		allowsMaxEffort: true,
-		description: 'Opus（最新世代） + 1M 長文コンテキスト（大規模調査・大量ファイル）',
+		description: 'Opus + [1m] 明示。Opus 5.5 以降は無印と同じ 1M なので差は無い（旧世代との互換用）',
 	},
 	sonnet: {
 		cliValue: 'sonnet',
@@ -111,7 +111,7 @@ export const MODEL_CATALOG: Record<CsmModel, ModelDefinition> = {
 		themeColor: 'charts.blue',
 		is1m: false,
 		allowsMaxEffort: true,
-		description: 'Sonnet（最新世代） — 定型作業・補助（コスト効率◎）',
+		description: 'Sonnet（最新世代） — 定型作業・補助（コスト効率◎）。Sonnet 5.5 以降は無印でも 1M',
 	},
 	'sonnet-1m': {
 		cliValue: 'sonnet[1m]',
@@ -122,7 +122,7 @@ export const MODEL_CATALOG: Record<CsmModel, ModelDefinition> = {
 		themeColor: 'charts.blue',
 		is1m: true,
 		allowsMaxEffort: true,
-		description: 'Sonnet（最新世代） + 1M 長文コンテキスト・定型作業',
+		description: 'Sonnet + [1m] 明示。Sonnet 5.5 以降は無印と同じ 1M なので差は無い（旧世代との互換用）',
 	},
 	haiku: {
 		cliValue: 'haiku',

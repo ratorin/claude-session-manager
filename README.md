@@ -20,6 +20,15 @@
 ### Claude Code への追従
 
 - **モデル**: `fable` / `fable-1m` / `opus` / `opus-1m` / `sonnet` / `sonnet-1m` / `haiku` を選択可能。frontmatter にはエイリアス（例: `fable`, `opus[1m]`）を書き、Claude Code が起動時に最新モデルへ解決します。
+  - **Opus 5.5 / Sonnet 5.5**（Claude Code 2.1.280 / 2.1.284）は **1M コンテキストが標準**です。エイリアス運用なので CSM 側の変更なしで新世代に解決されます。
+    `opus[1m]` / `sonnet[1m]` は 5.5 世代では無印と同じ意味になります（書いても無害）。
+- **権限モードの既定**（2.1.284〜）: 対話セッションは何も設定しなければ **auto** で始まります。`-p`（`/csm-ask-agent`）は対象外で、従来どおり `acceptEdits` を推奨します。
+- **`-p` の自動タイトル廃止**（2.1.277〜）: `claude -p` から新規に始めたセッションには自動タイトルが付きません。
+  `/csm-ask-agent` を紐づけ無しから新規起動した場合、CSM の一覧では先頭メッセージが表示名になります。必要なら CSM の名前変更で付けてください。
+- **稼働中セッションへの `--resume`**（2.1.285〜）: バックグラウンドで動いているセッションに `--resume` すると、拒否せず**そのセッションに接続してプロンプトを次のターンとして送る**ようになりました。
+  同じエージェントのセッションを別経路で動かしている最中に `/csm-ask-agent` を投げると、報告がそちらに混ざります。
+- **`claude --desktop`**（2.1.285〜）: Claude Desktop アプリでセッションを開くフラグ。CSM の「Claude で開く」は未対応です（Desktop 利用者からの要望があれば追加します）。
+- **`/doctor prompt-audit`**（2.1.283〜）: CLAUDE.md・エージェント定義・スキルを走査して、古いモデル向けの書き方を指摘します。エージェント定義を育てている環境では一度かける価値があります。
 - **effort**: `low` / `medium` / `high` / `xhigh` / `max` の 5 段階。`max` は全モデル選択可（コスト大につき Opus / Fable 系推奨）。
 - **hook**: `SubagentStart` / `SubagentStop` を利用（サブエージェント可視化）。
 - **subagent frontmatter**: `model` / `effort` / `permissionMode` / `allowedTools` / `isolation` / `background` / `maxTurns` をフォームから編集可能。
@@ -451,6 +460,7 @@ code --install-extension claude-session-manager-0.5.31.vsix
 
 詳細な変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。直近の主な変更:
 
+- **v0.6.2** — Claude Code 2.1.285 追従（Opus 5.5 / Sonnet 5.5・権限既定 auto・`-p` 自動タイトル廃止・稼働中セッションへの `--resume` の文言更新）
 - **v0.6.1** — フォーム保存で frontmatter の未知キー（`omitClaudeMd` 等）が消える不具合を修正、Claude Code 2.1.274 追従
 - **v0.6.0** — Agent ツール経由の **⚪ 一時実行**を可視化、`/csm-ask-agent` の紐づけ解決を修正（プロジェクトスコープ対応・`--resume` の cwd をセッション実体から取得）、テンプレート更新経路の追加、セッション容量表示
 - **v0.5.36** — 組織図グラフが狭い枠に詰まる不具合の修正
