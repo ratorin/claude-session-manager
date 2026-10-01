@@ -3,7 +3,7 @@
 - 作成日: 2026-10-01
 - 対象: Claude Session Manager（CSM）開発担当
 - リポジトリ: `C:\xampp\Project\claude-session-manager`（ブランチ master、基点コミット `106eaaf` = v0.6.2）
-- 状態: **コミット済み（`e789d6e`）、vsix 作成済み、VS Code / Cursor とも 0.6.3 をインストール済み。実機のボタン操作での確認のみ未実施。**（10 章参照）
+- 状態: **コミット済み（`e789d6e`）、vsix 作成済み、VS Code / Cursor とも 0.6.3 をインストール済み。「▶ Claude で開く」は利用者が実機で確認済み。Marketplace に 0.6.3 を公開済み。**（10 章参照）
 
 ## 1. 要点
 
@@ -212,7 +212,8 @@ CSM 側で検討できること。
 | vsix の作成 | `claude-session-manager-0.6.3.vsix`（290 files, 1.16 MB） |
 | VS Code へのインストール | 0.5.37 → **0.6.3**。`out` に `readLaunchCwd` が入っていることを確認 |
 | Cursor へのインストール | 0.6.2 → **0.6.3**。同上 |
-| 実機での動作確認（7 章） | **未実施**。ボタン操作が必要なため利用者に依頼。ウィンドウの再読み込みが必要 |
+| 実機での動作確認（7 章） | 「▶ Claude で開く」で正しく開くことを利用者が確認（2026-10-01、0.6.3）。「ターミナルで再開」と別プロジェクトのセッション（手順 4・5）は報告なし |
+| 公開 | gitea / GitHub に push 済み。VS Code Marketplace に 0.6.3 を公開済み。Open VSX は利用者のトークンで公開待ち |
 
 ### レビューで確認したこと
 
@@ -225,7 +226,8 @@ CSM 側で検討できること。
 
 ### 6 章の訂正: VS Code が 0.5.37 のままだった理由
 
-このマシンでは PATH 上の `code` が **Cursor の CLI**（`...\cursoresourcespp\codeBin\code`）を指している。
+このマシンでは PATH 上の `code` が **Cursor の CLI**（`...\cursor
+esourcespp\codeBin\code`）を指している。
 v0.6.0〜v0.6.2 は `code --install-extension` で入れていたため Cursor にしか入らず、VS Code は 0.5.37 で止まっていた。
 今回は VS Code 本体の CLI（`...\Microsoft VS Codein\code`）をフルパスで呼んで入れている。
 
