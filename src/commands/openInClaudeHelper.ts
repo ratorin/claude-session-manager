@@ -16,7 +16,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { translateWorkDirPath } from '../utils/agentUtils';
-import { sessionFileExists } from '../utils/sessionLoader';
+import { sessionFileExists, readLaunchCwd } from '../utils/sessionLoader';
 import {
 	resolveOpenInClaudeTargetFolder,
 	needsNewWindowForClaudeOpen,
@@ -34,7 +34,8 @@ export interface OpenInClaudeOptions {
 	workDir?: string;
 	/**
 	 * 事前に sessionCwd が分かっている場合の直渡し（例: OrchestrationSession.cwd）。
-	 * 未指定なら本ヘルパーが `~/.claude/projects/<slug>/<sid>.jsonl` の先頭 16KB を走査して取得する。
+	 * 本ヘルパーは `~/.claude/projects/<slug>/<sid>.jsonl` から得た起動時 cwd を優先し、
+	 * JSONL が見つからないときだけこの値を使う（v0.6.3）。
 	 */
 	sessionCwd?: string;
 }
@@ -67,8 +68,11 @@ export async function openSessionInClaudeSmart(opts: OpenInClaudeOptions): Promi
 		return;
 	}
 
-	// 1) sessionCwd 解決（呼び出し側が既に渡していれば skip、なければ JSONL から取得）
-	const sessionCwd = opts.sessionCwd ?? await resolveSessionCwd(sid);
+	// 1) sessionCwd 解決。JSONL 先頭の cwd（= 起動時の cwd）を正とする。
+	//   v0.6.3: 呼び出し側の sessionCwd はセッション中に cd した先のことがあり、そのフォルダで
+	//   新ウィンドウを開くと Claude Code 側がセッションを見つけられない。
+	//   JSONL が無いとき（Orchestration 等の CSV 由来）だけ渡された値を採用する。
+	const sessionCwd = (await resolveSessionCwd(sid)) ?? opts.sessionCwd;
 
 	// 2) 対象フォルダ決定 + 新ウィンドウ要否判定
 	const wsFolders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
@@ -118,8 +122,9 @@ export async function openSessionInClaudeSmart(opts: OpenInClaudeOptions): Promi
 }
 
 /**
- * `~/.claude/projects/<slug>/<sid>.jsonl` の先頭 16KB を走査し、最初の `cwd` フィールドを取り出す。
+ * `~/.claude/projects/<slug>/<sid>.jsonl` から起動時の `cwd`（最初に cwd を持つ行の値）を取り出す。
  * v0.5.27 で `openAgentInClaude` にインラインで書かれていた処理を関数化（重複排除）。
+ * v0.6.3: 先頭 16KB 固定読みをやめ、行単位で読む readLaunchCwd に委譲（先頭に巨大な行があると取りこぼしていた）。
  *
  * 見つからないケース（他プロジェクト由来 / JSONL 未生成 / IO エラー）は undefined を返す。
  */
@@ -129,23 +134,9 @@ export async function resolveSessionCwd(sessionId: string): Promise<string | und
 		const entries = await fs.promises.readdir(projectsDir, { withFileTypes: true });
 		for (const e of entries) {
 			if (!e.isDirectory()) { continue; }
-			const jsonlPath = path.join(projectsDir, e.name, `${sessionId}.jsonl`);
-			try {
-				await fs.promises.access(jsonlPath);
-				const handle = await fs.promises.open(jsonlPath, 'r');
-				try {
-					const buf = Buffer.alloc(16 * 1024);
-					await handle.read(buf, 0, 16 * 1024, 0);
-					const lines = buf.toString('utf-8').split('\n');
-					for (const line of lines) {
-						if (!line.trim()) { continue; }
-						try {
-							const entry = JSON.parse(line);
-							if (entry.cwd) { return String(entry.cwd); }
-						} catch { /* 壊れた行はスキップ */ }
-					}
-				} finally { await handle.close(); }
-			} catch { /* jsonl 無し → 次の projects/ サブディレクトリへ */ }
+			// jsonl 無し・cwd 行無しは undefined → 次の projects/ サブディレクトリへ
+			const cwd = await readLaunchCwd(path.join(projectsDir, e.name, `${sessionId}.jsonl`));
+			if (cwd) { return cwd; }
 		}
 	} catch { /* projects ディレクトリなし → undefined */ }
 	return undefined;

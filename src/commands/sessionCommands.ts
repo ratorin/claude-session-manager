@@ -255,8 +255,9 @@ export function registerSessionCommands(
 	);
 
 	// Claude Codeで開く
-	// v0.5.29: 共通ヘルパー openSessionInClaudeSmart 経由。sessionCwd は SessionItem.session に既にある
-	//   （JSONL 解析済み）ので明示的に渡し、余計な JSONL 再走査を回避する。
+	// v0.5.29: 共通ヘルパー openSessionInClaudeSmart 経由。
+	// v0.6.3: 開き先はヘルパーが JSONL の起動時 cwd で決める。ここで渡す sessionCwd は
+	//   JSONL が見つからないときのフォールバックにだけ使われる。
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claudeManager.openInClaude', async (item: SessionItem) => {
 			await openSessionInClaudeSmart({

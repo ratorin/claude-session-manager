@@ -240,8 +240,9 @@ export async function showSessionPreview(session: ParsedSession, context: vscode
 				// v0.5.19: Claude Code「拡張」のUIでセッションを開く。
 				//   セッションツリー右クリックの claudeManager.openInClaude と同一経路
 				//   （sessionCommands.ts 参照）: URI ハンドラ経由で拡張がセッションを resume する。
-				// v0.5.29: 共通ヘルパー openSessionInClaudeSmart 経由。currentFullSession.cwd が既に
-				//   JSONL から取れているので sessionCwd を直渡し（JSONL 再走査を回避）。
+				// v0.5.29: 共通ヘルパー openSessionInClaudeSmart 経由。
+				// v0.6.3: 開き先はヘルパーが JSONL の起動時 cwd で決める。ここで渡す sessionCwd は
+				//   JSONL が見つからないときのフォールバックにだけ使われる。
 				await openSessionInClaudeSmart({
 					sessionId: sid,
 					sessionCwd: currentFullSession?.cwd,

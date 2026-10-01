@@ -933,6 +933,60 @@ export async function loadSessionFull(filePath: string, showThinking: boolean = 
 
 const TAIL_CHUNK_BYTES = 1024 * 1024; // 1MB
 const HEAD_META_BYTES  = 64 * 1024;   // 64KB（メタデータ補完用）
+const LAUNCH_CWD_CHUNK_BYTES = 64 * 1024;       // 起動時 cwd 探索の読み取り単位
+const LAUNCH_CWD_SCAN_LIMIT_BYTES = 1024 * 1024; // 同・探索上限（先頭の巨大行は実測で最大 190KB 超）
+const NEWLINE_BYTE = 0x0a;
+
+/** JSONL の 1 行から cwd を取り出す（cwd を持たない行・壊れた行は undefined） */
+function cwdOfJsonlLine(line: string): string | undefined {
+	if (!line.includes('"cwd"')) { return undefined; }
+	try {
+		const parsed = JSON.parse(line);
+		return parsed.cwd ? String(parsed.cwd) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * セッション JSONL から「起動時の cwd」（最初に cwd を持つ行の値）を返す。
+ *
+ * Claude Code は起動時 cwd に対応する `projects/<slug>` でセッションを探すため、
+ * resume や「Claude で開く」の開き先はこの値で決める（v0.6.3）。
+ * 先頭に cwd を持たない巨大な行（貼り付け・スナップショット）があっても届くよう、
+ * 固定バイト数で打ち切らず行単位で読み進める。
+ *
+ * ファイルが無い・探索上限内に cwd 行が無い場合は undefined。
+ */
+export async function readLaunchCwd(filePath: string): Promise<string | undefined> {
+	let handle: fs.promises.FileHandle | undefined;
+	try {
+		handle = await fs.promises.open(filePath, 'r');
+		const chunk = Buffer.alloc(LAUNCH_CWD_CHUNK_BYTES);
+		let pending: Buffer = Buffer.alloc(0);
+		let offset = 0;
+		while (offset < LAUNCH_CWD_SCAN_LIMIT_BYTES) {
+			const { bytesRead } = await handle.read(chunk, 0, chunk.length, offset);
+			if (bytesRead === 0) { break; }
+			offset += bytesRead;
+			// マルチバイト文字がチャンク境界で割れないよう、バイト列のまま改行で区切る
+			pending = Buffer.concat([pending, chunk.subarray(0, bytesRead)]);
+			let newlineAt = pending.indexOf(NEWLINE_BYTE);
+			while (newlineAt !== -1) {
+				const cwd = cwdOfJsonlLine(pending.subarray(0, newlineAt).toString('utf-8'));
+				if (cwd) { return cwd; }
+				pending = pending.subarray(newlineAt + 1);
+				newlineAt = pending.indexOf(NEWLINE_BYTE);
+			}
+		}
+		// 末尾に改行の無い最終行
+		return cwdOfJsonlLine(pending.toString('utf-8'));
+	} catch {
+		return undefined;
+	} finally {
+		await handle?.close();
+	}
+}
 
 /**
  * ファイル末尾から N 個の非空行を効率的に読み取る。
@@ -1063,6 +1117,11 @@ export async function loadSessionTail(
 		if (messages.length > maxInitialMessages) {
 			messages = messages.slice(messages.length - maxInitialMessages);
 		}
+
+		// v0.6.3: cwd は「起動時の cwd」を正とする。tail 側の cwd はセッション中に cd した先の
+		//   ことがあり、resume や「Claude で開く」の開き先に使うと JSONL の置き場所
+		//   （projects/<slug>）と食い違って "セッションが見つからない" になる。
+		cwd = (await readLaunchCwd(filePath)) || cwd;
 
 		// メタデータが tail だけで揃わないケースは、先頭 64KB を読み足して補う
 		const needsHeadFill = !cwd || !model || !sessionId || !firstUserMessage;

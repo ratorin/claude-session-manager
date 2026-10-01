@@ -2061,8 +2061,9 @@ test('W1 openInClaudeHelper.ts が存在し、期待の export と分岐を持�
 	assert.match(src, /export\s+interface\s+OpenInClaudeOptions/, 'OpenInClaudeOptions 型');
 	// setTimeout ベースの URI ベストエフォート送信（v0.5.27 のロジック保持）
 	assert.match(src, /setTimeout\(\s*\(\)\s*=>\s*\{\s*void\s+vscode\.env\.openExternal/, 'setTimeout で URI ベストエフォート送信');
-	// ヘルパーは opts.sessionCwd を優先使用（呼び出し側が持っている cwd を尊重）
-	assert.match(src, /opts\.sessionCwd\s*\?\?\s*await\s+resolveSessionCwd/, 'sessionCwd 優先、無ければ JSONL 走査');
+	// v0.6.3: JSONL 先頭の cwd（起動時 cwd）を優先し、JSONL が無いときだけ opts.sessionCwd を使う。
+	//   呼び出し側の cwd はセッション中の cd 先のことがあり、開き先フォルダを誤るため（open-in-claude-cwd.test.js 参照）。
+	assert.match(src, /\(\s*await\s+resolveSessionCwd\(sid\)\s*\)\s*\?\?\s*opts\.sessionCwd/, 'JSONL 先頭 cwd 優先、無ければ渡された sessionCwd');
 });
 
 test('W2 openExternal(uri) を直接呼ぶ「Claude で開く」経路が撤去されていること', () => {

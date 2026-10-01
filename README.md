@@ -460,6 +460,7 @@ code --install-extension claude-session-manager-0.5.31.vsix
 
 詳細な変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。直近の主な変更:
 
+- **v0.6.3** — 会話ビューワーの「Claude で開く」「ターミナルで再開」が、セッション中に `cd` していると別フォルダで開いて復元できない不具合を修正
 - **v0.6.2** — Claude Code 2.1.285 追従（Opus 5.5 / Sonnet 5.5・権限既定 auto・`-p` 自動タイトル廃止・稼働中セッションへの `--resume` の文言更新）
 - **v0.6.1** — フォーム保存で frontmatter の未知キー（`omitClaudeMd` 等）が消える不具合を修正、Claude Code 2.1.274 追従
 - **v0.6.0** — Agent ツール経由の **⚪ 一時実行**を可視化、`/csm-ask-agent` の紐づけ解決を修正（プロジェクトスコープ対応・`--resume` の cwd をセッション実体から取得）、テンプレート更新経路の追加、セッション容量表示
