@@ -3,7 +3,7 @@
 - 作成日: 2026-10-01
 - 対象: Claude Session Manager（CSM）開発担当
 - リポジトリ: `C:\xampp\Project\claude-session-manager`（ブランチ master、基点コミット `106eaaf` = v0.6.2）
-- 状態: **修正はソースに入っているが未コミット。vsix 未作成。実機のボタン操作での確認は未実施。**
+- 状態: **コミット済み（`e789d6e`）、vsix 作成済み、VS Code / Cursor とも 0.6.3 をインストール済み。実機のボタン操作での確認のみ未実施。**（10 章参照）
 
 ## 1. 要点
 
@@ -203,3 +203,30 @@ CSM 側で検討できること。
 
 - `C:\Users\taro\.claude\csm-session-backups` のバックアップ対象は、エージェントに紐づいたセッションだけ（`backupLinkedSessions`、サイズ上限あり。現在 27 件）。ブックマーク・タグ・名前を付けただけのセッションは対象外で、Claude Code 本体の掃除で消えると CSM からは復元できない。現に、ブックマーク 2 件と名前付き 3 件が参照切れのまま残っている。
 - `cleanupPeriodDays` が未設定または短いとき、CSM が警告を出せば同じ消失を防げる。
+
+## 10. 対応結果（2026-10-01 CSM 開発担当）
+
+| 依頼 | 結果 |
+|---|---|
+| 差分の確認とコミット | レビュー済み。`e789d6e` にコミット。`npm test` 170 件通過 |
+| vsix の作成 | `claude-session-manager-0.6.3.vsix`（290 files, 1.16 MB） |
+| VS Code へのインストール | 0.5.37 → **0.6.3**。`out` に `readLaunchCwd` が入っていることを確認 |
+| Cursor へのインストール | 0.6.2 → **0.6.3**。同上 |
+| 実機での動作確認（7 章） | **未実施**。ボタン操作が必要なため利用者に依頼。ウィンドウの再読み込みが必要 |
+
+### レビューで確認したこと
+
+- cwd を返すローダーは 3 つある。`parseSessionFile` と `loadSessionFull` は元から「最初に cwd を持つ行」を採用しており、
+  末尾側を拾っていたのは `loadSessionTail` だけだった。修正範囲に漏れはない。
+- 事象を起こした実セッション `4c640deb` を修正後のビルドに読ませ、`initialMessages` が 30 / 200 / 500 のいずれでも
+  `c:\GDrive` を返すことを確認した。`resolveSessionCwd` も同じ値を返す。
+- `resolveSessionCwd` はエージェントの「ターミナルで再開」（`resolveAgentResumeCwd`）からも使われている。
+  先頭 16KB 固定読みから 1MB までの行単位読みに変わったので、こちらの取りこぼしも減る。
+
+### 6 章の訂正: VS Code が 0.5.37 のままだった理由
+
+このマシンでは PATH 上の `code` が **Cursor の CLI**（`...\cursoresourcespp\codeBin\code`）を指している。
+v0.6.0〜v0.6.2 は `code --install-extension` で入れていたため Cursor にしか入らず、VS Code は 0.5.37 で止まっていた。
+今回は VS Code 本体の CLI（`...\Microsoft VS Codein\code`）をフルパスで呼んで入れている。
+
+6 章の「`out` を直接書き換えた 0.5.37」は VS Code が obsolete として印を付けており、次回起動時に片付けられる。原本（`.orig-0.5.37`）の復元は不要。
