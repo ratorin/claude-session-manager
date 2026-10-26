@@ -130,6 +130,7 @@ export class AgentLiveTreeProvider
 					kind: meta?.kind,
 					sessionName: meta?.name,
 					nameSource: meta?.nameSource,
+					liveStatus: meta?.status,
 					startedAt,
 					elapsedSec: startedAt !== undefined
 						? Math.max(0, Math.floor((now - startedAt) / 1000))
@@ -153,6 +154,7 @@ export class AgentLiveTreeProvider
 				kind: meta?.kind,
 				sessionName: meta?.name,
 				nameSource: meta?.nameSource,
+				liveStatus: meta?.status,
 				startedAt,
 				elapsedSec: startedAt !== undefined
 					? Math.max(0, Math.floor((now - startedAt) / 1000))
@@ -326,14 +328,19 @@ export class LiveSessionItem extends vscode.TreeItem {
 		const kindStr = entry.kind ? `[${entry.kind}]` : '';
 		const elapsedStr = entry.elapsedSec !== undefined ? formatElapsed(entry.elapsedSec) : '';
 		// description は簡潔に: フォルダ + PID + 経過（未定義はフォルダ名を目印にする）
-		this.description = [isUndefined ? cwdShort : '', pidStr, kindStr, elapsedStr]
+		// v0.6.4: 公式 status（busy/idle）を先頭に出す
+		const statusStr = entry.liveStatus === 'busy' ? '応答中' : entry.liveStatus === 'idle' ? '待機' : '';
+		this.description = [statusStr, isUndefined ? cwdShort : '', pidStr, kindStr, elapsedStr]
 			.filter(Boolean)
 			.join('  ');
 
 		// アイコン: 稼働=緑、ブロック=黄、完了=白抜き
 		switch (entry.status) {
 			case 'running':
-				this.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('terminal.ansiGreen'));
+				// v0.6.4: 公式 status が idle（待機中）なら白抜きの緑にして、応答中と見分ける
+				this.iconPath = entry.liveStatus === 'idle'
+					? new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('terminal.ansiGreen'))
+					: new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('terminal.ansiGreen'));
 				break;
 			case 'blocked':
 				this.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('terminal.ansiYellow'));
@@ -367,6 +374,7 @@ export class LiveSessionItem extends vscode.TreeItem {
 			`**${label}**\n\n` +
 			`| | |\n|---|---|\n` +
 			`| ステータス | \`${entry.status}\` |\n` +
+			(entry.liveStatus ? `| 公式 status | \`${entry.liveStatus}\`（${entry.liveStatus === 'busy' ? '応答中' : '待機中'}） |\n` : '') +
 			(entry.cwd ? `| 作業ディレクトリ | \`${entry.cwd}\` |\n` : '') +
 			elapsedRow +
 			(entry.sessionId ? `| セッション ID | \`${entry.sessionId}\` |\n` : '') +

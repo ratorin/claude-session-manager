@@ -329,6 +329,10 @@ export class AgentWatcher implements vscode.Disposable {
 							agent: typeof data.agent === 'string' ? data.agent : undefined,
 							pid: typeof data.pid === 'number' ? data.pid : undefined,
 							startedAt: typeof data.startedAt === 'number' ? data.startedAt : undefined,
+							// v0.6.4: 公式 status（busy/idle）。mtime 推定より正確なので一覧表示に使う
+							status: typeof data.status === 'string' ? data.status : undefined,
+							statusUpdatedAt: typeof data.statusUpdatedAt === 'number' ? data.statusUpdatedAt : undefined,
+							updatedAt: typeof data.updatedAt === 'number' ? data.updatedAt : undefined,
 						});
 						// sessions/*.json の mtime を活動指標として記録（stalled判定用）
 						try {
@@ -457,6 +461,8 @@ export class AgentWatcher implements vscode.Disposable {
 				sessionName: meta?.name,
 				sessionNameSource: meta?.nameSource,
 				sessionAgent: meta?.agent,
+				sessionStatus: meta?.status,
+				sessionStatusUpdatedAt: meta?.statusUpdatedAt,
 			});
 		}));
 
@@ -586,6 +592,8 @@ export class AgentWatcher implements vscode.Disposable {
 			// v0.5.22 P0: sessions/*.json 由来メタの変化も検出（kind 変化・rename 等を UI に反映）
 			if (p.sessionKind !== state.sessionKind) { return true; }
 			if (p.sessionName !== state.sessionName) { return true; }
+			// v0.6.4: busy/idle の切り替わりを UI に反映
+			if (p.sessionStatus !== state.sessionStatus) { return true; }
 		}
 		return false;
 	}

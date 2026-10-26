@@ -2324,4 +2324,31 @@ test('X8 v0.5.30 getChildren 本体が外部セッション解決を await し�
 	);
 });
 
-
+test('N7 v0.6.4 loadSessionTail + loadOlderMessages: 窓に N 件より多く入っても抜け・重複なく全件たどれる', async () => {
+	const home = setupTmpHome();
+	const { sessionLoader } = loadFresh(home);
+	// 1 行 1 メッセージの密なファイル。読み取り窓（8N 行）に N 件よりずっと多く入る
+	const jsonl = makeSyntheticJsonl(300, 60);
+	const fp = path.join(home, 'test-continuity.jsonl');
+	fs.writeFileSync(fp, jsonl);
+	const first = await sessionLoader.loadSessionTail(fp, 25, false);
+	assert.equal(first.session.messages.length, 25, '初期表示は N 件');
+	assert.equal(first.hasOlder, true);
+	const all = [...first.session.messages];
+	let offset = first.oldestByteOffset;
+	let hasOlder = first.hasOlder;
+	let guard = 0;
+	while (hasOlder && guard++ < 200) {
+		const older = await sessionLoader.loadOlderMessages(fp, offset, 25, false);
+		assert.ok(older, 'older result');
+		all.unshift(...older.messages);
+		offset = older.newOffset;
+		hasOlder = !older.reachedHead;
+	}
+	assert.equal(all.length, 600, '600 件すべて到達（抜けなし）');
+	const ts = all.map((m) => m.timestamp.getTime());
+	for (let i = 1; i < ts.length; i++) {
+		assert.ok(ts[i] > ts[i - 1], `昇順かつ重複なし at ${i}`);
+	}
+	assert.equal(ts[0], Date.parse('2026-01-01T00:00:00.000Z'), '最古は先頭メッセージ');
+});

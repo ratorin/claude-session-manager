@@ -41,6 +41,8 @@ export interface ClaudeAgentEntry {
 	sessionName?: string;
 	/** v0.5.22: name の由来（'derived' 等） */
 	nameSource?: string;
+	/** v0.6.4: sessions/*.json の公式 status（'busy' | 'idle'） */
+	liveStatus?: string;
 	/** 取得元識別子（将来別供給源が復活した場合のため残置） */
 	source?: 'session-json' | 'json-api' | 'text-parse';
 	/** テキストパース時のデバッグ用（将来復活時のため型のみ残置） */
@@ -226,4 +228,10 @@ export interface SessionJsonMeta {
 	procStart?: string;
 	/** v0.5.22 レビュー修正 M2: セッション開始時刻（Unix ms）。orchestration の経過秒計算に使用。 */
 	startedAt?: number;
+	/** v0.6.4: 公式 status（'busy' | 'idle'）。CC 2.1.3xx で確認 */
+	status?: string;
+	/** status が変わった時刻（epoch ms） */
+	statusUpdatedAt?: number;
+	/** セッション JSON の最終更新（epoch ms） */
+	updatedAt?: number;
 }

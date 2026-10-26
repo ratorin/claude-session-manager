@@ -1083,6 +1083,37 @@ async function readHeadBytes(filePath: string, bytes: number): Promise<string> {
 }
 
 /**
+ * 末尾読みした行列を「user/assistant 行が maxMessages 件になるまで」末尾側だけ残し、
+ * 捨てた古い行のぶんだけ startOffset を進める。
+ *
+ * v0.6.4: 従来は parse 後に messages を slice していたが、「続きを読む」の起点 oldestByteOffset は
+ *   読み取り窓の先頭を指したままだったため、窓に N 件より多く入った分は二度と表示されなかった
+ *   （メッセージ密度の高いセッションで発生。窓を 8 倍に広げたことで起きやすくなる）。
+ * 行の種別は "type":"user" / "type":"assistant" の部分一致で判定する
+ * （Claude Code の JSONL は空白なしの 1 行 JSON で、空行も含まない前提）。
+ * 捨てる行が無いときは渡された配列をそのまま返す。
+ */
+function trimToLastMessageLines(
+	lines: string[],
+	startOffset: number,
+	maxMessages: number,
+): { lines: string[]; startOffset: number } {
+	let count = 0;
+	let cut = 0;
+	for (let i = lines.length - 1; i >= 0; i--) {
+		const line = lines[i];
+		if (line.includes('"type":"user"') || line.includes('"type":"assistant"')) {
+			count++;
+			if (count >= maxMessages) { cut = i; break; }
+		}
+	}
+	if (cut === 0) { return { lines, startOffset }; }
+	let skippedBytes = 0;
+	for (let i = 0; i < cut; i++) { skippedBytes += Buffer.byteLength(lines[i], 'utf-8') + 1; }
+	return { lines: lines.slice(cut), startOffset: startOffset + skippedBytes };
+}
+
+/**
  * 遅延読み込み用: 末尾 N メッセージだけをパースして ParsedSession を返す。
  * 全文 readFile を回避するため、大きなファイルでも高速に開ける。
  *
@@ -1106,17 +1137,23 @@ export async function loadSessionTail(
 } | null> {
 	try {
 		// user/assistant + thinking を全部拾えるよう、余裕を持って多めに tail 行を確保する。
-		// タイプ以外のメタ行（file-history-snapshot, custom-title 等）が含まれる想定で 4 倍を目安に。
-		const targetLines = Math.max(maxInitialMessages * 4, 100);
+		// タイプ以外のメタ行（file-history-snapshot, custom-title 等）が含まれる想定で多めに取る。
+		// v0.6.4: CC 2.1.300 以降は api-request / api-request-blob / last-prompt / bridge-session 等が
+		//   ターンごとに加わり、実測でメッセージ 1 件あたり約 8 行になったため 4 倍 → 8 倍に。
+		const targetLines = Math.max(maxInitialMessages * 8, 100);
 		const tail = await readTailLines(filePath, targetLines);
 		if (tail.lines.length === 0) { return null; }
+		// メタデータ（cwd / model / タイトル等）は読み取り窓の全体から拾う
 		const parsed = parseLinesToMessages(tail.lines, showThinking);
-		let { messages, cwd, model, gitBranch, sessionId, claudeTitle, firstUserMessage } = parsed;
+		let { cwd, model, gitBranch, sessionId, claudeTitle, firstUserMessage } = parsed;
 
-		// 末尾 N 件のメッセージだけを保持
-		if (messages.length > maxInitialMessages) {
-			messages = messages.slice(messages.length - maxInitialMessages);
-		}
+		// v0.6.4: 表示するメッセージは「行」を末尾 N 件に絞ってから parse する。
+		//   旧: parse 後に messages を slice していたが、oldestByteOffset は窓の先頭を指したままで、
+		//        窓に N 件より多く入った分は「続きを読む」でも出てこなかった。
+		const kept = trimToLastMessageLines(tail.lines, tail.startOffset, maxInitialMessages);
+		const messages = kept.lines === tail.lines
+			? parsed.messages
+			: parseLinesToMessages(kept.lines, showThinking).messages;
 
 		// v0.6.3: cwd は「起動時の cwd」を正とする。tail 側の cwd はセッション中に cd した先の
 		//   ことがあり、resume や「Claude で開く」の開き先に使うと JSONL の置き場所
@@ -1159,9 +1196,10 @@ export async function loadSessionTail(
 
 		return {
 			session,
-			oldestByteOffset: tail.startOffset,
+			oldestByteOffset: kept.startOffset,
 			totalBytes: tail.totalSize,
-			hasOlder: !tail.reachedHead,
+			// 窓が先頭に達していても、絞り込みで捨てた行があれば「続き」はある
+			hasOlder: !tail.reachedHead || kept.startOffset > tail.startOffset,
 		};
 	} catch {
 		return null;
@@ -1183,17 +1221,20 @@ export async function loadOlderMessages(
 	reachedHead: boolean;
 } | null> {
 	try {
-		const targetLines = Math.max(maxMessages * 4, 100);
+		// v0.6.4: loadSessionTail と同じく 8 倍（メタ行の増加に合わせる）
+		const targetLines = Math.max(maxMessages * 8, 100);
 		const tail = await readTailLines(filePath, targetLines, stopAtOffset);
 		if (tail.lines.length === 0) {
 			return { messages: [], newOffset: tail.startOffset, reachedHead: tail.reachedHead };
 		}
-		const parsed = parseLinesToMessages(tail.lines, showThinking);
-		let messages = parsed.messages;
-		if (messages.length > maxMessages) {
-			messages = messages.slice(messages.length - maxMessages);
-		}
-		return { messages, newOffset: tail.startOffset, reachedHead: tail.reachedHead };
+		// v0.6.4: 行を末尾 N 件に絞ってから parse し、newOffset も残した行の先頭にする（loadSessionTail と同じ理由）
+		const kept = trimToLastMessageLines(tail.lines, tail.startOffset, maxMessages);
+		const messages = parseLinesToMessages(kept.lines, showThinking).messages;
+		return {
+			messages,
+			newOffset: kept.startOffset,
+			reachedHead: tail.reachedHead && kept.startOffset === tail.startOffset,
+		};
 	} catch {
 		return null;
 	}

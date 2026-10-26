@@ -29,6 +29,19 @@
   同じエージェントのセッションを別経路で動かしている最中に `/csm-ask-agent` を投げると、報告がそちらに混ざります。
 - **`claude --desktop`**（2.1.285〜）: Claude Desktop アプリでセッションを開くフラグ。CSM の「Claude で開く」は未対応です（Desktop 利用者からの要望があれば追加します）。
 - **`/doctor prompt-audit`**（2.1.283〜）: CLAUDE.md・エージェント定義・スキルを走査して、古いモデル向けの書き方を指摘します。エージェント定義を育てている環境では一度かける価値があります。
+- **公式 status（busy / idle）**（2.1.3xx〜）: `sessions/*.json` に `status` と `statusUpdatedAt` が入りました。
+  エージェント一覧の `[応答中]` / `[5分]`（待機してからの経過）とライブ状態ビューの「応答中 / 待機」はこれを使います。
+  公式値が無い古い Claude Code では従来の推定（会話ファイルの更新が 30 秒以内なら `[対話中]`）に戻ります。
+- **2.1.300 以降の会話ファイル**: 各 API リクエストの記録（`api-request` / `api-request-blob` / `api-request-shape`）が加わり、
+  新規セッションではファイルの 7〜41% を占めます。会話ファイルの容量が以前より速く増え、バックアップ上限（既定 100 MB）に早く達します。
+- **サブエージェントの既定**（2.1.302〜）: VS Code と `-p` でも fork サブエージェントが既定で有効、VS Code では主会話のサブエージェントは常にバックグラウンドです。
+  ⚪ 一時実行の検出には影響しません。Agent ツールの `effort` 指定（2.1.292〜）はツールチップに出ます。
+- **`tools:` の MCP 指定**（2.1.29x〜）: サブエージェントの `tools:` に MCP サーバーを書くときは `mcp__<サーバー名>__*` の形です。
+- **`autoCompactWindow`**（2.1.296〜）: サブエージェント frontmatter の新しいキー。CSM のフォームにはありませんが、手で書いても保存で消えません。
+- **`--debug` の未知キー警告**（2.1.296〜）: CSM 独自のキー（`displayName` / `parentAgent` / `workDir` など）が「認識できない frontmatter」として
+  `--debug` に出ますが、動作に影響はありません。
+- **`cleanupPeriodDays` を大きくした環境の不具合**（2.1.310 で修正）: 貼り付けた画像などの最近のファイルが掃除で消えることがありました。
+  CSM の案内で 3650 日にしている場合は、Claude Code を 2.1.310 以降にしてください。
 - **effort**: `low` / `medium` / `high` / `xhigh` / `max` の 5 段階。`max` は全モデル選択可（コスト大につき Opus / Fable 系推奨）。
 - **hook**: `SubagentStart` / `SubagentStop` を利用（サブエージェント可視化）。
 - **subagent frontmatter**: `model` / `effort` / `permissionMode` / `allowedTools` / `isolation` / `background` / `maxTurns` をフォームから編集可能。
@@ -85,7 +98,7 @@
 - **グループ表示切替** — コマンド `Claude: エージェントのグループ表示を切替` で **組織図 / モデル別 / 状態別 / フラット** の 4 モードを切替（`agents.defaultGroupMode` で永続化）
 - **『稼働中のみ表示』フィルタ** — ツールバーの $(filter) トグルまたはコマンドで切替（`agents.activeOnly` で永続化）
 - **エージェント数バッジ** — TreeView.badge で「エージェント管理」「ライブ状態」ビューアイコンに稼働数を表示
-- **『対話中』プレフィックス** — `[対話中]` / `[5分]` などライブ状態を即視認
+- **『応答中』プレフィックス** — `[応答中]` / `[5分]`（待機してからの経過）を Claude Code の公式 status で表示。公式値が無い場合は `[対話中]` 推定
 - **展開状態の制御** — `agents.expandMode`（`all` / `active-branches`（既定）/ `top-level`）
 - **★ お気に入りエージェント** — ★ ボタンで追加 / 解除、専用ビューにフラットリスト表示
 - **一覧の即時表示** — 起動時は在メモリの情報だけで一覧を即描画。他プロジェクトのセッションタイトルなど重い解決は非同期で追いつきます
@@ -460,6 +473,7 @@ code --install-extension claude-session-manager-0.5.31.vsix
 
 詳細な変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。直近の主な変更:
 
+- **v0.6.4** — 一覧の応答中 / 待機を Claude Code の公式 status で表示、2.1.300 以降の会話ファイル形式（API リクエスト記録）に追従、利用率モニターを Haiku 5.5 に
 - **v0.6.3** — 会話ビューワーの「Claude で開く」「ターミナルで再開」が、セッション中に `cd` していると別フォルダで開いて復元できない不具合を修正
 - **v0.6.2** — Claude Code 2.1.285 追従（Opus 5.5 / Sonnet 5.5・権限既定 auto・`-p` 自動タイトル廃止・稼働中セッションへの `--resume` の文言更新）
 - **v0.6.1** — フォーム保存で frontmatter の未知キー（`omitClaudeMd` 等）が消える不具合を修正、Claude Code 2.1.274 追従

@@ -252,3 +252,47 @@ test('S10 findEphemeralTranscript は不正な sessionId を弾く（パスト�
 	assert.equal(await svc.findEphemeralTranscript('../../etc', 'qa'), undefined);
 	assert.equal(await svc.findEphemeralTranscript('', 'qa'), undefined);
 });
+
+// ---------------------------------------------------------------------------
+// v0.6.4: CC 2.1.300 以降の記録形式への追従
+// ---------------------------------------------------------------------------
+
+test('S11 api-request-shape 行のツール定義に subagent_type があっても一時実行に数えない', async () => {
+	const dir = tmpDir('s11');
+	const sid = 'parent-11';
+	const file = writeSession(dir, `${sid}.jsonl`, [
+		// CC 2.1.300 以降: API リクエストのツール定義が記録される。Agent ツールのスキーマに subagent_type が含まれる
+		JSON.stringify({
+			type: 'api-request-shape',
+			sessionId: sid,
+			tools: [{ name: 'Agent', input_schema: { properties: { subagent_type: { type: 'string' }, prompt: { type: 'string' } } } }],
+		}),
+		JSON.stringify({ type: 'api-request-blob', sessionId: sid, hash: 'abc', message: '{"content":"subagent_type"}' }),
+		agentCallLine({ sessionId: sid, agentName: 'qa', description: '本物', ts: '2026-10-26T00:00:00.000Z', id: 'a' }),
+	]);
+
+	const state = await svc.scanSessionForAgentToolRuns(file);
+	assert.equal(state.runs.length, 1);
+	assert.equal(state.runs[0].description, '本物');
+});
+
+test('S12 Agent ツールの effort 指定（CC 2.1.292）を記録する', async () => {
+	const dir = tmpDir('s12');
+	const sid = 'parent-12';
+	const line = JSON.stringify({
+		type: 'assistant',
+		sessionId: sid,
+		timestamp: '2026-10-26T00:00:00.000Z',
+		message: {
+			role: 'assistant',
+			content: [{ type: 'tool_use', name: 'Agent', id: 'e1', input: { subagent_type: 'researcher', description: '調査', prompt: 'x', effort: 'high' } }],
+		},
+	});
+	const file = writeSession(dir, `${sid}.jsonl`, [line]);
+
+	const state = await svc.scanSessionForAgentToolRuns(file);
+	assert.equal(state.runs[0].effort, 'high');
+	assert.equal((await svc.scanSessionForAgentToolRuns(writeSession(dir, 'noeffort.jsonl', [
+		agentCallLine({ sessionId: sid, agentName: 'qa', description: 'x', ts: '2026-10-26T00:00:00.000Z', id: 'b' }),
+	]))).runs[0].effort, undefined, 'effort 無指定は undefined');
+});

@@ -133,7 +133,7 @@ export const MODEL_CATALOG: Record<CsmModel, ModelDefinition> = {
 		themeColor: 'charts.green',
 		is1m: false,
 		allowsMaxEffort: true,
-		description: 'Haiku（最新世代） — 軽量タスク・高速応答',
+		description: 'Haiku（最新世代） — 軽量タスク・高速応答。Haiku 5.5 以降は無印でも 1M コンテキスト',
 	},
 };
 

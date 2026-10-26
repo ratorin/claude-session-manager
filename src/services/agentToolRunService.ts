@@ -33,6 +33,8 @@ export interface AgentToolRun {
 	/** Agent ツールの description（無ければ prompt の先頭） */
 	description: string;
 	toolUseId: string;
+	/** Agent ツールの effort 指定（CC 2.1.292 で追加。無指定なら undefined） */
+	effort?: string;
 	timestampMs: number;
 	/** 呼び出し元セッション */
 	parentSessionId: string;
@@ -49,6 +51,9 @@ export interface ScanState {
 }
 
 const NEEDLE = Buffer.from('"subagent_type"');
+// v0.6.4: CC 2.1.300 以降、API リクエストの記録（api-request-shape 等）にツール定義が入り、
+//   そこにも "subagent_type" が現れる。tool_use は assistant 行にしか無いので、そちらも必須にする。
+const NEEDLE_ASSISTANT = Buffer.from('"type":"assistant"');
 const NEWLINE = 0x0a;
 
 /**
@@ -108,7 +113,7 @@ function extractRuns(entry: unknown, sessionPath: string): AgentToolRun[] {
 			type?: string;
 			name?: string;
 			id?: string;
-			input?: { subagent_type?: string; description?: string; prompt?: string };
+			input?: { subagent_type?: string; description?: string; prompt?: string; effort?: string };
 		};
 		if (b?.type !== 'tool_use') { continue; }
 		// ツール名は CC のバージョンで Task / Agent どちらもありうる
@@ -120,6 +125,7 @@ function extractRuns(entry: unknown, sessionPath: string): AgentToolRun[] {
 			agentName,
 			description,
 			toolUseId: b.id || '',
+			effort: typeof b.input?.effort === 'string' ? b.input.effort : undefined,
 			timestampMs: Number.isFinite(timestampMs) ? timestampMs : 0,
 			parentSessionId: e.sessionId || '',
 			parentSessionPath: sessionPath,
@@ -154,7 +160,7 @@ export async function scanSessionForAgentToolRuns(
 
 	const nextOffset = await readLinesFrom(sessionPath, start, (lineBuf) => {
 		// バイト列のまま絞り込む。大半の行はここで捨てられ UTF-8 デコードを避けられる。
-		if (lineBuf.indexOf(NEEDLE) === -1) { return; }
+		if (lineBuf.indexOf(NEEDLE) === -1 || lineBuf.indexOf(NEEDLE_ASSISTANT) === -1) { return; }
 		let entry: unknown;
 		try {
 			entry = JSON.parse(lineBuf.toString('utf-8'));

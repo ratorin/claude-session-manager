@@ -461,3 +461,20 @@ VS Code 拡張のフッター「N agents」から、そのセッションのサ�
 | 2.1.285 | `claude --desktop --resume <id>` で Claude Desktop に開ける | 「Claude で開く」の第 3 の経路になりうる。Desktop 未導入のため見送り |
 
 §8.6 の性能前提（`subagent_type` の走査）は 2.1.277 の「サブエージェント結果にヘッダを付ける」変更の影響を受けない（tool_use 側は不変、変わったのは tool_result 側）。
+
+---
+
+## 11. Claude Code 2.1.286〜2.1.310 の影響（2026-10-26 追記）
+
+| 版 | 変更 | 本文書への影響 |
+|---|---|---|
+| 2.1.300 | 会話ファイルに各 API リクエストのシステムプロンプト・ツール定義・パラメータを記録（`api-request` / `api-request-blob` / `api-request-shape`） | **G4（肥大化）を加速**。2.1.301 で作られた 2 セッションの実測で、これらがファイルの 22% と 42% を占めた。R5 本体の優先度が上がる。CSM 側は `subagent_type` の走査がツール定義を拾わないよう assistant 行に限定（v0.6.4） |
+| 2.1.302 | VS Code / `-p` でも fork サブエージェントが既定 ON。VS Code では主会話のサブエージェントは常にバックグラウンド | 経路 A の実行が増える方向。`tasks/*.output` の形式は不変（2.1.301 の実物で `isSidechain` / `agentId` / `cwd` を確認）。`subagent_type: "fork"` は親の分身なので、エージェント名に一致せず一覧には出ない |
+| 2.1.292 | Agent ツールに `effort` 引数 | 一時実行の記録に `effort` を持たせ、ツールチップに表示（v0.6.4） |
+| 2.1.296 | `--debug` が未知の frontmatter キーを列挙 | CSM 独自キーが列挙されるが無害。R1 の探索とは無関係 |
+| 2.1.290 | idle compaction（200K 超を 54 分放置で自動圧縮） | コンテキストは縮むが**会話ファイルは縮まない**。G4 の緩和にはならない |
+| 2.1.310 | `cleanupPeriodDays` が非常に大きいと最近のファイルが掃除で消える不具合を修正 | 3650 日設定（reference_session_retention）が該当していた。2.1.310 以降で解消 |
+| 2.1.3xx | `sessions/*.json` に `status`（busy/idle）/ `statusUpdatedAt` | 本文書の論点外だが、CSM の「対話中」推定を公式値に置き換えた（v0.6.4） |
+
+§8.6 の性能前提（`subagent_type` のバイト列走査）は、api-request-shape 行がツール定義ごと一致するようになったため、
+`"type":"assistant"` も同時に要求する形に改めた。2.1.301 の実物では該当行は 3〜4 行で、走査時間への影響は無かった（424 MB で 0.9 秒）。

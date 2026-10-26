@@ -152,6 +152,9 @@ export interface AgentWatcherState {
 	sessionName?: string;       // CC 付与のセッション表示名
 	sessionNameSource?: string; // 'derived' | 'user' 等
 	sessionAgent?: string;      // --agent 起動時の agent フィールド
+	// v0.6.4: 公式 status（'busy' | 'idle'）と変化時刻。一覧の [応答中]/[N分] 表示に使う
+	sessionStatus?: string;
+	sessionStatusUpdatedAt?: number;
 }
 
 // サブエージェント情報

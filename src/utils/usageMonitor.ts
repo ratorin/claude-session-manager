@@ -53,11 +53,18 @@ function getOutputChannel(): vscode.OutputChannel {
 	return outputChannel;
 }
 
+// API は 0〜1 の小数（例: 0.91 = 91%）。まれに 1 を超える値が返るので 100% で頭打ちにする
+//   （CC 2.1.299 で /usage の「100% 超」表示が修正されたのと同じ対処）
+function toPct(raw: number, whenMissing: number): number {
+	return isNaN(raw) ? whenMissing : Math.min(100, Math.round(raw * 1000) / 10);
+}
+
 // APIリクエストで利用率ヘッダを取得
 function fetchUsageHeaders(accessToken: string): Promise<FetchResult> {
 	return new Promise((resolve) => {
 		const body = JSON.stringify({
-			model: 'claude-haiku-4-5-20251001',
+			// v0.6.4: Haiku 5.5（CC 2.1.293 で既定の Haiku に）。ヘッダ取得だけなので最小のモデルでよい
+			model: 'claude-haiku-5-5',
 			max_tokens: 1,
 			messages: [{ role: 'user', content: '.' }],
 		});
@@ -146,12 +153,12 @@ function fetchUsageHeaders(accessToken: string): Promise<FetchResult> {
 				}
 
 				// APIは0〜1の小数を返す（例: 0.91 = 91%）→ 100倍してパーセントに変換
-				const pct5h = isNaN(usage5h) ? 0 : Math.round(usage5h * 1000) / 10;
-				const pct7d = isNaN(usage7d) ? 0 : Math.round(usage7d * 1000) / 10;
-				const pctSonnet5d = isNaN(rawSonnet5d) ? -1 : Math.round(rawSonnet5d * 1000) / 10;
-				const pctOpus5d   = isNaN(rawOpus5d)   ? -1 : Math.round(rawOpus5d * 1000) / 10;
-				const pctFable5d  = isNaN(rawFable5d)  ? -1 : Math.round(rawFable5d * 1000) / 10;
-				const pctOverage  = isNaN(rawOverage)  ? -1 : Math.round(rawOverage * 1000) / 10;
+				const pct5h = toPct(usage5h, 0);
+				const pct7d = toPct(usage7d, 0);
+				const pctSonnet5d = toPct(rawSonnet5d, -1);
+				const pctOpus5d   = toPct(rawOpus5d, -1);
+				const pctFable5d  = toPct(rawFable5d, -1);
+				const pctOverage  = toPct(rawOverage, -1);
 				log.appendLine(`  5h: ${pct5h}%, 7d: ${pct7d}%, S5d: ${pctSonnet5d}%, O5d: ${pctOpus5d}%, F5d: ${pctFable5d}%, 追加: ${pctOverage}% (${overageStatus})`);
 
 				resolve({

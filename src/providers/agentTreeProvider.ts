@@ -11,6 +11,7 @@ import { resolveExternalSessionInfos } from '../utils/sessionLoader';
 import { isBookmarked, addBookmark, removeBookmark } from '../services/bookmarkService';
 import { mergeTitleMaps, computeMissingSessionIds, applyEnrichmentResult } from '../utils/agentTreeEnrichment';
 import { AgentToolRun } from '../services/agentToolRunService';
+import { formatLivePrefix, formatLiveElapsed, describeLiveStatus } from '../utils/liveStatusLabel';
 
 type AgentTreeNode = AgentItem | TaskLogItem | EphemeralRunItem | MigrationBannerItem | GlobalAgentsSectionItem | CsmAskAgentInstallBannerItem | AskAgentMigrationBannerItem | SessionInjectInstallBannerItem | GroupNodeItem;
 
@@ -361,7 +362,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				const hasTasks = this.getVisibleTasksFn ? this.getVisibleTasksFn(a.name).length > 0 : false;
 				const eph = this.ephemeralInfo(a.name);
 				const hasChildrenFlag = childMap.has(a.name) || hasTasks || eph.count > 0;
-				const item = new AgentItem(a, isLive(a), sessionTitle, false, hasChildrenFlag, '', ws?.modelMismatch ?? false, ws?.actualModel, false, mtimeMs, this.isBrokenLink(a.sessionId), eph.count, eph.lastMs, a.sessionId ? this.getSessionBytesFn?.(a.sessionId) : undefined);
+				const item = new AgentItem(a, isLive(a), sessionTitle, false, hasChildrenFlag, '', ws?.modelMismatch ?? false, ws?.actualModel, false, mtimeMs, this.isBrokenLink(a.sessionId), eph.count, eph.lastMs, a.sessionId ? this.getSessionBytesFn?.(a.sessionId) : undefined, { status: ws?.sessionStatus, updatedAt: ws?.sessionStatusUpdatedAt });
 				this.lastAgentItemsByName.set(a.name, item);
 				result.push(item);
 			}
@@ -407,7 +408,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				const ws = this.watcherStates.get(agent.name);
 				const mtimeMs = agent.sessionId ? this.getSessionMtimeFn?.(agent.sessionId) : undefined;
 				const eph = this.ephemeralInfo(agent.name);
-				result.push(new AgentItem(agent, isLive, sessionTitle, true, eph.count > 0, '', ws?.modelMismatch ?? false, ws?.actualModel, false, mtimeMs, this.isBrokenLink(agent.sessionId), eph.count, eph.lastMs, agent.sessionId ? this.getSessionBytesFn?.(agent.sessionId) : undefined));
+				result.push(new AgentItem(agent, isLive, sessionTitle, true, eph.count > 0, '', ws?.modelMismatch ?? false, ws?.actualModel, false, mtimeMs, this.isBrokenLink(agent.sessionId), eph.count, eph.lastMs, agent.sessionId ? this.getSessionBytesFn?.(agent.sessionId) : undefined, { status: ws?.sessionStatus, updatedAt: ws?.sessionStatusUpdatedAt }));
 			}
 			return result;
 		}
@@ -581,7 +582,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 				const ws = this.watcherStates.get(agent.name);
 				const mtimeMs = agent.sessionId ? this.getSessionMtimeFn?.(agent.sessionId) : undefined;
 				const eph = this.ephemeralInfo(agent.name);
-				const item = new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs, this.isBrokenLink(agent.sessionId), eph.count, eph.lastMs, agent.sessionId ? this.getSessionBytesFn?.(agent.sessionId) : undefined);
+				const item = new AgentItem(agent, isLive, sessionTitle, false, hasChildrenFlag, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs, this.isBrokenLink(agent.sessionId), eph.count, eph.lastMs, agent.sessionId ? this.getSessionBytesFn?.(agent.sessionId) : undefined, { status: ws?.sessionStatus, updatedAt: ws?.sessionStatusUpdatedAt });
 				this.lastAgentItemsByName.set(agent.name, item); // v0.5.17 §4-1: reveal 用
 				result.push(item);
 			}
@@ -620,7 +621,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 			const ws = this.watcherStates.get(agent.name);
 			const mtimeMs = agent.sessionId ? this.getSessionMtimeFn?.(agent.sessionId) : undefined;
 			const eph = this.ephemeralInfo(agent.name);
-			const item = new AgentItem(agent, isLive, sessionTitle, true, hasChildren, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs, this.isBrokenLink(agent.sessionId), eph.count, eph.lastMs, agent.sessionId ? this.getSessionBytesFn?.(agent.sessionId) : undefined);
+			const item = new AgentItem(agent, isLive, sessionTitle, true, hasChildren, ruleStrMap.get(agent.name) || '', ws?.modelMismatch ?? false, ws?.actualModel, isOtherProject(agent), mtimeMs, this.isBrokenLink(agent.sessionId), eph.count, eph.lastMs, agent.sessionId ? this.getSessionBytesFn?.(agent.sessionId) : undefined, { status: ws?.sessionStatus, updatedAt: ws?.sessionStatusUpdatedAt });
 			this.lastAgentItemsByName.set(agent.name, item); // v0.5.17 §4-1: reveal 用
 			result.push(item);
 		}
@@ -645,16 +646,7 @@ export class AgentTreeProvider implements vscode.TreeDataProvider<AgentTreeNode>
 
 }
 
-// ライブ経過時間を短い日本語形式に変換: 30秒 / 5分 / 2時間 / 3日
-function formatLiveElapsed(ms: number): string {
-	const sec = Math.floor(ms / 1000);
-	if (sec < 60) { return `${sec}秒`; }
-	const min = Math.floor(sec / 60);
-	if (min < 60) { return `${min}分`; }
-	const hr = Math.floor(min / 60);
-	if (hr < 24) { return `${hr}時間`; }
-	return `${Math.floor(hr / 24)}日`;
-}
+// v0.6.4: formatLiveElapsed は utils/liveStatusLabel.ts へ移動
 
 /**
  * v0.6.0 R3/R4: Agent ツール経由の「一時実行」1 件を表す行。
@@ -682,6 +674,7 @@ export class EphemeralRunItem extends vscode.TreeItem {
 ` +
 			`| 内容 | ${run.description || '(説明なし)'} |
 ` +
+			(run.effort ? `| effort | ${run.effort} |\n` : '') +
 			(run.timestampMs ? `| 日時 | ${new Date(run.timestampMs).toLocaleString('ja-JP')} |
 ` : '') +
 			`| 呼び出し元 | \`${run.parentSessionId.substring(0, 8)}...\` |
@@ -739,6 +732,8 @@ export class AgentItem extends vscode.TreeItem {
 		ephemeralLastMs?: number,
 		// v0.6.0 R5(最小案): 紐づけセッションの JSONL サイズ。肥大化を可視化する
 		sessionBytes?: number,
+		// v0.6.4: sessions/*.json の公式 status（busy/idle）と変化時刻
+		liveStatus?: { status?: string; updatedAt?: number },
 	) {
 		// v0.5.14 レビュー修正 (7): modelCatalog.getModelChar() に統一。
 		//   旧: sonnet-1m を '１' 表示していたが、プレビュー（catalog char='Ｓ'）と食い違い。
@@ -756,17 +751,15 @@ export class AgentItem extends vscode.TreeItem {
 		// - isLive かつ mtime が古い      → [5分] のような経過時間
 		// - 停止中                        → プレフィックスなし
 		// v0.5.17 §4-5: [Open] → [対話中] へ和英統一
-		let livePrefix = '';
-		if (isLive && !isOtherProject) {
-			if (mtimeMs !== undefined) {
-				const elapsedMs = Date.now() - mtimeMs;
-				livePrefix = elapsedMs < 30_000
-					? '[対話中] '
-					: `[${formatLiveElapsed(elapsedMs)}] `;
-			} else {
-				livePrefix = '[実行中] ';
-			}
-		}
+		// v0.6.4: 公式 status があれば [応答中]/[待機 N分]、無ければ従来の mtime 推定（utils/liveStatusLabel.ts）
+		const liveInput = {
+			isLive: isLive && !isOtherProject,
+			status: liveStatus?.status,
+			statusUpdatedAt: liveStatus?.updatedAt,
+			mtimeMs,
+		};
+		const livePrefix = formatLivePrefix(liveInput);
+		const liveStatusText = describeLiveStatus(liveInput);
 
 		// 表示名: "[対話中] Ｏ  CSM開発部（csm-dev）使い捨て ⚠️"
 		const agentDisplayName = agent.displayName
@@ -830,6 +823,7 @@ export class AgentItem extends vscode.TreeItem {
 			modelLine +
 			`| 運用 | ${agent.sessionMode === 'disposable' ? '使い捨て' : '固定'} |\n` +
 			`| セッション | ${sessionInfo} |\n` +
+			(liveStatusText ? `| 状態 | ${liveStatusText} |\n` : '') +
 			(sessionMissing
 				? `| ⚠ 状態 | 紐づけ ID \`${agent.sessionId?.substring(0, 8)}...\` の JSONL が見つかりません（リンク切れ）。右クリックで再紐づけ／解除できます |\n`
 				: '') +
